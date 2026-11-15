@@ -1,0 +1,169 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
+)
+
+// ErrNoRawPage means no raw page is stored for a work.
+var ErrNoRawPage = errors.New("store: no raw page")
+
+// PutRawPage stores a fetched work page (zstd) unless an identical copy exists, then prunes
+// older versions beyond keep. The newest copy is never pruned.
+// It returns whether the page was new (not a duplicate of a stored version).
+func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page []byte, keep int) (bool, error) {
+	start := time.Now()
+	sum := sha256.Sum256(page)
+	hash := hex.EncodeToString(sum[:])
+	z := s.compress(page)
+	defer s.timed("put_raw_page", start, "work_id", workID, "bytes", len(page))
+	tx, err := s.Content.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var existing int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM raw_pages WHERE work_id = ? AND sha256 = ?`, workID, hash).Scan(&existing)
+	isNew := errors.Is(err, sql.ErrNoRows)
+	switch {
+	case isNew:
+		_, err = tx.ExecContext(ctx, `INSERT INTO raw_pages (work_id, fetched_at, path, sha256, size, html_zstd)
+			VALUES (?,?,?,?,?,?)`, workID, s.unix(), path, hash, len(page), z)
+	case err == nil:
+		_, err = tx.ExecContext(ctx, `UPDATE raw_pages SET fetched_at = ? WHERE id = ?`, s.unix(), existing)
+	}
+	if err != nil {
+		return false, err
+	}
+	var versions int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM raw_pages WHERE work_id = ?`, workID).Scan(&versions); err != nil {
+		return false, err
+	}
+	if keep < 1 {
+		keep = 1
+	}
+	pruned, err := tx.ExecContext(ctx, `DELETE FROM raw_pages WHERE work_id = ? AND id NOT IN (
+		SELECT id FROM raw_pages WHERE work_id = ? ORDER BY fetched_at DESC, id DESC LIMIT ?)`, workID, workID, keep)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	n, _ := pruned.RowsAffected()
+	s.log.Debug("raw page stored", "work_id", workID, "bytes", len(page), "zstd_bytes", len(z),
+		"duplicate", !isNew, "versions_before_prune", versions, "pruned", n)
+	return isNew, nil
+}
+
+// LatestRawPage returns the newest stored page for a work.
+func (s *Store) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.Time, error) {
+	var z []byte
+	var at int64
+	err := s.Content.QueryRowContext(ctx, `SELECT html_zstd, fetched_at FROM raw_pages WHERE work_id = ?
+		ORDER BY fetched_at DESC, id DESC LIMIT 1`, workID).Scan(&z, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, time.Time{}, ErrNoRawPage
+	}
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	b, err := s.decompress(z)
+	return b, time.Unix(at, 0), err
+}
+
+// RawPageWorkIDs pages through work ids that have raw pages (for reparse), ascending after afterID.
+func (s *Store) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
+	rows, err := s.Content.QueryContext(ctx, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
+		ORDER BY work_id LIMIT ?`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// PutWorkContent replaces a work's chapter bodies and skin.
+func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) error {
+	start := time.Now()
+	defer s.timed("put_work_content", start, "work_id", workID, "chapters", len(chs))
+	tx, err := s.Content.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chapter_bodies WHERE work_id = ?`, workID); err != nil {
+		return err
+	}
+	total := 0
+	for _, c := range chs {
+		body := s.compress([]byte(c.BodyHTML))
+		if body == nil {
+			body = []byte{}
+		}
+		total += len(c.BodyHTML)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chapter_bodies (work_id, position, chapter_id, body_zstd, notes_zstd, endnotes_zstd)
+			VALUES (?,?,?,?,?,?)`, workID, c.Position, c.ID, body,
+			s.compress([]byte(c.NotesHTML)), s.compress([]byte(c.EndNotesHTML))); err != nil {
+			return err
+		}
+	}
+	if skinCSS == "" {
+		_, err = tx.ExecContext(ctx, `DELETE FROM work_skins WHERE work_id = ?`, workID)
+	} else {
+		_, err = tx.ExecContext(ctx, `INSERT INTO work_skins (work_id, css) VALUES (?,?)
+			ON CONFLICT (work_id) DO UPDATE SET css = excluded.css`, workID, skinCSS)
+	}
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.log.Debug("work content stored", "work_id", workID, "chapters", len(chs), "body_bytes", total, "skin_bytes", len(skinCSS))
+	return nil
+}
+
+// ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them).
+func (s *Store) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapter, error) {
+	rows, err := s.Content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd
+		FROM chapter_bodies WHERE work_id = ? ORDER BY position`, workID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Chapter
+	for rows.Next() {
+		var c model.Chapter
+		var body, notes, end []byte
+		if err := rows.Scan(&c.Position, &c.ID, &body, &notes, &end); err != nil {
+			return nil, err
+		}
+		for _, p := range []struct {
+			z   []byte
+			dst *string
+		}{{body, &c.BodyHTML}, {notes, &c.NotesHTML}, {end, &c.EndNotesHTML}} {
+			b, err := s.decompress(p.z)
+			if err != nil {
+				return nil, err
+			}
+			*p.dst = string(b)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
