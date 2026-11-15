@@ -184,3 +184,42 @@ func TestBaseURLLoopbackOnly(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestFetchWorkAndReparse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real pacing (3s floor)")
+	}
+	c := newCLI(t, "")
+	c.srv.SetSite(fakeao3.NewSite("Fixture Tag", 7100, 2))
+
+	code, out, errOut := c.run("fetch-work", "/works/7100/chapters/5")
+	if code != 0 || !strings.Contains(out, "work 7100 queued as job 1") {
+		t.Fatalf("queue: %d %s %s", code, out, errOut)
+	}
+	if code, out, _ := c.run("fetch-work", "7100"); code != 0 || !strings.Contains(out, "already queued") {
+		t.Fatalf("requeue: %s", out)
+	}
+	code, out, errOut = c.run("fetch-work", "--now", "7100")
+	if code != 0 || !strings.Contains(out, "job 1 done") {
+		t.Fatalf("--now: %d %s %s", code, out, errOut)
+	}
+	if code, out, _ := c.run("fetch-work", "7999", "--now"); code != 0 || !strings.Contains(out, "done") {
+		t.Fatalf("missing work should finish (marked deleted): %s", out)
+	}
+	_, dbg, _ := c.run("debug", "work", "7999")
+	if !strings.Contains(dbg, "deleted") {
+		t.Fatalf("debug work 7999:\n%s", dbg)
+	}
+
+	before := len(c.srv.Requests())
+	code, out, errOut = c.run("reparse", "--all")
+	if code != 0 || !strings.Contains(out, "reparsed 1") {
+		t.Fatalf("reparse: %d %s %s", code, out, errOut)
+	}
+	if after := len(c.srv.Requests()); after != before {
+		t.Fatalf("reparse made %d requests", after-before)
+	}
+	if code, out, _ := c.run("reparse"); code != 0 || !strings.Contains(out, "skipped 1") {
+		t.Fatalf("second reparse should skip current-version works: %s", out)
+	}
+}

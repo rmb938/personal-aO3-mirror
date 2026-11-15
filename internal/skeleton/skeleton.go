@@ -24,8 +24,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -482,4 +485,23 @@ func (s *Skeletonizer) Pattern(raw string) string {
 		b.WriteString("#" + s.maskID(u.Fragment))
 	}
 	return b.String()
+}
+
+// SaveDebug writes a skeleton of page to <dataDir>/debug/<kind>-<id>-<ts>.skel.html and returns
+// the path relative to dataDir. Used when a page fails to parse, so the structure can be
+// inspected safely.
+func SaveDebug(dataDir, kind, id string, page []byte, now time.Time) (string, error) {
+	skel, err := Skeletonize(bytes.NewReader(page))
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(dataDir, "debug")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := fmt.Sprintf("%s-%s-%s.skel.html", kind, id, now.UTC().Format("20060102T150405"))
+	if err := os.WriteFile(filepath.Join(dir, name), skel, 0o644); err != nil {
+		return "", err
+	}
+	return filepath.Join("debug", name), nil
 }

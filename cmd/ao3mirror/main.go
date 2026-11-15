@@ -13,6 +13,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	buildversion "github.com/rmb938/personal-aO3-mirror/internal/version"
 )
 
@@ -25,8 +26,8 @@ commands:
   config check       validate config and print the User-Agent that will be sent
   run                run the scraper daemon (Ctrl+C to stop; resumes where it left off)
   source ...         add/list/show/confirm/pause/resume/cancel/remove sources ('source' for help)
-  fetch-work ID      queue a single work on demand        (milestone 6)
-  reparse            rebuild parsed data from stored raw pages, no requests (milestone 6)
+  fetch-work [--now] ID|URL    queue one work at top priority (--now: fetch here if no daemon)
+  reparse [--all] [--work ID]  rebuild parsed tables from stored raw pages; makes no requests
   status             content-free queue/progress summary
   debug job|work ID  content-free trace for one job/work
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
@@ -94,7 +95,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 			*cfgPath, cfg.DataDir, cfg.UserAgent(version), cfg.Rate.Interval, config.MinInterval)
 		logger.Debug("config checked", "path", *cfgPath, "interval", cfg.Rate.Interval.String())
 		return 0
-	case "source", "run", "status", "debug":
+	case "reparse":
+		// Offline: opens the store only; no HTTP client is built.
+		st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: logger})
+		if err != nil {
+			fmt.Fprintf(stderr, "open: %v\n", err)
+			return 1
+		}
+		defer st.Close()
+		return runReparse(ctx, st, appCfg{dataDir: cfg.DataDir, log: logger}, rest[1:], stdout, stderr)
+	case "source", "run", "status", "debug", "fetch-work":
 		a, err := openApp(ctx, cfg, logger)
 		if err != nil {
 			fmt.Fprintf(stderr, "open: %v\n", err)
@@ -108,12 +118,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runDaemon(ctx, a, stderr)
 		case "status":
 			return runStatus(ctx, a, stdout, stderr)
+		case "fetch-work":
+			return runFetchWork(ctx, a, rest[1:], stdout, stderr)
 		default:
 			return runDebug(ctx, a, rest[1:], stdout, stderr)
 		}
-	case "fetch-work", "reparse":
-		fmt.Fprintf(stderr, "%s: not implemented yet (see docs/plan.md milestones)\n", rest[0])
-		return 1
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", rest[0])
 		fs.Usage()

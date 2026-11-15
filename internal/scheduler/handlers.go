@@ -1,10 +1,8 @@
 package scheduler
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -16,8 +14,6 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
-
-func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // dateFloor is when AO3 opened; backfill windows stop here.
 var dateFloor = time.Date(2008, 9, 1, 0, 0, 0, 0, time.UTC)

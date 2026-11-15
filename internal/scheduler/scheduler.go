@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -380,20 +379,21 @@ func (s *Scheduler) saveSkeleton(kind string, id string, page []byte, log *slog.
 	if len(page) == 0 || s.o.DataDir == "" {
 		return
 	}
-	skel, err := skeleton.Skeletonize(bytesReader(page))
+	rel, err := skeleton.SaveDebug(s.o.DataDir, kind, id, page, s.o.Now())
 	if err != nil {
-		log.Warn("skeleton failed", "err", err.Error())
+		log.Warn("debug skeleton failed", "err", err.Error())
 		return
 	}
-	dir := filepath.Join(s.o.DataDir, "debug")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Warn("skeleton dir failed", "err", err.Error())
-		return
+	log.Warn("saved debug skeleton", "file", rel)
+}
+
+// RunJob runs one specific queued job now (used by `fetch-work --now` when no daemon runs).
+// It returns the job's final state.
+func (s *Scheduler) RunJob(ctx context.Context, id int64) (store.Job, error) {
+	job, err := s.st.ClaimJob(ctx, id, s.o.Now())
+	if err != nil {
+		return store.Job{}, err
 	}
-	name := fmt.Sprintf("%s-%s-%s.skel.html", kind, id, s.o.Now().UTC().Format("20060102T150405"))
-	if err := os.WriteFile(filepath.Join(dir, name), skel, 0o644); err != nil {
-		log.Warn("skeleton write failed", "err", err.Error())
-		return
-	}
-	log.Warn("saved debug skeleton", "file", filepath.Join("debug", name), "bytes", len(skel))
+	s.execute(ctx, job)
+	return s.st.GetJob(ctx, id)
 }

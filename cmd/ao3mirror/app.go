@@ -60,6 +60,12 @@ func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, er
 
 func (a *app) Close() { a.store.Close() }
 
+// appCfg is what offline commands (reparse) need: no HTTP client is ever built for them.
+type appCfg struct {
+	dataDir string
+	log     *slog.Logger
+}
+
 // baseURL returns the AO3 base URL. AO3MIRROR_BASE_URL may point at a local fake AO3
 // (tests, `dev fake-server`); only loopback hosts are accepted.
 func baseURL() (string, error) {

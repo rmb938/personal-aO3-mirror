@@ -30,6 +30,7 @@ type workState struct {
 	fetchedRevised  string
 	fetchedChapters int
 	fetchedWords    int
+	lastListed      int64
 }
 
 // UpsertWork merges a parsed work into meta.db.
@@ -37,6 +38,23 @@ type workState struct {
 // origin FromBlurb updates listing-visible metadata and stats, but never chapters, notes, the
 // published date or fetch bookkeeping. FromPage updates everything and marks the work fetched.
 func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origin, parserVersion int) (UpsertResult, error) {
+	return s.upsert(ctx, w, origin, parserVersion, upsertOpt{})
+}
+
+// ReparseWork re-applies a work parsed from a stored raw page (fetched at pageAt). It never
+// changes availability status or fetch times. Listing-visible metadata (title, tags, stats...)
+// is only rewritten if no newer listing blurb has been seen since the page was fetched.
+func (s *Store) ReparseWork(ctx context.Context, w model.Work, pageAt time.Time, parserVersion int) error {
+	_, err := s.upsert(ctx, w, model.FromPage, parserVersion, upsertOpt{reparse: true, pageAt: pageAt.Unix()})
+	return err
+}
+
+type upsertOpt struct {
+	reparse bool
+	pageAt  int64
+}
+
+func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, parserVersion int, opt upsertOpt) (UpsertResult, error) {
 	if w.ID <= 0 {
 		return UpsertResult{}, errors.New("store: work id required")
 	}
@@ -52,9 +70,9 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 	var st workState
 	var res UpsertResult
 	err = tx.QueryRowContext(ctx, `SELECT revised_at, chapters_posted, words, status, last_fetched,
-		fetched_revised, fetched_chapters, fetched_words FROM works WHERE id = ?`, w.ID).
+		fetched_revised, fetched_chapters, fetched_words, last_listed FROM works WHERE id = ?`, w.ID).
 		Scan(&st.revised, &st.chapters, &st.words, &st.status, &st.lastFetched,
-			&st.fetchedRevised, &st.fetchedChapters, &st.fetchedWords)
+			&st.fetchedRevised, &st.fetchedChapters, &st.fetchedWords, &st.lastListed)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		res.New = true
@@ -82,21 +100,25 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 		res.Changed = (revisedComparable && st.revised != w.Revised) || st.chapters != w.ChaptersPosted || st.words != w.Words
 	}
 
-	// Seeing the work on AO3 means it is visible again.
-	if !res.New && st.status != model.StatusOK {
+	// Seeing the work on AO3 means it is visible again (not when reparsing a stored page).
+	if !res.New && st.status != model.StatusOK && !opt.reparse {
 		res.Revived = true
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET status = 'ok', status_changed_at = ? WHERE id = ?`, now, w.ID); err != nil {
 			return res, err
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE works SET title = ?, summary_html = ?, language = ?, words = ?,
+	// A reparse of an old page must not roll back metadata from a newer listing blurb.
+	listingMeta := !(opt.reparse && st.lastListed > opt.pageAt)
+	if listingMeta {
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET title = ?, summary_html = ?, language = ?, words = ?,
 		chapters_posted = ?, chapters_expected = ?, complete = ?, revised_at = ?, kudos = ?, hits = ?,
 		comments = ?, bookmarks = ?, restricted = ?, anonymous = ? WHERE id = ?`,
-		w.Title, w.SummaryHTML, w.Language, w.Words, w.ChaptersPosted, w.ChaptersExpected, boolInt(w.Complete),
-		w.Revised, w.Stats.Kudos, w.Stats.Hits, w.Stats.Comments, w.Stats.Bookmarks, boolInt(w.Restricted),
-		boolInt(w.Anonymous), w.ID); err != nil {
-		return res, err
+			w.Title, w.SummaryHTML, w.Language, w.Words, w.ChaptersPosted, w.ChaptersExpected, boolInt(w.Complete),
+			w.Revised, w.Stats.Kudos, w.Stats.Hits, w.Stats.Comments, w.Stats.Bookmarks, boolInt(w.Restricted),
+			boolInt(w.Anonymous), w.ID); err != nil {
+			return res, err
+		}
 	}
 
 	switch origin {
@@ -107,6 +129,17 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 		res.NeedsFetch = res.New || st.lastFetched == 0 || (revisedComparable && st.fetchedRevised != w.Revised) ||
 			st.fetchedChapters != w.ChaptersPosted || st.fetchedWords != w.Words
 	case model.FromPage:
+		if opt.reparse {
+			if _, err := tx.ExecContext(ctx, `UPDATE works SET notes_html = ?, endnotes_html = ?, published = ?,
+				fetched_revised = ?, fetched_chapters = ?, fetched_words = ?, parser_version = ? WHERE id = ?`,
+				w.NotesHTML, w.EndNotesHTML, w.Published, w.Revised, w.ChaptersPosted, w.Words, parserVersion, w.ID); err != nil {
+				return res, err
+			}
+			if err := replaceChapters(ctx, tx, w.ID, w.Chapters); err != nil {
+				return res, err
+			}
+			break
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET notes_html = ?, endnotes_html = ?, published = ?,
 			last_fetched = ?, last_checked = ?, fetched_revised = ?, fetched_chapters = ?, fetched_words = ?,
 			parser_version = ? WHERE id = ?`,
@@ -119,14 +152,19 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 		}
 	}
 
-	if err := s.replaceCreators(ctx, tx, w.ID, w.Creators); err != nil {
-		return res, err
-	}
-	if err := s.replaceTags(ctx, tx, w.ID, w.Tags); err != nil {
-		return res, err
-	}
-	if err := s.replaceSeries(ctx, tx, w.ID, w.Series); err != nil {
-		return res, err
+	if listingMeta {
+		if err := s.replaceCreators(ctx, tx, w.ID, w.Creators); err != nil {
+			return res, err
+		}
+		if err := s.replaceTags(ctx, tx, w.ID, w.Tags); err != nil {
+			return res, err
+		}
+		if err := s.replaceSeries(ctx, tx, w.ID, w.Series); err != nil {
+			return res, err
+		}
+		if err := updateFTS(ctx, tx, w); err != nil {
+			return res, err
+		}
 	}
 	// Blurbs only show a collection count, so only pages (or blurbs that carry names) replace them.
 	if origin == model.FromPage || len(w.Collections) > 0 {
@@ -134,13 +172,11 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 			return res, err
 		}
 	}
-	if err := updateFTS(ctx, tx, w); err != nil {
-		return res, err
-	}
 	if err := tx.Commit(); err != nil {
 		return res, err
 	}
-	s.log.Debug("work upserted", "work_id", w.ID, "origin", originName(origin), "new", res.New,
+	s.log.Debug("work upserted", "work_id", w.ID, "origin", originName(origin), "reparse", opt.reparse,
+		"listing_meta_updated", listingMeta, "new", res.New,
 		"changed", res.Changed, "needs_fetch", res.NeedsFetch, "revived", res.Revived,
 		"tags", len(w.Tags), "creators", len(w.Creators), "chapters", len(w.Chapters), "series", len(w.Series))
 	return res, nil
@@ -350,4 +386,14 @@ func (s *Store) WorkNeedsFetch(ctx context.Context, workID int64) (bool, error) 
 		return true, nil
 	}
 	return need, err
+}
+
+// WorkParserVersion returns the parser version a work was last parsed with (0 if unknown).
+func (s *Store) WorkParserVersion(ctx context.Context, workID int64) (int, error) {
+	var v int
+	err := s.Meta.QueryRowContext(ctx, `SELECT parser_version FROM works WHERE id = ?`, workID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return v, err
 }

@@ -223,7 +223,8 @@ auth: { enabled: false }       # future login
 3. `internal/parse` from the templates plus synthetic fixtures. Add `cmd/skeletonize`. The user supplies skeletons and the parsers are adjusted to match.
 4. `internal/ao3url` + `internal/sources` + `source` CLI (add, estimate, confirm, pause, cancel).
 5. `internal/scheduler` + `run` daemon: polls, backfill, fairness, date slicing, resume after restart.
-6. Work fetch, the content store, and `reparse`.
+6. `reparse` (offline rebuild from raw pages) and `fetch-work [--now]`. (Work fetching itself
+   landed in milestone 5 so `run` mirrors works end to end.)
 7. Tag info, deletion/restricted verification, images.
 8. Live smoke test once AO3 is stable: add 1 small `series` or `work` source and run. Claude checks `status` only.
 

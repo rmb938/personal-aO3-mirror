@@ -381,3 +381,16 @@ func (s *Store) RecentRequests(ctx context.Context, onlyErrors bool, jobID int64
 	}
 	return out, rows.Err()
 }
+
+// ClaimJob marks one specific queued job running (for `fetch-work --now`).
+func (s *Store) ClaimJob(ctx context.Context, id int64, now time.Time) (Job, error) {
+	res, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = 'running', attempts = attempts + 1, started_at = ?, updated_at = ?
+		WHERE id = ? AND state = 'queued'`, now.Unix(), now.Unix(), id)
+	if err != nil {
+		return Job{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Job{}, ErrNoJob
+	}
+	return s.GetJob(ctx, id)
+}
