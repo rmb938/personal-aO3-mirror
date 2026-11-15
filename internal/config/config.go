@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 )
 
 // MinInterval is the hard floor between AO3 requests. Config cannot go below it.
@@ -153,8 +155,8 @@ func (c Config) Validate() error {
 	if c.Sources.AutoConfirmMax < 0 {
 		add("sources.auto_confirm_max must be >= 0")
 	}
-	if c.Sources.DefaultBackfillOrder == "" {
-		add("sources.default_backfill_order is required")
+	if _, err := ao3url.ParseOrder(c.Sources.DefaultBackfillOrder); err != nil {
+		add("sources.default_backfill_order: %v", err)
 	}
 	if c.Sources.PollInterval < 10*time.Minute {
 		add("sources.poll_interval %s must be >= 10m", c.Sources.PollInterval)

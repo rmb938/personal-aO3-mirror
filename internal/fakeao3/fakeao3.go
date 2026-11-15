@@ -88,6 +88,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		q := s.routes[r.URL.RequestURI()]
 		rep = pop(&q)
 		s.routes[r.URL.RequestURI()] = q
+	case s.routes[r.URL.EscapedPath()] != nil:
+		q := s.routes[r.URL.EscapedPath()]
+		rep = pop(&q)
+		s.routes[r.URL.EscapedPath()] = q
 	case s.routes[r.URL.Path] != nil:
 		q := s.routes[r.URL.Path]
 		rep = pop(&q)

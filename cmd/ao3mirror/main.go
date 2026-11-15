@@ -24,7 +24,7 @@ commands:
   version            print version
   config check       validate config and print the User-Agent that will be sent
   run                run the scraper daemon               (milestone 5)
-  source ...         add/list/pause/resume/cancel/remove/confirm sources (milestone 4)
+  source ...         add/list/show/confirm/pause/resume/cancel/remove sources ('source' for help)
   fetch-work ID      queue a single work on demand        (milestone 6)
   reparse            rebuild parsed data from stored raw pages, no requests (milestone 6)
   status             content-free queue/progress summary  (milestone 5)
@@ -79,7 +79,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	_ = ctx
 
 	switch rest[0] {
 	case "config":
@@ -91,7 +90,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 			*cfgPath, cfg.DataDir, cfg.UserAgent(version), cfg.Rate.Interval, config.MinInterval)
 		logger.Debug("config checked", "path", *cfgPath, "interval", cfg.Rate.Interval.String())
 		return 0
-	case "run", "source", "fetch-work", "reparse", "status", "debug":
+	case "source":
+		a, err := openApp(ctx, cfg, logger)
+		if err != nil {
+			fmt.Fprintf(stderr, "open: %v\n", err)
+			return 1
+		}
+		defer a.Close()
+		return runSource(ctx, a, rest[1:], stdout, stderr)
+	case "run", "fetch-work", "reparse", "status", "debug":
 		fmt.Fprintf(stderr, "%s: not implemented yet (see docs/plan.md milestones)\n", rest[0])
 		return 1
 	default:

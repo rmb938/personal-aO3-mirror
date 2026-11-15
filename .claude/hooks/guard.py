@@ -39,6 +39,9 @@ SQLITE_CLI = re.compile(r"(^|[\s;&|`(])(sqlite3?|litecli|sqlite-utils|datasette)
 # The skeletonizer processes real AO3 pages; only the user runs it. Block `go run` of it and
 # executing a built binary. Mentions in other commands (git add cmd/skeletonize, go build,
 # go vet, go test) are allowed.
+# ao3mirror hides tag/user/collection names unless --names is passed; that flag is user-only.
+AO3MIRROR_NAMES = re.compile(r"ao3mirror\b[^;&|]*\s--?names\b")
+
 SKELETONIZE_RUN = re.compile(r"\bgo\s+run\b[^;&|]*skeletonize")
 SKELETONIZE_EXEC = re.compile(r"(^|[\s;&|`(])((?:[^\s;&|`(]*/)?)skeletonize(?=$|[\s;&|`)])")
 
@@ -76,6 +79,8 @@ def main() -> None:
             not m.group(2).endswith("cmd/") for m in SKELETONIZE_EXEC.finditer(cmd)
         ):
             block("running skeletonize is user-only (it processes real AO3 pages)")
+        if AO3MIRROR_NAMES.search(cmd):
+            block("ao3mirror --names shows tag/user names; user-only")
         if touches_protected(cmd):
             block("shell command references the data dir, a .db/.zst file, or images/")
         return
