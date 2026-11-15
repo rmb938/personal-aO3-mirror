@@ -21,6 +21,8 @@ Claude must NOT:
   browser tools, Python, `go run` one-offs or anything else. The ONLY thing that talks to AO3 is
   the `ao3mirror` binary through `internal/httpx`.
 - Ask the user to paste fanwork content, or read real AO3 pages the user saved.
+- Run `cmd/skeletonize` (via `go run` or a built binary). It processes real AO3 pages; only the
+  user runs it. Claude may build, vet, test and edit it, and read its `*.skel.html` output.
 - Write test fixtures copied from real AO3 pages. Fixtures in `testdata/fixtures/` are
   hand-written with obviously fake content ("Fixture Title 1", "fixture_author", lorem ipsum).
 

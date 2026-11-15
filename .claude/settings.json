@@ -10,6 +10,8 @@
       "Read(./data/skeleton-input/**)",
       "Read(**/*.db)",
       "Bash(sqlite3:*)",
+      "Bash(go run ./cmd/skeletonize:*)",
+      "Bash(./skeletonize:*)",
       "WebFetch(domain:archiveofourown.org)",
       "WebFetch(domain:www.archiveofourown.org)",
       "WebFetch(domain:ao3.org)"

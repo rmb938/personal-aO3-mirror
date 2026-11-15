@@ -32,8 +32,13 @@ Regenerate skeletons when AO3 changes its HTML or a parser reports `parse_unexpe
    ```
 2. Get each page, either directly from AO3 (polite: User-Agent, robots.txt, pacing, retries):
    ```
-   go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/work-chaptered.skel.html https://archiveofourown.org/works/<id>
+   go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/work-chaptered.skel.html "https://archiveofourown.org/works/<multi-chapter id>"
+   go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/work-oneshot.skel.html "https://archiveofourown.org/works/<single-chapter id>"
+   go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/listing-tag.skel.html "https://archiveofourown.org/tags/<tag>/works?page=2"
+   go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/series.skel.html "https://archiveofourown.org/series/<id>"
    ```
+   Work URLs get `?view_full_work=true` added automatically. Each command retries for up to
+   ~15 minutes if AO3 returns errors (`--retry N` to change).
    or, if AO3 is rejecting non-browser clients (e.g. Cloudflare 525s during an incident), save
    the page from your browser (Ctrl+S, "Web Page, HTML only") into `data/skeleton-input/` and run:
    ```

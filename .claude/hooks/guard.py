@@ -36,6 +36,12 @@ ALLOWED = re.compile(
 
 SQLITE_CLI = re.compile(r"(^|[\s;&|`(])(sqlite3?|litecli|sqlite-utils|datasette)\b")
 
+# The skeletonizer processes real AO3 pages; only the user runs it. Block `go run` of it and
+# executing a built binary. Mentions in other commands (git add cmd/skeletonize, go build,
+# go vet, go test) are allowed.
+SKELETONIZE_RUN = re.compile(r"\bgo\s+run\b[^;&|]*skeletonize")
+SKELETONIZE_EXEC = re.compile(r"(^|[\s;&|`(])((?:[^\s;&|`(]*/)?)skeletonize(?=$|[\s;&|`)])")
+
 
 def block(reason: str) -> None:
     sys.stderr.write(
@@ -66,6 +72,10 @@ def main() -> None:
             block("shell command references an AO3 host")
         if SQLITE_CLI.search(cmd):
             block("sqlite CLI is not allowed (databases hold fanwork content)")
+        if SKELETONIZE_RUN.search(cmd) or any(
+            not m.group(2).endswith("cmd/") for m in SKELETONIZE_EXEC.finditer(cmd)
+        ):
+            block("running skeletonize is user-only (it processes real AO3 pages)")
         if touches_protected(cmd):
             block("shell command references the data dir, a .db/.zst file, or images/")
         return
