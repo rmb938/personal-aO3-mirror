@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -186,11 +187,15 @@ func (s *Scheduler) handleBackfill(ctx context.Context, job store.Job, log *slog
 		win = &ao3url.Window{From: from, To: to}
 	}
 
-	res, err := s.fetchListing(ctx, log, r, src, page, order, win, ClassBackfill)
+	fetchClass := ClassBackfill
+	if cur.Rescan {
+		fetchClass = ClassMaintenance
+	}
+	res, err := s.fetchListing(ctx, log, r, src, page, order, win, fetchClass)
 	if err != nil {
 		return nil, err
 	}
-	detail := map[string]any{"page": page, "blurbs": len(res.listing.Blurbs), "new": res.newWorks,
+	detail := map[string]any{"page": page, "blurbs": len(res.listing.Blurbs), "new": res.newWorks, "rescan": cur.Rescan,
 		"work_jobs": res.enqueued, "total": res.listing.Total, "req_id": res.reqID}
 	if win != nil {
 		detail["window_to"], detail["window_from"] = cur.WindowTo, cur.WindowFrom
@@ -236,9 +241,6 @@ func (s *Scheduler) handleBackfill(ctx context.Context, job store.Job, log *slog
 		r.TotalWorks = res.listing.Total
 	}
 	r.BackfillCursor = cur.JSON()
-	if cur.NextPage == 0 {
-		r.BackfillDoneAt = s.o.Now()
-	}
 	if err := s.st.UpdateSourceProgress(ctx, r); err != nil {
 		return nil, err
 	}
@@ -299,6 +301,13 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 	if err != nil {
 		return detail, err
 	}
+	if s.o.QueueImages {
+		n, err := s.st.QueueImages(ctx, id, workImages(w))
+		if err != nil {
+			return detail, err
+		}
+		detail["images_queued"] = n
+	}
 	if job.SourceID > 0 {
 		if err := s.st.LinkSourceWorks(ctx, job.SourceID, []int64{id}); err != nil {
 			return detail, err
@@ -312,4 +321,48 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 		detail["chapter_count_mismatch"] = mismatch
 	}
 	return detail, nil
+}
+
+// handleTagInfo fetches /tags/<tag> and records canonical/synonym/parent/meta relations.
+func (s *Scheduler) handleTagInfo(ctx context.Context, job store.Job, log *slog.Logger) (map[string]any, error) {
+	id, _ := strconv.ParseInt(job.Target, 10, 64)
+	t, err := s.st.TagByID(ctx, id)
+	if err != nil {
+		return nil, permanentError{code: "no_tag"}
+	}
+	resp, err := s.c.Get(ctx, httpx.KindTag, "/tags/"+ao3url.TagParam(t.Name))
+	if err != nil {
+		return nil, err
+	}
+	detail := map[string]any{"tag_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
+	if resp.Class == httpx.ClassNotFound {
+		return detail, s.st.UpdateTagInfo(ctx, id, store.TagInfoUpdate{Missing: true})
+	}
+	if err := outcome(resp); err != nil {
+		if resp.Class == httpx.ClassUnexpected {
+			s.saveSkeleton("tag", job.Target, resp.Body, log)
+		}
+		return detail, err
+	}
+	info, rep, err := parse.ParseTag(resp.Body)
+	log.Debug("parse report", append([]any{"req_id", resp.ReqID, "tag_id", id}, rep.Attrs()...)...)
+	if err != nil {
+		s.saveSkeleton("tag", job.Target, resp.Body, log)
+		return detail, permanentError{code: "parse_unexpected:" + strings.Join(rep.Missing, ",")}
+	}
+	if err := s.st.UpdateTagInfo(ctx, id, store.TagInfoUpdate{Type: info.Type, Canonical: info.Canonical,
+		MergerOf: info.MergerOf, Parents: info.Parents, MetaTags: info.MetaTags, Synonyms: info.Synonyms}); err != nil {
+		return detail, err
+	}
+	detail["type"], detail["canonical"], detail["parents"] = string(info.Type), info.Canonical, len(info.Parents)
+	return detail, nil
+}
+
+// workImages lists embedded image URLs from a work's text (bodies, notes, summaries).
+func workImages(w model.Work) []string {
+	frags := []string{w.SummaryHTML, w.NotesHTML, w.EndNotesHTML}
+	for _, c := range w.Chapters {
+		frags = append(frags, c.BodyHTML, c.NotesHTML, c.EndNotesHTML, c.SummaryHTML)
+	}
+	return imagefetch.Extract(frags...)
 }

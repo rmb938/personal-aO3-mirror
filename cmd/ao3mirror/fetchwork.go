@@ -53,8 +53,7 @@ func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Wri
 		return 1
 	}
 	defer unlock()
-	s := scheduler.New(scheduler.Options{Store: a.store, Client: a.client, Logger: a.log,
-		DataDir: a.cfg.DataDir, KeepVersions: a.cfg.Content.KeepVersions})
+	s := scheduler.New(a.schedulerOptions())
 	j, err := s.RunJob(ctx, jobID)
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work --now: %v\n", err)

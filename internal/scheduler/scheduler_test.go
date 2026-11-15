@@ -3,7 +3,10 @@ package scheduler
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -342,4 +345,93 @@ func TestLogsContentFree(t *testing.T) {
 		}
 	}
 	_ = strconv.Itoa
+}
+
+func TestTagInfoFetched(t *testing.T) {
+	e := newEnv(t, 3, func(o *Options) { o.TagInfoTypes = []string{"Fandom"} })
+	page, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "tag_synonym.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Handle("/tags/Fixture%20Tag", fakeao3.Reply{Body: string(page)})
+	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.drain(50)
+	e.clk.Advance(2 * time.Minute) // tag scheduling is throttled to once a minute
+	e.drain(50)
+	var fetchedAt int64
+	var merger sql.NullInt64
+	e.st.Meta.QueryRow(`SELECT info_fetched_at, merger_id FROM tags WHERE name = 'Fixture Tag'`).Scan(&fetchedAt, &merger)
+	if fetchedAt == 0 || !merger.Valid {
+		t.Fatalf("tag info not stored: fetched_at=%d merger=%v", fetchedAt, merger)
+	}
+	tagReqs := 0
+	for _, r := range e.srv.Requests() {
+		if r.URI == "/tags/Fixture%20Tag" {
+			tagReqs++
+		}
+	}
+	if tagReqs != 1 {
+		t.Fatalf("tag page requested %d times", tagReqs)
+	}
+	// Rating tags are not in info_types: never fetched.
+	for _, r := range e.srv.Requests() {
+		if strings.HasPrefix(r.URI, "/tags/General") {
+			t.Fatalf("unexpected tag fetch %s", r.URI)
+		}
+	}
+}
+
+func TestRescanVerifiesMissingWorks(t *testing.T) {
+	e := newEnv(t, 5, func(o *Options) { o.RescanInterval = 24 * time.Hour })
+	ctx := context.Background()
+	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	e.drain(50)
+	src, _ := e.st.GetSource(ctx, id)
+	if src.State != store.SourceDoneBackfill || src.LastFullScanAt.IsZero() {
+		t.Fatalf("after backfill: %+v", src)
+	}
+	e.site.Update(5003, func(w *fakeao3.SiteWork) { w.Deleted = true })
+	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Kudos = 9999 }) // stats-only change
+	before := len(e.srv.Requests())
+	e.clk.Advance(25 * time.Hour)
+	e.drain(100)
+	st, _, _ := e.st.WorkStatus(ctx, 5003)
+	if st != model.StatusDeleted {
+		t.Fatalf("missing work not verified as deleted: %s", st)
+	}
+	var kudos int
+	e.st.Meta.QueryRow(`SELECT kudos FROM works WHERE id = 5001`).Scan(&kudos)
+	if kudos != 9999 {
+		t.Fatalf("rescan did not refresh stats: %d", kudos)
+	}
+	var works []string
+	for _, r := range e.srv.Requests()[before:] {
+		if strings.HasPrefix(r.URI, "/works/") {
+			works = append(works, r.URI)
+		}
+	}
+	if len(works) != 1 || works[0] != "/works/5003?view_full_work=true" {
+		t.Fatalf("rescan should only fetch the missing work: %v", works)
+	}
+	src, _ = e.st.GetSource(ctx, id)
+	cur, _ := store.ParseCursor(src.BackfillCursor)
+	if src.State != store.SourceDoneBackfill || cur.Rescan || !src.LastFullScanAt.After(e.clk.Now().Add(-time.Hour)) {
+		t.Fatalf("after rescan: state=%s cursor=%+v last=%s", src.State, cur, src.LastFullScanAt)
+	}
+}
+
+func TestWorkFetchQueuesImages(t *testing.T) {
+	e := newEnv(t, 0, func(o *Options) { o.QueueImages = true })
+	ctx := context.Background()
+	page, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "work_chaptered.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Handle("/works/1001", fakeao3.Reply{Body: string(page)})
+	e.st.EnqueueJob(ctx, store.Job{Kind: KindWork, Target: "1001", Priority: ClassOnDemand, DedupeKey: "work:1001"})
+	e.drain(5)
+	counts, _, _ := e.st.ImageCounts(ctx)
+	if counts["queued"] != 1 {
+		t.Fatalf("expected the fixture's one embedded image queued: %v", counts)
+	}
 }

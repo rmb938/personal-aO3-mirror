@@ -33,6 +33,10 @@ sources:
 
 tags:
   info_ttl: 720h           # refresh tag wrangling info after this long
+  # Tag types whose tag pages are fetched for wrangling info (canonical, synonyms, parent
+  # fandoms/media). About 1 request per unique tag. Freeform tags are very numerous, so they are
+  # off by default; add "Freeform" to include them. [] disables tag-info fetching.
+  info_types: [Fandom, Relationship, Character]
 
 images:
   enabled: true

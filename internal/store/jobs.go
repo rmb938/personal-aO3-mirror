@@ -394,3 +394,10 @@ func (s *Store) ClaimJob(ctx context.Context, id int64, now time.Time) (Job, err
 	}
 	return s.GetJob(ctx, id)
 }
+
+// CountActiveJobs counts queued/running jobs of a kind.
+func (s *Store) CountActiveJobs(ctx context.Context, kind string) (int, error) {
+	var n int
+	err := s.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE kind = ? AND state IN ('queued','running')`, kind).Scan(&n)
+	return n, err
+}

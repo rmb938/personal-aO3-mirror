@@ -46,6 +46,9 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	fmt.Fprintf(out, "fetched: %s, awaiting first fetch: %s, tags: %s, creators: %s, series: %s\n",
 		comma(c.WorksFetched), comma(c.WorksNeverFetch), comma(c.Tags), comma(c.Creators), comma(c.Series))
 	fmt.Fprintf(out, "raw pages: %s (%s raw, %s stored)\n", comma(c.RawPages), mb(c.RawBytes), mb(c.RawZstdBytes))
+	if ic, ib, err := a.store.ImageCounts(ctx); err == nil && len(ic) > 0 {
+		fmt.Fprintf(out, "images: %s (%s stored)\n", kv(ic), mb(ib))
+	}
 
 	fmt.Fprintln(out, "\n== queue")
 	jc, _ := a.store.JobCounts(ctx)

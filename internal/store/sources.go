@@ -246,6 +246,10 @@ type Cursor struct {
 	WindowFrom string `json:"window_from,omitempty"` // YYYY-MM-DD
 	WindowTo   string `json:"window_to,omitempty"`
 	SpanDays   int    `json:"span_days,omitempty"`
+	// Rescan marks a periodic full re-walk (stats refresh + deletion detection) started at
+	// RescanStarted (unix seconds). Works not seen since then get a verification fetch.
+	Rescan        bool  `json:"rescan,omitempty"`
+	RescanStarted int64 `json:"rescan_started,omitempty"`
 }
 
 func (c Cursor) JSON() string {
@@ -260,4 +264,24 @@ func ParseCursor(s string) (Cursor, error) {
 	}
 	err := json.Unmarshal([]byte(s), &c)
 	return c, err
+}
+
+// SourceWorksNotSeenSince returns ok works linked to a source whose last listing sighting in
+// that source is before since (candidates for deletion checks).
+func (s *Store) SourceWorksNotSeenSince(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
+	rows, err := s.Meta.QueryContext(ctx, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
+		WHERE sw.source_id = ? AND sw.last_seen < ? AND w.status = 'ok' ORDER BY sw.work_id`, sourceID, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }

@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
+	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
 )
 
@@ -43,13 +45,29 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 		return 1
 	}
 	defer unlock()
-	s := scheduler.New(scheduler.Options{
-		Store: a.store, Client: a.client, Logger: a.log,
-		DataDir: a.cfg.DataDir, KeepVersions: a.cfg.Content.KeepVersions,
-	})
+	s := scheduler.New(a.schedulerOptions())
 	a.log.Info("daemon starting", "interval", a.cfg.Rate.Interval.String(), "daily_budget", a.cfg.Rate.DailyBudget,
-		"user_agent_contact_set", a.cfg.Contact.Discord != "")
-	if err := s.Run(ctx); err != nil {
+		"user_agent_contact_set", a.cfg.Contact.Discord != "", "images", a.cfg.Images.Enabled,
+		"tag_info_types", len(a.cfg.Tags.InfoTypes))
+
+	// Image downloads go to external hosts (not AO3), so they run beside the AO3 loop with their
+	// own per-host pacing.
+	var wg sync.WaitGroup
+	if a.cfg.Images.Enabled {
+		w, err := imagefetch.New(imagefetch.Options{
+			Store: a.store, UserAgent: a.client.UserAgent(), Dir: a.cfg.Path("images"),
+			PerHostInterval: a.cfg.Images.PerHostInterval, MaxBytes: a.cfg.Images.MaxBytes, Logger: a.log,
+		})
+		if err != nil {
+			fmt.Fprintf(errOut, "run: images: %v\n", err)
+			return 1
+		}
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = w.Run(ctx) }()
+	}
+	err = s.Run(ctx)
+	wg.Wait()
+	if err != nil {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
 	}

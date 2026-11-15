@@ -11,6 +11,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
 	"github.com/rmb938/personal-aO3-mirror/internal/sources"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -59,6 +60,16 @@ func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, er
 }
 
 func (a *app) Close() { a.store.Close() }
+
+func (a *app) schedulerOptions() scheduler.Options {
+	return scheduler.Options{
+		Store: a.store, Client: a.client, Logger: a.log,
+		DataDir: a.cfg.DataDir, KeepVersions: a.cfg.Content.KeepVersions,
+		TagInfoTypes: a.cfg.Tags.InfoTypes, TagInfoTTL: a.cfg.Tags.InfoTTL,
+		RescanInterval: a.cfg.Sources.FullRescanInterval,
+		QueueImages:    a.cfg.Images.Enabled,
+	}
+}
 
 // appCfg is what offline commands (reparse) need: no HTTP client is ever built for them.
 type appCfg struct {

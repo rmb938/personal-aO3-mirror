@@ -222,7 +222,7 @@ func TestTagParamRoundTrip(t *testing.T) {
 // Skeletons: fixtures must survive skeletonization with structure intact, and skeletons must
 // contain no text. Real skeletons supplied by the user (testdata/skeletons) are checked too.
 func TestSkeletonsKeepStructure(t *testing.T) {
-	for _, f := range []string{"work_chaptered.html", "work_oneshot.html", "listing_tag.html", "series.html"} {
+	for _, f := range []string{"work_chaptered.html", "work_oneshot.html", "listing_tag.html", "series.html", "tag_character.html"} {
 		skel, err := skeleton.Skeletonize(bytes.NewReader(fixture(t, f)))
 		if err != nil {
 			t.Fatal(err)
@@ -291,6 +291,13 @@ func checkSkeleton(t *testing.T, name string, skel []byte) {
 		checkBlurbs(t, name, l, r)
 		if l.Total <= 0 {
 			t.Errorf("%s: no total parsed from heading", name)
+		}
+	case strings.HasPrefix(name, "tag"):
+		ti, r, err := ParseTag(skel)
+		if err != nil {
+			t.Errorf("%s: tag skeleton failed: %v missing=%v", name, err, r.Missing)
+		} else if ti.Name == "" || ti.Type == model.TagUnknown {
+			t.Errorf("%s: tag skeleton: name=%t type=%s report=%v", name, ti.Name != "", ti.Type, r.Attrs())
 		}
 	case strings.HasPrefix(name, "series"):
 		s, r, err := ParseSeries(1, skel, fetchedAt)

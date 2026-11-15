@@ -60,7 +60,7 @@ func TestMigrationsIdempotent(t *testing.T) {
 			t.Fatalf("open %d: %v", i, err)
 		}
 		for _, db := range []string{"meta", "content"} {
-			want := map[string]int{"meta": 2, "content": 2}[db]
+			want := map[string]int{"meta": 3, "content": 2}[db]
 			if v, err := s.SchemaVersion(ctx, db); err != nil || v != want {
 				t.Fatalf("%s schema = %d, %v", db, v, err)
 			}
@@ -297,7 +297,7 @@ func TestCountsAndRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.WorksByStatus["ok"] != 1 || c.WorksByStatus["deleted"] != 1 || c.WorksNeverFetch != 1 ||
-		c.Requests1h != 1 || c.Requests24h != 2 || c.RawPages != 1 || c.Tags != 4 || c.MetaSchema != 2 {
+		c.Requests1h != 1 || c.Requests24h != 2 || c.RawPages != 1 || c.Tags != 4 || c.MetaSchema != 3 {
 		t.Fatalf("counts: %+v", c)
 	}
 	if n, _ := s.PruneRequests(ctx, time.Hour); n != 1 {

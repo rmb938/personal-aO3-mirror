@@ -62,7 +62,13 @@ type Sources struct {
 
 type Tags struct {
 	InfoTTL time.Duration `yaml:"info_ttl"`
+	// InfoTypes are the tag types whose tag pages are fetched for wrangling info (canonical,
+	// synonyms, parents). ~1 request per unique tag; empty disables tag-info fetching.
+	InfoTypes []string `yaml:"info_types"`
 }
+
+// TagInfoTypes are the valid values for tags.info_types.
+var TagInfoTypes = map[string]bool{"Fandom": true, "Relationship": true, "Character": true, "Freeform": true}
 
 type Images struct {
 	Enabled         bool          `yaml:"enabled"`
@@ -90,7 +96,7 @@ func Default() Config {
 			PollInterval:         6 * time.Hour,
 			FullRescanInterval:   30 * 24 * time.Hour,
 		},
-		Tags:    Tags{InfoTTL: 30 * 24 * time.Hour},
+		Tags:    Tags{InfoTTL: 30 * 24 * time.Hour, InfoTypes: []string{"Fandom", "Relationship", "Character"}},
 		Images:  Images{Enabled: true, PerHostInterval: 3 * time.Second, MaxBytes: 25 << 20},
 		Content: Content{KeepVersions: 1},
 	}
@@ -166,6 +172,11 @@ func (c Config) Validate() error {
 	}
 	if c.Tags.InfoTTL < time.Hour {
 		add("tags.info_ttl must be >= 1h")
+	}
+	for _, t := range c.Tags.InfoTypes {
+		if !TagInfoTypes[t] {
+			add("tags.info_types: %q must be one of Fandom, Relationship, Character, Freeform", t)
+		}
 	}
 	if c.Images.PerHostInterval < time.Second {
 		add("images.per_host_interval must be >= 1s")

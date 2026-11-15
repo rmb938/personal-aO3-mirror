@@ -36,13 +36,14 @@ Regenerate skeletons when AO3 changes its HTML or a parser reports `parse_unexpe
    go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/work-oneshot.skel.html "https://archiveofourown.org/works/<single-chapter id>"
    go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/listing-tag.skel.html "https://archiveofourown.org/tags/<tag>/works?page=2"
    go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/series.skel.html "https://archiveofourown.org/series/<id>"
+   go run ./cmd/skeletonize --config ao3mirror.local.yaml -o testdata/skeletons/tag-character.skel.html "https://archiveofourown.org/tags/<character tag>"
    ```
    Work URLs get `?view_full_work=true` added automatically. Each command retries for up to
    ~15 minutes if AO3 returns errors (`--retry N` to change).
    or, if AO3 is rejecting non-browser clients (e.g. Cloudflare 525s during an incident), save
    the page from your browser (Ctrl+S, "Web Page, HTML only") into `data/skeleton-input/` and run:
    ```
-   for n in work-chaptered work-oneshot listing-tag series; do
+   for n in work-chaptered work-oneshot listing-tag series tag-character; do
      go run ./cmd/skeletonize data/skeleton-input/$n.html -o testdata/skeletons/$n.skel.html
    done
    ```
@@ -54,8 +55,9 @@ Regenerate skeletons when AO3 changes its HTML or a parser reports `parse_unexpe
    | `work-oneshot.skel.html` | a single-chapter work (Chapters `1/1`), `/works/<id>` |
    | `listing-tag.skel.html` | a tag listing past page 1, `/tags/<tag>/works?page=2` |
    | `series.skel.html` | a series page, `/series/<id>` |
+   | `tag-character.skel.html` | a canonical character tag's own page, `/tags/<tag>` (not `/works`) |
 
-   The file name prefix (`work`, `listing`, `series`) tells the tests which parser to check.
+   The file name prefix (`work`, `listing`, `series`, `tag`) tells the tests which parser to check.
 3. Check the parsers against them:
    ```
    go test ./internal/parse -run Skeleton -v

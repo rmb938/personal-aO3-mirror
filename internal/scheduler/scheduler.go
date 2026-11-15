@@ -37,6 +37,7 @@ const (
 	KindPoll     = jobs.KindPoll
 	KindBackfill = jobs.KindBackfill
 	KindWork     = jobs.KindWork
+	KindTagInfo  = jobs.KindTagInfo
 )
 
 // Fetcher is the subset of httpx.Client the scheduler needs.
@@ -56,6 +57,11 @@ type Options struct {
 	MaxResults   int           // AO3 search window (default ao3url.MaxResults); tests lower it
 	MaxPollPages int           // cap on pages walked per update poll (default 50)
 	WindowDays   int           // initial date-window span for >MaxResults sources (default 365)
+
+	TagInfoTypes   []string      // tag types to fetch wrangling info for (empty = off)
+	TagInfoTTL     time.Duration // refetch tag info after this long (default 30d)
+	RescanInterval time.Duration // full re-walk of done sources (default 30d)
+	QueueImages    bool          // queue embedded images of fetched works for the image worker
 }
 
 type Scheduler struct {
@@ -66,6 +72,7 @@ type Scheduler struct {
 	handlers  map[string]func(context.Context, store.Job, *slog.Logger) (map[string]any, error)
 	kinds     []string
 	lastPrune time.Time
+	lastTags  time.Time
 }
 
 func New(o Options) *Scheduler {
@@ -90,11 +97,18 @@ func New(o Options) *Scheduler {
 	if o.KeepVersions < 1 {
 		o.KeepVersions = 1
 	}
+	if o.TagInfoTTL == 0 {
+		o.TagInfoTTL = 30 * 24 * time.Hour
+	}
+	if o.RescanInterval == 0 {
+		o.RescanInterval = 30 * 24 * time.Hour
+	}
 	s := &Scheduler{o: o, st: o.Store, c: o.Client, log: o.Logger.With("component", "scheduler")}
 	s.handlers = map[string]func(context.Context, store.Job, *slog.Logger) (map[string]any, error){
 		KindPoll:     s.handlePoll,
 		KindBackfill: s.handleBackfill,
 		KindWork:     s.handleWork,
+		KindTagInfo:  s.handleTagInfo,
 	}
 	for k := range s.handlers {
 		s.kinds = append(s.kinds, k)
@@ -252,6 +266,9 @@ func (s *Scheduler) schedule(ctx context.Context) error {
 		return err
 	}
 	now := s.o.Now()
+	if err := s.scheduleTagInfo(ctx, now); err != nil {
+		return err
+	}
 	for _, r := range rows {
 		if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
 			continue
@@ -275,28 +292,119 @@ func (s *Scheduler) schedule(ctx context.Context) error {
 				return err
 			}
 		}
-		if r.State == store.SourceActive {
-			cur, err := store.ParseCursor(r.BackfillCursor)
-			if err != nil {
-				log.Error("bad backfill cursor; resetting", "err", err.Error())
-				cur = store.Cursor{NextPage: 1, Order: r.BackfillOrder}
+		if r.State == store.SourceDoneBackfill {
+			if err := s.maybeStartRescan(ctx, r, now, log); err != nil {
+				return err
 			}
-			if cur.NextPage > 0 {
-				key := backfillKey(r.ID, cur)
-				if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindBackfill, SourceID: r.ID,
-					Target: strconv.Itoa(cur.NextPage), Priority: ClassBackfill, DedupeKey: key}); err != nil {
-					return err
-				} else if created {
-					log.Debug("backfill page scheduled", "page", cur.NextPage, "window_to", cur.WindowTo)
-				}
-			} else if cur.NextPage == 0 {
-				if err := s.st.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err == nil {
-					r.BackfillDoneAt = now
-					_ = s.st.UpdateSourceProgress(ctx, r)
-					log.Info("backfill complete", "works_seen", r.MemberWorks, "works_fetched", r.FetchedWorks)
-				}
+			continue
+		}
+		cur, err := store.ParseCursor(r.BackfillCursor)
+		if err != nil {
+			log.Error("bad backfill cursor; resetting", "err", err.Error())
+			cur = store.Cursor{NextPage: 1, Order: r.BackfillOrder}
+		}
+		if cur.NextPage > 0 {
+			class := ClassBackfill
+			if cur.Rescan {
+				class = ClassMaintenance
+			}
+			key := backfillKey(r.ID, cur)
+			if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindBackfill, SourceID: r.ID,
+				Target: strconv.Itoa(cur.NextPage), Priority: class, DedupeKey: key}); err != nil {
+				return err
+			} else if created {
+				log.Debug("backfill page scheduled", "page", cur.NextPage, "window_to", cur.WindowTo, "rescan", cur.Rescan)
+			}
+			continue
+		}
+		if err := s.finishWalk(ctx, r, cur, now, log); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finishWalk completes a backfill or rescan: verifies works not seen during a rescan, then
+// marks the source done_backfill.
+func (s *Scheduler) finishWalk(ctx context.Context, r store.SourceRow, cur store.Cursor, now time.Time, log *slog.Logger) error {
+	if err := s.st.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
+		return nil // state changed concurrently (paused/cancelled); try next round
+	}
+	verify := 0
+	if cur.Rescan {
+		missing, err := s.st.SourceWorksNotSeenSince(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
+		if err != nil {
+			return err
+		}
+		for _, id := range missing {
+			if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindWork, SourceID: r.ID, Target: strconv.FormatInt(id, 10),
+				Priority: ClassMaintenance, DedupeKey: jobs.WorkKey(id)}); err != nil {
+				return err
+			} else if created {
+				verify++
 			}
 		}
+		cur.Rescan, cur.RescanStarted = false, 0
+		r.BackfillCursor = cur.JSON()
+	}
+	r.BackfillDoneAt, r.LastFullScanAt = now, now
+	if err := s.st.UpdateSourceProgress(ctx, r); err != nil {
+		return err
+	}
+	log.Info("source walk complete", "works_seen", r.MemberWorks, "works_fetched", r.FetchedWorks, "verify_jobs", verify)
+	return nil
+}
+
+// maybeStartRescan restarts the listing walk of a done source every RescanInterval to refresh
+// stats and find works that disappeared.
+func (s *Scheduler) maybeStartRescan(ctx context.Context, r store.SourceRow, now time.Time, log *slog.Logger) error {
+	if r.Kind == string(ao3url.KindWork) {
+		return nil
+	}
+	if r.LastFullScanAt.IsZero() {
+		r.LastFullScanAt = now
+		return s.st.UpdateSourceProgress(ctx, r)
+	}
+	if now.Before(r.LastFullScanAt.Add(s.o.RescanInterval)) {
+		return nil
+	}
+	cur := store.Cursor{NextPage: 1, Order: r.BackfillOrder, Rescan: true, RescanStarted: now.Unix()}
+	r.BackfillCursor = cur.JSON()
+	if err := s.st.UpdateSourceProgress(ctx, r); err != nil {
+		return err
+	}
+	if err := s.st.SetSourceState(ctx, r.ID, store.SourceActive, store.SourceDoneBackfill); err != nil {
+		return nil
+	}
+	log.Info("rescan started", "last_full_scan", r.LastFullScanAt)
+	return nil
+}
+
+// scheduleTagInfo keeps a small queue of tag-info fetches (most-used tags first).
+func (s *Scheduler) scheduleTagInfo(ctx context.Context, now time.Time) error {
+	if len(s.o.TagInfoTypes) == 0 || now.Sub(s.lastTags) < time.Minute {
+		return nil
+	}
+	s.lastTags = now
+	active, err := s.st.CountActiveJobs(ctx, KindTagInfo)
+	if err != nil || active >= 25 {
+		return err
+	}
+	tags, err := s.st.TagsNeedingInfo(ctx, s.o.TagInfoTypes, now.Add(-s.o.TagInfoTTL), 50)
+	if err != nil {
+		return err
+	}
+	queued := 0
+	for _, t := range tags {
+		if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindTagInfo, Target: strconv.FormatInt(t.ID, 10),
+			Priority: ClassTagInfo, DedupeKey: jobs.TagKey(t.ID)}); err != nil {
+			return err
+		} else if created {
+			queued++
+		}
+	}
+	if queued > 0 {
+		s.log.Debug("tag info scheduled", "jobs", queued)
 	}
 	return nil
 }

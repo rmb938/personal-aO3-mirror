@@ -174,9 +174,19 @@ func (s *Skeletonizer) Text(t string) string {
 	return lead + s.textCore(trim) + tail
 }
 
+// uiPrefixes are AO3 interface sentences that start a text node followed by other text.
+var uiPrefixes = []*regexp.Regexp{
+	regexp.MustCompile(`^This tag belongs to the (Fandom|Character|Relationship|Additional Tags|Rating|Warning|Archive Warning|Category|Media|Unsorted Tag) Category\.`),
+}
+
 func (s *Skeletonizer) textCore(t string) string {
 	if isUI(t) {
 		return t
+	}
+	for _, p := range uiPrefixes {
+		if m := p.FindString(t); m != "" {
+			return m + s.words(t[len(m):])
+		}
 	}
 	if isoDate.MatchString(t) {
 		return s.date(t, "2006-01-02")
@@ -403,7 +413,7 @@ var safeWords = map[string]bool{
 	"fandoms": true, "login": true, "search": true, "profile": true, "comments": true, "kudos": true,
 	"downloads": true, "help": true, "admin_posts": true, "menu": true, "gifts": true, "share": true,
 	"people": true, "external_works": true, "first_login_help": true, "invite_requests": true,
-	"symbols-key.html": true, "images": true, "lockblue.png": true, "lockred.png": true,
+	"symbols-key.html": true, "faq": true, "glossary": true, "images": true, "lockblue.png": true, "lockred.png": true,
 }
 
 // segments following these are user-chosen names and are slugged consistently with page text
