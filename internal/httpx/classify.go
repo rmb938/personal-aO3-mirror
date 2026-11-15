@@ -17,7 +17,7 @@ const (
 	ClassNotFound    Class = "not_found"    // 404: deleted or never existed
 	ClassRestricted  Class = "restricted"   // redirect to login with restricted=true (archive-locked)
 	ClassHidden      Class = "hidden"       // access denied: hidden by admin, unrevealed, draft
-	ClassAdultGate   Class = "adult_gate"   // adult interstitial despite view_adult=true
+	ClassAdultGate   Class = "adult_gate"   // adult interstitial despite the view_adult cookie
 	ClassRateLimited Class = "rate_limited" // 429
 	ClassUnavailable Class = "unavailable"  // 5xx, Cloudflare 52x/challenge/waiting room, maintenance
 	ClassUnexpected  Class = "parse_unexpected"

@@ -102,6 +102,17 @@ func TestUserAgentOnEveryRequest(t *testing.T) {
 	}
 }
 
+func TestViewAdultCookieSent(t *testing.T) {
+	h := newHarness(t, 10*time.Second, 0)
+	h.srv.Handle("/works/7", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
+	h.get(t, KindWork, "/works/7?view_full_work=true")
+	for _, r := range h.srv.Requests() {
+		if !strings.Contains(r.Cookie, "view_adult=true") {
+			t.Errorf("%s: missing view_adult cookie (Cookie=%q)", r.URI, r.Cookie)
+		}
+	}
+}
+
 func TestNewRequiresUA(t *testing.T) {
 	for _, ua := range []string{"", "   ", "some-bot/1.0"} {
 		if _, err := New(Options{UserAgent: ua}); !errors.Is(err, ErrNoUA) {
@@ -133,7 +144,7 @@ func TestRobotsDisallowedNeverSent(t *testing.T) {
 	h.srv.Handle("/works/5", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
 	h.srv.Handle("/tags/fixture/works", fakeao3.Reply{Body: fakeao3.Page("")})
 	for _, ref := range []string{
-		"/works/5?view_full_work=true&view_adult=true",
+		"/works/5?view_full_work=true",
 		"/tags/fixture/works?work_search%5Bsort_column%5D=revised_at&page=3",
 	} {
 		if _, err := h.c.Get(context.Background(), KindPage, ref); err != nil {

@@ -146,6 +146,10 @@ func New(o Options) (*Client, error) {
 		return nil, err
 	}
 	jar, _ := cookiejar.New(nil)
+	// Same cookie AO3's own "Proceed" link sets (works_controller#show: cookies[:view_adult]).
+	// It replaces the view_adult=true query param, whose combination with view_full_work=true
+	// returned Cloudflare 525s during the Nov 2026 incident while each param alone worked.
+	jar.SetCookies(base, []*http.Cookie{{Name: "view_adult", Value: "true", Path: "/"}})
 	if o.Clock == nil {
 		o.Clock = realClock{}
 	}

@@ -15,13 +15,13 @@ Repo today: only `README.md` and `LICENSE`. Go 1.27 is installed. Greenfield pro
 ## Research findings (they drive the design)
 
 - **robots.txt** (fetched with our UA): `User-agent: *` disallows `/works?` (works index with a query), `/downloads/`, `/autocomplete/`, `/external_works/`, `/works/search?`, `/tags/search?`, `/people/search?`, `/bookmarks/search?`.
-  - These remain **allowed**: `/works/<id>?view_full_work=true&view_adult=true`, `/tags/<tag>/works?work_search[...]`, `/users/<u>/works`, `/series/<id>`, `/collections/<c>/works`, `/tags/<tag>`.
+  - These remain **allowed**: `/works/<id>?view_full_work=true` (+ `view_adult=true` cookie), `/tags/<tag>/works?work_search[...]`, `/users/<u>/works`, `/series/<id>`, `/collections/<c>/works`, `/tags/<tag>`.
   - We obey robots.txt strictly. So: no `/downloads/` (also HTML-only during the incident), no `/works/search`.
 - **Rate limit:** AO3 does not publish one. The open-source code (otwcode/otwarchive) defaults to 300 requests per 300 s per IP (`config/config.yml` `RATE_LIMIT_NUMBER/PERIOD`, enforced in `config/initializers/rack_attack.rb`), and returns 429 with `Retry-After`. Production may override this, and Cloudflare sits in front. So we treat the number as unconfirmed and stay about 10x under it.
 - **Listing cap:** `MAX_SEARCH_RESULTS: 100000`, so at most 5,000 pages of 20 per query. Larger sources must be sliced with `work_search[date_from/date_to]`, which filters on `revised_at`.
 - **Tag listing defaults:** faceted listings (`/tags/X/works`) sort by `revised_at` desc. Unfiltered pages 1..N are server-cached, which makes them cheap for AO3.
 - **Tag atom feeds:** they only show the 25 newest works by `created_at`. They miss updates, so we don't use them. Listing page 1 sorted by `revised_at` catches both new and updated works.
-- **Work page:** `view_full_work=true` returns all chapters in **1 request**. `view_adult=true` skips the adult interstitial. Restricted works redirect to login.
+- **Work page:** `view_full_work=true` returns all chapters in **1 request**. The `view_adult=true` cookie skips the adult interstitial (the `view_adult` query param combined with `view_full_work` returned Cloudflare 525s during the incident, while each alone worked). Restricted works redirect to login.
 - **Search scope:** AO3 search covers metadata only (title, summary, tags, creators, stats), not body text. So metadata FTS5 matches AO3 behaviour.
 - **Cloudflare:** AO3 currently returns 525, `__cfwaitingroom` cookies, and challenge pages. The client must recognise these as "back off", not as parse failures.
 - **HTML structure:** the otwarchive Rails views are the reference: `works/_work_blurb`, `_work_module`, `_meta`, `show`, `tags/show`, `series/show`. They are open-source code, not fanworks, so Claude may read them.

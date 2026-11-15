@@ -60,7 +60,8 @@ func TestMigrationsIdempotent(t *testing.T) {
 			t.Fatalf("open %d: %v", i, err)
 		}
 		for _, db := range []string{"meta", "content"} {
-			if v, err := s.SchemaVersion(ctx, db); err != nil || v != 1 {
+			want := map[string]int{"meta": 1, "content": 2}[db]
+			if v, err := s.SchemaVersion(ctx, db); err != nil || v != want {
 				t.Fatalf("%s schema = %d, %v", db, v, err)
 			}
 		}
@@ -111,6 +112,19 @@ func TestUpsertBlurbThenPage(t *testing.T) {
 	s.Meta.QueryRow(`SELECT COUNT(*) FROM work_collections WHERE work_id = 1`).Scan(&colls)
 	if kudos != 99 || published != "2026-10-01" || chapters != 2 || colls != 1 {
 		t.Fatalf("blurb clobbered page data: kudos=%d published=%q chapters=%d colls=%d", kudos, published, chapters, colls)
+	}
+
+	// Relative blurb date ("3 days" => approximate) with nothing else changed: no fetch, date kept.
+	ap := w
+	ap.Revised, ap.RevisedApprox = "2026-11-12", true
+	r, _ = s.UpsertWork(ctx, ap, model.FromBlurb, 1)
+	if r.Changed || r.NeedsFetch {
+		t.Fatalf("approx date alone should not trigger fetch: %+v", r)
+	}
+	var revised string
+	s.Meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&revised)
+	if revised != "2026-11-01" {
+		t.Fatalf("approx date overwrote exact date: %s", revised)
 	}
 
 	// New chapter: changed + needs fetch.
@@ -236,7 +250,7 @@ func TestChapterBodiesRoundTrip(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
 	in := []model.Chapter{
-		{ID: 1, Position: 1, BodyHTML: "<p>fixture one</p>", NotesHTML: "<p>n</p>"},
+		{ID: 1, Position: 1, BodyHTML: "<p>fixture one</p>", NotesHTML: "<p>n</p>", SummaryHTML: "<p>s</p>"},
 		{ID: 2, Position: 2, BodyHTML: "<p>fixture two</p>", EndNotesHTML: "<p>e</p>"},
 	}
 	if err := s.PutWorkContent(ctx, 9, in, "#workskin p { color: red; }"); err != nil {
@@ -247,7 +261,8 @@ func TestChapterBodiesRoundTrip(t *testing.T) {
 		t.Fatal(err, len(out))
 	}
 	for i := range in {
-		if out[i].BodyHTML != in[i].BodyHTML || out[i].NotesHTML != in[i].NotesHTML || out[i].EndNotesHTML != in[i].EndNotesHTML {
+		if out[i].BodyHTML != in[i].BodyHTML || out[i].NotesHTML != in[i].NotesHTML || out[i].EndNotesHTML != in[i].EndNotesHTML ||
+			out[i].SummaryHTML != in[i].SummaryHTML {
 			t.Fatalf("chapter %d mismatch", i)
 		}
 	}

@@ -13,10 +13,10 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
+	buildversion "github.com/rmb938/personal-aO3-mirror/internal/version"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "0.1.0-dev"
+var version = buildversion.Version
 
 const usage = `usage: ao3mirror [--config FILE] [--log-level LEVEL] <command> [args]
 

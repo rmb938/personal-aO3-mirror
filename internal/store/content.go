@@ -116,9 +116,9 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 			body = []byte{}
 		}
 		total += len(c.BodyHTML)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO chapter_bodies (work_id, position, chapter_id, body_zstd, notes_zstd, endnotes_zstd)
-			VALUES (?,?,?,?,?,?)`, workID, c.Position, c.ID, body,
-			s.compress([]byte(c.NotesHTML)), s.compress([]byte(c.EndNotesHTML))); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chapter_bodies (work_id, position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd)
+			VALUES (?,?,?,?,?,?,?)`, workID, c.Position, c.ID, body,
+			s.compress([]byte(c.NotesHTML)), s.compress([]byte(c.EndNotesHTML)), s.compress([]byte(c.SummaryHTML))); err != nil {
 			return err
 		}
 	}
@@ -140,7 +140,7 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 
 // ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them).
 func (s *Store) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapter, error) {
-	rows, err := s.Content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd
+	rows, err := s.Content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd
 		FROM chapter_bodies WHERE work_id = ? ORDER BY position`, workID)
 	if err != nil {
 		return nil, err
@@ -149,14 +149,14 @@ func (s *Store) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapte
 	var out []model.Chapter
 	for rows.Next() {
 		var c model.Chapter
-		var body, notes, end []byte
-		if err := rows.Scan(&c.Position, &c.ID, &body, &notes, &end); err != nil {
+		var body, notes, end, summary []byte
+		if err := rows.Scan(&c.Position, &c.ID, &body, &notes, &end, &summary); err != nil {
 			return nil, err
 		}
 		for _, p := range []struct {
 			z   []byte
 			dst *string
-		}{{body, &c.BodyHTML}, {notes, &c.NotesHTML}, {end, &c.EndNotesHTML}} {
+		}{{body, &c.BodyHTML}, {notes, &c.NotesHTML}, {end, &c.EndNotesHTML}, {summary, &c.SummaryHTML}} {
 			b, err := s.decompress(p.z)
 			if err != nil {
 				return nil, err

@@ -3,13 +3,16 @@ module github.com/rmb938/personal-aO3-mirror
 go 1.27.3
 
 require (
+	github.com/PuerkitoBio/goquery v1.14.0
 	github.com/klauspost/compress v1.20.4
 	github.com/temoto/robotstxt v1.1.2
+	golang.org/x/net v0.62.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.62.0
 )
 
 require (
+	github.com/andybalholm/cascadia v1.3.5 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

@@ -38,6 +38,7 @@ type Recorded struct {
 	Method    string
 	URI       string // path + raw query
 	UserAgent string
+	Cookie    string
 }
 
 // Server is an httptest server with scripted routes.
@@ -78,7 +79,7 @@ func (s *Server) Requests() []Recorded {
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.requests = append(s.requests, Recorded{Time: time.Now(), Method: r.Method, URI: r.URL.RequestURI(), UserAgent: r.UserAgent()})
+	s.requests = append(s.requests, Recorded{Time: time.Now(), Method: r.Method, URI: r.URL.RequestURI(), UserAgent: r.UserAgent(), Cookie: r.Header.Get("Cookie")})
 	var rep Reply
 	switch {
 	case r.URL.Path == "/robots.txt":

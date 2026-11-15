@@ -69,6 +69,7 @@ type Chapter struct {
 	Position     int   // 1-based
 	Title        string
 	Published    string // YYYY-MM-DD, if known
+	SummaryHTML  string
 	BodyHTML     string
 	NotesHTML    string
 	EndNotesHTML string
@@ -92,6 +93,7 @@ type Work struct {
 	Complete         bool
 	Published        string // YYYY-MM-DD (page only)
 	Revised          string // YYYY-MM-DD: "Updated"/"Completed" on page, datetime on blurb
+	RevisedApprox    bool   // Revised came from a relative blurb date ("3 days"); not exact
 	Stats            Stats
 	Series           []SeriesPart
 	Collections      []Collection

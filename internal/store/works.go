@@ -65,7 +65,16 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 		return res, err
 	default:
 		res.PrevStatus = st.status
-		res.Changed = st.revised != w.Revised || st.chapters != w.ChaptersPosted || st.words != w.Words
+	}
+
+	// Relative blurb dates ("3 days") are only day-accurate at best. Never let them overwrite a
+	// known date or trigger a re-fetch on their own; chapters/words still detect updates.
+	revisedComparable := !(origin == model.FromBlurb && w.RevisedApprox)
+	if !revisedComparable && st.revised != "" {
+		w.Revised = st.revised
+	}
+	if !res.New {
+		res.Changed = (revisedComparable && st.revised != w.Revised) || st.chapters != w.ChaptersPosted || st.words != w.Words
 	}
 
 	// Seeing the work on AO3 means it is visible again.
@@ -90,7 +99,7 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET last_listed = ? WHERE id = ?`, now, w.ID); err != nil {
 			return res, err
 		}
-		res.NeedsFetch = res.New || st.lastFetched == 0 || st.fetchedRevised != w.Revised ||
+		res.NeedsFetch = res.New || st.lastFetched == 0 || (revisedComparable && st.fetchedRevised != w.Revised) ||
 			st.fetchedChapters != w.ChaptersPosted || st.fetchedWords != w.Words
 	case model.FromPage:
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET notes_html = ?, endnotes_html = ?, published = ?,
