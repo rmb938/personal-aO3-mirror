@@ -60,7 +60,7 @@ func TestMigrationsIdempotent(t *testing.T) {
 			t.Fatalf("open %d: %v", i, err)
 		}
 		for _, db := range []string{"meta", "content"} {
-			want := map[string]int{"meta": 1, "content": 2}[db]
+			want := map[string]int{"meta": 2, "content": 2}[db]
 			if v, err := s.SchemaVersion(ctx, db); err != nil || v != want {
 				t.Fatalf("%s schema = %d, %v", db, v, err)
 			}
@@ -125,6 +125,17 @@ func TestUpsertBlurbThenPage(t *testing.T) {
 	s.Meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&revised)
 	if revised != "2026-11-01" {
 		t.Fatalf("approx date overwrote exact date: %s", revised)
+	}
+
+	// Single-chapter page (no Updated date) keeps the blurb's revised date: no refetch loop.
+	one := fixtureWork(3)
+	one.Revised = "2026-09-09"
+	s.UpsertWork(ctx, one, model.FromBlurb, 1)
+	onePage := one
+	onePage.Revised, onePage.Published, onePage.RevisedIsPublished = "2026-01-01", "2026-01-01", true
+	s.UpsertWork(ctx, onePage, model.FromPage, 1)
+	if r, _ := s.UpsertWork(ctx, one, model.FromBlurb, 1); r.NeedsFetch || r.Changed {
+		t.Fatalf("single-chapter page must not cause refetch: %+v", r)
 	}
 
 	// New chapter: changed + needs fetch.
@@ -286,7 +297,7 @@ func TestCountsAndRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.WorksByStatus["ok"] != 1 || c.WorksByStatus["deleted"] != 1 || c.WorksNeverFetch != 1 ||
-		c.Requests1h != 1 || c.Requests24h != 2 || c.RawPages != 1 || c.Tags != 4 || c.MetaSchema != 1 {
+		c.Requests1h != 1 || c.Requests24h != 2 || c.RawPages != 1 || c.Tags != 4 || c.MetaSchema != 2 {
 		t.Fatalf("counts: %+v", c)
 	}
 	if n, _ := s.PruneRequests(ctx, time.Hour); n != 1 {

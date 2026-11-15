@@ -73,6 +73,11 @@ func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origi
 	if !revisedComparable && st.revised != "" {
 		w.Revised = st.revised
 	}
+	// Single-chapter work pages show no revised date; their blurb date (revised_at) can differ
+	// from the published date. Keep the listing's date so change detection stays consistent.
+	if origin == model.FromPage && w.RevisedIsPublished && st.revised != "" {
+		w.Revised = st.revised
+	}
 	if !res.New {
 		res.Changed = (revisedComparable && st.revised != w.Revised) || st.chapters != w.ChaptersPosted || st.words != w.Words
 	}
@@ -333,4 +338,16 @@ func (s *Store) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus,
 		return "", false, nil
 	}
 	return st, err == nil, err
+}
+
+// WorkNeedsFetch reports whether a work is ok and was never fetched or changed since its last
+// fetch (by revised date, chapters or words).
+func (s *Store) WorkNeedsFetch(ctx context.Context, workID int64) (bool, error) {
+	var need bool
+	err := s.Meta.QueryRowContext(ctx, `SELECT status = 'ok' AND (last_fetched = 0 OR fetched_revised != revised_at
+		OR fetched_chapters != chapters_posted OR fetched_words != words) FROM works WHERE id = ?`, workID).Scan(&need)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	return need, err
 }

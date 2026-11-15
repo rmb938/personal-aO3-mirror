@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -234,4 +235,29 @@ func placeholders(n int) string {
 		b = append(b, '?')
 	}
 	return string(b)
+}
+
+// Cursor is the backfill position stored in sources.backfill_cursor (JSON).
+type Cursor struct {
+	NextPage int    `json:"next_page"` // 0 = listing backfill done
+	Order    string `json:"order"`
+	// Date windows on revised_at, used when a source exceeds AO3's 100k result window.
+	// Backfill walks windows backwards in time: [WindowFrom, WindowTo].
+	WindowFrom string `json:"window_from,omitempty"` // YYYY-MM-DD
+	WindowTo   string `json:"window_to,omitempty"`
+	SpanDays   int    `json:"span_days,omitempty"`
+}
+
+func (c Cursor) JSON() string {
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
+func ParseCursor(s string) (Cursor, error) {
+	var c Cursor
+	if s == "" || s == "{}" {
+		return c, nil
+	}
+	err := json.Unmarshal([]byte(s), &c)
+	return c, err
 }

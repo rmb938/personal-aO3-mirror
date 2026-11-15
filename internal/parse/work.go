@@ -90,7 +90,7 @@ func ParseWork(workID int64, page []byte) (model.Work, *Report, error) {
 	if d, ok := parseISODate(stats.Find("dd.status").Text()); ok {
 		w.Revised = d // "Updated:" or "Completed:" (chaptered works only)
 	} else {
-		w.Revised = w.Published
+		w.Revised, w.RevisedIsPublished = w.Published, true
 	}
 	statusLabel := clean(stats.Find("dt.status").Text())
 	w.Words = atoi(stats.Find("dd.words").Text())

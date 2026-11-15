@@ -23,12 +23,13 @@ const usage = `usage: ao3mirror [--config FILE] [--log-level LEVEL] <command> [a
 commands:
   version            print version
   config check       validate config and print the User-Agent that will be sent
-  run                run the scraper daemon               (milestone 5)
+  run                run the scraper daemon (Ctrl+C to stop; resumes where it left off)
   source ...         add/list/show/confirm/pause/resume/cancel/remove sources ('source' for help)
   fetch-work ID      queue a single work on demand        (milestone 6)
   reparse            rebuild parsed data from stored raw pages, no requests (milestone 6)
-  status             content-free queue/progress summary  (milestone 5)
-  debug job|work ID  content-free trace for one job/work  (milestone 5)
+  status             content-free queue/progress summary
+  debug job|work ID  content-free trace for one job/work
+  dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
 `
 
 func main() {
@@ -52,6 +53,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if rest[0] == "version" {
 		fmt.Fprintln(stdout, version)
 		return 0
+	}
+	if rest[0] == "dev" {
+		return runDev(rest[1:], stdout, stderr) // synthetic local AO3; makes no outside requests
 	}
 
 	// Every other command needs a valid config (contact.discord is required).
@@ -90,15 +94,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 			*cfgPath, cfg.DataDir, cfg.UserAgent(version), cfg.Rate.Interval, config.MinInterval)
 		logger.Debug("config checked", "path", *cfgPath, "interval", cfg.Rate.Interval.String())
 		return 0
-	case "source":
+	case "source", "run", "status", "debug":
 		a, err := openApp(ctx, cfg, logger)
 		if err != nil {
 			fmt.Fprintf(stderr, "open: %v\n", err)
 			return 1
 		}
 		defer a.Close()
-		return runSource(ctx, a, rest[1:], stdout, stderr)
-	case "run", "fetch-work", "reparse", "status", "debug":
+		switch rest[0] {
+		case "source":
+			return runSource(ctx, a, rest[1:], stdout, stderr)
+		case "run":
+			return runDaemon(ctx, a, stderr)
+		case "status":
+			return runStatus(ctx, a, stdout, stderr)
+		default:
+			return runDebug(ctx, a, rest[1:], stdout, stderr)
+		}
+	case "fetch-work", "reparse":
 		fmt.Fprintf(stderr, "%s: not implemented yet (see docs/plan.md milestones)\n", rest[0])
 		return 1
 	default:

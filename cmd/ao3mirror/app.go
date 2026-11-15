@@ -45,7 +45,7 @@ func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, er
 			// Content-free request log for `status` and debugging.
 			if err := st.InsertRequest(context.Background(), store.RequestRow{
 				Time: r.Time, ReqID: r.ReqID, Kind: string(r.Kind), Path: r.SafePath, Status: r.Status,
-				Class: string(r.Class), Reason: r.Reason, Bytes: r.Bytes, Duration: r.Duration, Waited: r.Waited, Hop: r.Hop,
+				Class: string(r.Class), Reason: r.Reason, Bytes: r.Bytes, Duration: r.Duration, Waited: r.Waited, Hop: r.Hop, JobID: r.JobID,
 			}); err != nil {
 				log.Warn("request log insert failed", "err", err.Error())
 			}

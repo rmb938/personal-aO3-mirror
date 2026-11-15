@@ -2,14 +2,83 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 )
+
+func TestRunStatusDebugEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real pacing (3s floor)")
+	}
+	c := newCLI(t, "")
+	site := fakeao3.NewSite("Fixture Tag", 7000, 2)
+	c.srv.SetSite(site)
+	if code, out, errOut := c.run("source", "add", site.TagPath()); code != 0 {
+		t.Fatalf("add: %s %s", out, errOut)
+	}
+
+	cfg, err := config.Load(c.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	a, err := openApp(context.Background(), cfg, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int)
+	go func() { done <- runDaemon(ctx, a, io.Discard) }()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		cnt, _ := a.store.Counts(context.Background())
+		if cnt.WorksFetched == 2 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	// A second daemon on the same directory must refuse to start.
+	if code := runDaemon(context.Background(), a, io.Discard); code != 1 {
+		t.Error("second daemon should be refused by the lock")
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Fatalf("daemon exit %d", code)
+	}
+
+	_, out, _ := c.run("status")
+	for _, want := range []string{"== daemon", "fetched: 2", "ok=2", "work", "done=2", "== sources", "done_backfill"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status missing %q:\n%s", want, out)
+		}
+	}
+	_, dbg, _ := c.run("debug", "work", "7000")
+	for _, want := range []string{"status:", "ok", "raw versions:", "1 (", "requests:", "/works/7000?view_full_work=true"} {
+		if !strings.Contains(dbg, want) {
+			t.Errorf("debug work missing %q:\n%s", want, dbg)
+		}
+	}
+	_, dj, _ := c.run("debug", "job", "1")
+	if !strings.Contains(dj, "events:") || !strings.Contains(dj, "done") {
+		t.Errorf("debug job:\n%s", dj)
+	}
+	for name, txt := range map[string]string{"status": out, "debug work": dbg, "debug job": dj} {
+		if strings.Contains(strings.ToLower(txt), "fixture") {
+			t.Errorf("%s leaked content:\n%s", name, txt)
+		}
+	}
+}
 
 // cli runs the binary's entry point against a fake AO3 with a temp data dir.
 type cli struct {

@@ -66,6 +66,19 @@ type RequestRecord struct {
 	Duration time.Duration
 	Waited   time.Duration
 	Hop      int
+	JobID    int64 // from WithJobID; 0 = none
+}
+
+type jobIDKey struct{}
+
+// WithJobID tags requests made with ctx with a scheduler job id (for the request log).
+func WithJobID(ctx context.Context, id int64) context.Context {
+	return context.WithValue(ctx, jobIDKey{}, id)
+}
+
+func jobIDFrom(ctx context.Context) int64 {
+	id, _ := ctx.Value(jobIDKey{}).(int64)
+	return id
 }
 
 // Response is a fully read AO3 response.
@@ -271,7 +284,7 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 		log.Warn("request failed", "path", safe, "hop", hop, "err", errClass(err), "wait_ms", waited.Milliseconds(),
 			"consec_fails", st.ConsecFails, "backoff_until", st.BackoffTill, "breaker_open", st.BreakerOpen)
 		c.record(RequestRecord{ReqID: reqID, Time: start, Kind: kind, SafePath: safe, Class: ClassUnavailable,
-			Reason: "transport:" + errClass(err), Duration: c.clock.Now().Sub(start), Waited: waited, Hop: hop})
+			Reason: "transport:" + errClass(err), Duration: c.clock.Now().Sub(start), Waited: waited, Hop: hop, JobID: jobIDFrom(ctx)})
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -313,7 +326,7 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 		"backoff_until", st.BackoffTill, "breaker_open", st.BreakerOpen, "day_count", st.DayCount,
 	)
 	c.record(RequestRecord{ReqID: reqID, Time: start, Kind: kind, SafePath: safe, Status: hr.StatusCode,
-		Class: v.Class, Reason: v.Reason, Bytes: len(body), Duration: total, Waited: waited, Hop: hop})
+		Class: v.Class, Reason: v.Reason, Bytes: len(body), Duration: total, Waited: waited, Hop: hop, JobID: jobIDFrom(ctx)})
 	if rerr != nil && errors.Is(rerr, ErrTooLarge) {
 		return nil, fmt.Errorf("%w (%d bytes) %s", ErrTooLarge, c.maxBody, safe)
 	}

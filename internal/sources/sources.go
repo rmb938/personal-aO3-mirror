@@ -7,7 +7,6 @@ package sources
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +16,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -91,12 +91,6 @@ type Estimate struct {
 	Windowed        bool // >100k results: backfill sliced into revised_at date windows
 }
 
-// Cursor is the backfill position stored in sources.backfill_cursor.
-type Cursor struct {
-	NextPage int    `json:"next_page"` // 0 = listing backfill done
-	Order    string `json:"order"`
-}
-
 type AddResult struct {
 	Source   store.SourceRow
 	Estimate Estimate
@@ -146,7 +140,7 @@ func (s *Service) Add(ctx context.Context, rawURL string, o AddOptions) (AddResu
 		res.Estimate = s.estimate(1, 0, 1, false)
 		row.State = store.SourceActive
 		row.TotalWorks, row.EstRequests = 1, res.Estimate.Requests
-		row.BackfillCursor = mustJSON(Cursor{NextPage: 0, Order: orderName})
+		row.BackfillCursor = store.Cursor{NextPage: 0, Order: orderName}.JSON()
 	} else {
 		total, blurbs, needFetch, err := s.fetchFirstPage(ctx, log, src, order)
 		if err != nil {
@@ -170,7 +164,7 @@ func (s *Service) Add(ctx context.Context, rawURL string, o AddOptions) (AddResu
 		if pages <= 1 {
 			next = 0
 		}
-		row.BackfillCursor = mustJSON(Cursor{NextPage: next, Order: orderName})
+		row.BackfillCursor = store.Cursor{NextPage: next, Order: orderName}.JSON()
 		if o.Confirm || total <= s.cfg.AutoConfirmMax {
 			row.State = store.SourceActive
 		} else {
@@ -184,6 +178,11 @@ func (s *Service) Add(ctx context.Context, rawURL string, o AddOptions) (AddResu
 				}
 				if err := s.store.LinkSourceWorks(ctx, res.Source.ID, ids); err != nil {
 					log.Error("link source works failed", "source_id", res.Source.ID, "err", err.Error())
+				}
+				if n, err := s.enqueueFetches(ctx, res.Source.ID, blurbs); err != nil {
+					log.Error("enqueue page-1 fetches failed", "source_id", res.Source.ID, "err", err.Error())
+				} else {
+					log.Debug("page-1 fetches queued", "source_id", res.Source.ID, "jobs", n)
 				}
 			}
 		}()
@@ -281,6 +280,28 @@ func (s *Service) fetchFirstPage(ctx context.Context, log *slog.Logger, src ao3u
 	return total, l.Blurbs, needFetch, nil
 }
 
+// enqueueFetches queues work fetches for page-1 blurbs that need one. They only run once the
+// source is active (the scheduler skips jobs of pending/paused sources).
+func (s *Service) enqueueFetches(ctx context.Context, sourceID int64, blurbs []model.Work) (int, error) {
+	n := 0
+	for _, b := range blurbs {
+		need, err := s.store.WorkNeedsFetch(ctx, b.ID)
+		if err != nil {
+			return n, err
+		}
+		if !need {
+			continue
+		}
+		if _, created, err := s.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: sourceID,
+			Target: strconv.FormatInt(b.ID, 10), Priority: jobs.ClassBackfill, DedupeKey: jobs.WorkKey(b.ID)}); err != nil {
+			return n, err
+		} else if created {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // Confirm activates a pending source.
 func (s *Service) Confirm(ctx context.Context, id int64) error {
 	return s.store.SetSourceState(ctx, id, store.SourceActive, store.SourcePendingConfirm)
@@ -307,14 +328,6 @@ func (s *Service) Cancel(ctx context.Context, id int64) (int64, error) {
 
 // Remove deletes a source (and its memberships). Mirrored works are kept.
 func (s *Service) Remove(ctx context.Context, id int64) error { return s.store.DeleteSource(ctx, id) }
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
-}
 
 func mustAtoi(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)

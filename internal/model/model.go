@@ -77,26 +77,27 @@ type Chapter struct {
 
 // Work is everything known about a work from one parse.
 type Work struct {
-	ID               int64
-	Title            string
-	Creators         []Creator
-	Anonymous        bool
-	Restricted       bool
-	SummaryHTML      string
-	NotesHTML        string
-	EndNotesHTML     string
-	Language         string
-	Tags             []Tag
-	Words            int
-	ChaptersPosted   int
-	ChaptersExpected int // 0 = unknown ("?")
-	Complete         bool
-	Published        string // YYYY-MM-DD (page only)
-	Revised          string // YYYY-MM-DD: "Updated"/"Completed" on page, datetime on blurb
-	RevisedApprox    bool   // Revised came from a relative blurb date ("3 days"); not exact
-	Stats            Stats
-	Series           []SeriesPart
-	Collections      []Collection
-	Chapters         []Chapter // page only
-	SkinCSS          string    // page only
+	ID                 int64
+	Title              string
+	Creators           []Creator
+	Anonymous          bool
+	Restricted         bool
+	SummaryHTML        string
+	NotesHTML          string
+	EndNotesHTML       string
+	Language           string
+	Tags               []Tag
+	Words              int
+	ChaptersPosted     int
+	ChaptersExpected   int // 0 = unknown ("?")
+	Complete           bool
+	Published          string // YYYY-MM-DD (page only)
+	Revised            string // YYYY-MM-DD: "Updated"/"Completed" on page, datetime on blurb
+	RevisedApprox      bool   // Revised came from a relative blurb date ("3 days"); not exact
+	RevisedIsPublished bool   // page had no Updated/Completed date (single chapter): Revised = Published
+	Stats              Stats
+	Series             []SeriesPart
+	Collections        []Collection
+	Chapters           []Chapter // page only
+	SkinCSS            string    // page only
 }

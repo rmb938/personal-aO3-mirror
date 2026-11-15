@@ -4,6 +4,7 @@ package fakeao3
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -48,12 +49,27 @@ type Server struct {
 	robots   []Reply
 	routes   map[string][]Reply // key: request URI (path?query) or bare path; replies consumed in order, last repeats
 	requests []Recorded
+	site     *Site
 }
 
 func New() *Server {
 	s := &Server{routes: map[string][]Reply{}, robots: []Reply{{Status: 200, Body: Robots}}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
+}
+
+// NewOn listens on addr (e.g. "127.0.0.1:8099") for `ao3mirror dev fake-server`.
+func NewOn(addr string) (*Server, error) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{routes: map[string][]Reply{}, robots: []Reply{{Status: 200, Body: Robots}}}
+	s.Server = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
+	s.Server.Listener.Close()
+	s.Server.Listener = l
+	s.Server.Start()
+	return s, nil
 }
 
 // Handle scripts replies for uri ("/works/1?view_full_work=true" or "/works/1").
@@ -97,6 +113,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		rep = pop(&q)
 		s.routes[r.URL.Path] = q
 	default:
+		if site := s.site; site != nil {
+			s.mu.Unlock()
+			if site.serve(w, r) {
+				return
+			}
+			s.mu.Lock()
+		}
 		rep = Reply{Status: 404, Body: Page(`<h2 class="heading">Error 404</h2>`)}
 	}
 	s.mu.Unlock()
