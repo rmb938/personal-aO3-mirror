@@ -1,0 +1,46 @@
+# ao3mirror example config. Copy to ao3mirror.local.yaml and fill in contact.discord.
+#   cp ao3mirror.example.yaml ao3mirror.local.yaml
+#   ./ao3mirror --config ao3mirror.local.yaml config check
+
+# Where meta.db, content.db, images/, logs/ and debug/ live.
+# Keep it at ./data so the Claude guard hook covers it.
+data_dir: ./data
+
+# REQUIRED. Sent in the User-Agent of every request so AO3 can contact you.
+# Must be a Discord handle like "@yourname". The binary refuses to start without it.
+contact:
+  discord: ""
+
+# Optional text appended to the User-Agent. The base UA (with contact) is always sent.
+user_agent_suffix: ""
+
+log:
+  level: info              # debug | info | warn | error
+  file: logs/ao3mirror.log # relative to data_dir
+  max_size_mb: 50          # rotate when larger
+  max_files: 5             # rotated files kept
+
+rate:
+  interval: 10s            # time between AO3 requests; hard floor 3s
+  jitter: 0.2              # +/- fraction of interval
+  daily_budget: 0          # max AO3 requests per day; 0 = unlimited
+
+sources:
+  auto_confirm_max: 2000            # sources with more works wait for `source confirm`
+  default_backfill_order: kudos_desc
+  poll_interval: 6h                 # how often each source checks for updates
+  full_rescan_interval: 720h        # full re-walk for stats + deletion detection
+
+tags:
+  info_ttl: 720h           # refresh tag wrangling info after this long
+
+images:
+  enabled: true
+  per_host_interval: 3s
+  max_bytes: 26214400      # 25 MiB
+
+content:
+  keep_versions: 1         # raw page versions kept per work (last good copy always kept)
+
+auth:
+  enabled: false           # future: log in to see archive-locked works

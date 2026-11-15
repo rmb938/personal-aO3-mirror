@@ -1,0 +1,13 @@
+# Mirrored content: never commit, never read (see CLAUDE.md)
+/data/
+
+# Local config (contains your contact handle)
+ao3mirror.local.yaml
+
+# Binaries
+/ao3mirror
+/skeletonize
+/bin/
+
+# Claude local settings
+.claude/settings.local.json
