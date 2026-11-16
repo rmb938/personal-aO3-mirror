@@ -55,24 +55,28 @@ type PacerState struct {
 	BreakerOpen bool
 	DayCount    int
 	DailyBudget int
+	// WaitingUntil is set while a request is waiting for its slot (interval, backoff, breaker
+	// or daily budget); zero when not waiting.
+	WaitingUntil time.Time
 }
 
 // Pacer enforces one-at-a-time spacing, jitter, the hard floor, backoff and the daily budget.
 type Pacer struct {
-	mu          sync.Mutex
-	clock       Clock
-	base        time.Duration
-	jitter      float64
-	budget      int
-	rnd         *rand.Rand
-	last        time.Time
-	backoffTill time.Time
-	factor      float64
-	slowUntil   time.Time
-	consecFails int
-	breakerTill time.Time
-	day         time.Time
-	dayCount    int
+	mu           sync.Mutex
+	clock        Clock
+	base         time.Duration
+	jitter       float64
+	budget       int
+	rnd          *rand.Rand
+	last         time.Time
+	backoffTill  time.Time
+	factor       float64
+	slowUntil    time.Time
+	consecFails  int
+	breakerTill  time.Time
+	day          time.Time
+	dayCount     int
+	waitingUntil time.Time
 }
 
 func NewPacer(clock Clock, base time.Duration, jitter float64, dailyBudget int, seed uint64) *Pacer {
@@ -104,11 +108,15 @@ func (p *Pacer) nextInterval(now time.Time) time.Duration {
 
 // Wait blocks until the next request may be sent and reserves that slot.
 // It returns how long it waited.
+//
+// Requests are serialized by the Client's own lock, so the pacer lock is released while
+// sleeping; that keeps State() (heartbeat, status) readable during long backoffs.
 func (p *Pacer) Wait(ctx context.Context) (time.Duration, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	start := p.clock.Now()
 	gap := p.nextInterval(start) // jitter drawn once per request
+	defer func() { p.waitingUntil = time.Time{} }()
 	for {
 		now := p.clock.Now()
 		next := now
@@ -132,8 +140,11 @@ func (p *Pacer) Wait(ctx context.Context) (time.Duration, error) {
 		if d <= 0 {
 			break
 		}
-		// Holding the lock while sleeping is intended: the pacer serializes all AO3 requests.
-		if err := p.clock.Sleep(ctx, d); err != nil {
+		p.waitingUntil = next
+		p.mu.Unlock()
+		err := p.clock.Sleep(ctx, d)
+		p.mu.Lock()
+		if err != nil {
 			return p.clock.Now().Sub(start), err
 		}
 	}
@@ -204,13 +215,14 @@ func (p *Pacer) State() PacerState {
 func (p *Pacer) stateLocked(now time.Time) PacerState {
 	f := p.currentFactor(now)
 	return PacerState{
-		Interval:    time.Duration(float64(p.base) * f),
-		Factor:      f,
-		SlowUntil:   p.slowUntil,
-		BackoffTill: p.backoffTill,
-		ConsecFails: p.consecFails,
-		BreakerOpen: now.Before(p.breakerTill),
-		DayCount:    p.dayCount,
-		DailyBudget: p.budget,
+		Interval:     time.Duration(float64(p.base) * f),
+		Factor:       f,
+		SlowUntil:    p.slowUntil,
+		BackoffTill:  p.backoffTill,
+		ConsecFails:  p.consecFails,
+		BreakerOpen:  now.Before(p.breakerTill),
+		DayCount:     p.dayCount,
+		DailyBudget:  p.budget,
+		WaitingUntil: p.waitingUntil,
 	}
 }

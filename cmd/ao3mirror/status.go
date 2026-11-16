@@ -34,6 +34,9 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 			state = "not running"
 		}
 		fmt.Fprintf(out, "%s (pid %s, phase %s, current job %s, heartbeat %s ago)\n", state, ds["pid"], ds["phase"], ds["current_job"], age)
+		if w := localRFC(ds["waiting_until"]); w != "" && state == "running" {
+			fmt.Fprintf(out, "waiting for next request slot until %s (pacing/backoff)\n", w)
+		}
 		fmt.Fprintf(out, "pacer: interval %s, slow factor %s, consecutive failures %s, breaker open %s, backoff until %s\n",
 			ds["interval"], ds["slow_factor"], ds["consec_fails"], ds["breaker_open"], dash(localRFC(ds["backoff_until"])))
 		if ds["daily_budget"] != "0" && ds["daily_budget"] != "" {

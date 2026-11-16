@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
@@ -77,6 +78,10 @@ type Scheduler struct {
 	kinds     []string
 	lastPrune time.Time
 	lastTags  time.Time
+
+	hbMu   sync.Mutex // guards curJob/phase, read by the heartbeat ticker
+	curJob int64
+	phase  string
 }
 
 func New(o Options) *Scheduler {
@@ -143,10 +148,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		return err
 	}
 	s.log.Info("scheduler started", "recovered_jobs", n, "kinds", fmt.Sprint(s.kinds))
+	hbCtx, stopHB := context.WithCancel(ctx)
+	defer stopHB()
+	go s.heartbeatLoop(hbCtx)
 	for {
 		ran, err := s.Step(ctx)
 		if ctx.Err() != nil {
-			s.heartbeat(context.Background(), 0, "stopped")
+			stopHB()
+			s.setPhase(context.Background(), 0, "stopped")
 			s.log.Info("scheduler stopped")
 			return nil
 		}
@@ -154,7 +163,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.log.Error("scheduler step failed", "err", err.Error())
 		}
 		if !ran {
-			s.heartbeat(ctx, 0, "idle")
+			s.setPhase(ctx, 0, "idle")
 			select {
 			case <-ctx.Done():
 			case <-time.After(s.o.Idle):
@@ -183,7 +192,7 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 	log := s.log.With("job_id", job.ID, "job_kind", job.Kind, "source_id", job.SourceID, "class", job.Priority, "attempt", job.Attempts)
 	jctx := httpx.WithJobID(logx.With(ctx, log), job.ID)
-	s.heartbeat(ctx, job.ID, "running")
+	s.setPhase(ctx, job.ID, "running")
 	_ = s.st.JobEvent(ctx, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target})
 	start := time.Now()
 	detail, err := s.handlers[job.Kind](jctx, job, log)
@@ -225,7 +234,7 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 		log.Error("job error", "error", err.Error(), "next_state", state)
 		_ = s.st.JobEvent(ctx, job.ID, "error", detail)
 	}
-	s.heartbeat(ctx, 0, "between")
+	s.setPhase(ctx, 0, "between")
 }
 
 // errCode keeps internal errors short and content-free (they are ours, not AO3 text).
@@ -503,14 +512,44 @@ func (s *Scheduler) maybePrune(ctx context.Context) {
 	}
 }
 
+// heartbeatEvery is how often the daemon refreshes its heartbeat, also while a job is waiting
+// out a backoff. `status` treats a heartbeat older than 2 minutes as "not running".
+const heartbeatEvery = 30 * time.Second
+
+// setPhase records what the loop is doing and publishes it immediately.
+func (s *Scheduler) setPhase(ctx context.Context, jobID int64, phase string) {
+	s.hbMu.Lock()
+	s.curJob, s.phase = jobID, phase
+	s.hbMu.Unlock()
+	s.heartbeat(ctx)
+}
+
+// heartbeatLoop refreshes the heartbeat until ctx ends, independent of the job loop.
+func (s *Scheduler) heartbeatLoop(ctx context.Context) {
+	t := time.NewTicker(heartbeatEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.heartbeat(ctx)
+		}
+	}
+}
+
 // heartbeat publishes daemon state for `ao3mirror status` (content-free).
-func (s *Scheduler) heartbeat(ctx context.Context, jobID int64, phase string) {
+func (s *Scheduler) heartbeat(ctx context.Context) {
+	s.hbMu.Lock()
+	jobID, phase := s.curJob, s.phase
+	s.hbMu.Unlock()
 	st := s.c.PacerState()
 	kv := map[string]string{
 		"heartbeat":     s.o.Now().UTC().Format(time.RFC3339),
 		"pid":           strconv.Itoa(os.Getpid()),
 		"phase":         phase,
 		"current_job":   strconv.FormatInt(jobID, 10),
+		"waiting_until": "",
 		"interval":      st.Interval.String(),
 		"slow_factor":   strconv.FormatFloat(st.Factor, 'f', 2, 64),
 		"consec_fails":  strconv.Itoa(st.ConsecFails),
@@ -521,6 +560,9 @@ func (s *Scheduler) heartbeat(ctx context.Context, jobID int64, phase string) {
 	}
 	if st.BackoffTill.After(s.o.Now()) {
 		kv["backoff_until"] = st.BackoffTill.UTC().Format(time.RFC3339)
+	}
+	if !st.WaitingUntil.IsZero() {
+		kv["waiting_until"] = st.WaitingUntil.UTC().Format(time.RFC3339)
 	}
 	if err := s.st.SetDaemonState(ctx, kv); err != nil && ctx.Err() == nil {
 		s.log.Warn("heartbeat failed", "err", err.Error())
