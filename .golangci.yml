@@ -57,3 +57,8 @@ issues:
 formatters:
   enable:
     - gofmt
+    - goimports # import grouping: std, third-party, then this module
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/rmb938/personal-aO3-mirror

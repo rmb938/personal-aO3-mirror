@@ -16,7 +16,7 @@ all: check build
 
 help:
 	@echo "make build       build ./$(BIN)"
-	@echo "make fmt         gofmt -w all Go files"
+	@echo "make fmt         gofmt + goimports (grouping) on all Go files"
 	@echo "make lint        fmt check + go vet + go mod tidy check + golangci-lint"
 	@echo "make vulncheck   govulncheck $(GOVULNCHECK_VERSION) on the module and Go toolchain"
 	@echo "make test        go test -race ./..."
@@ -28,12 +28,13 @@ help:
 build:
 	$(GO) build -o $(BIN) ./cmd/ao3mirror
 
+# Formatters (gofmt, goimports) are configured in .golangci.yml.
 fmt:
-	gofmt -w cmd internal
+	$(GOLANGCI_LINT) fmt
 
 fmt-check:
-	@out=$$(gofmt -l cmd internal); if [ -n "$$out" ]; then \
-		echo "gofmt needed (run 'make fmt'):"; echo "$$out"; exit 1; fi
+	@out=$$($(GOLANGCI_LINT) fmt --diff); if [ -n "$$out" ]; then \
+		echo "formatting needed (run 'make fmt'):"; echo "$$out"; exit 1; fi
 
 vet:
 	$(GO) vet ./...
