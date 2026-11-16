@@ -1,4 +1,6 @@
 -- meta.db v1: metadata, sources, job queue, request log. Bulk text lives in content.db.
+-- (Pre-release: earlier migrations were folded into this file. Add new numbered migrations
+-- from here on once real data needs to be kept.)
 
 CREATE TABLE works (
     id                INTEGER PRIMARY KEY,          -- AO3 work id
@@ -71,6 +73,7 @@ CREATE TABLE tags (
     first_seen      INTEGER NOT NULL
 );
 CREATE INDEX tags_type ON tags (type);
+CREATE INDEX tags_info ON tags (type, info_fetched_at);
 
 CREATE TABLE tag_parents (                           -- e.g. character -> fandom, fandom -> media
     child_id  INTEGER NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
@@ -107,10 +110,13 @@ CREATE TABLE series (
     last_fetched INTEGER NOT NULL DEFAULT 0
 );
 
+-- Series membership. May list works we do not mirror (seen on a series page by series_info),
+-- so work_id has no foreign key: a row whose work has no fetched works row means "member, not
+-- mirrored", which lets status/API/UI name the missing parts of a partial series.
 CREATE TABLE series_works (
     series_id INTEGER NOT NULL REFERENCES series (id) ON DELETE CASCADE,
-    work_id   INTEGER NOT NULL REFERENCES works (id) ON DELETE CASCADE,
-    position  INTEGER NOT NULL DEFAULT 0,
+    work_id   INTEGER NOT NULL,                      -- AO3 work id; may have no works row
+    position  INTEGER NOT NULL DEFAULT 0,            -- AO3 part number
     PRIMARY KEY (series_id, work_id)
 );
 CREATE INDEX series_works_work ON series_works (work_id);
@@ -161,6 +167,7 @@ CREATE TABLE sources (
     last_full_scan_at INTEGER NOT NULL DEFAULT 0,
     backfill_done_at  INTEGER NOT NULL DEFAULT 0,
     last_error        TEXT NOT NULL DEFAULT '',      -- content-free error code
+    last_served_ms    INTEGER NOT NULL DEFAULT 0,    -- round-robin within a priority class
     UNIQUE (kind, target, filters_json)
 );
 
@@ -194,6 +201,14 @@ CREATE TABLE jobs (
 CREATE INDEX jobs_pick ON jobs (state, priority_class, not_before);
 CREATE INDEX jobs_source ON jobs (source_id, state);
 CREATE UNIQUE INDEX jobs_dedupe_active ON jobs (dedupe_key) WHERE state IN ('queued','running');
+CREATE INDEX jobs_finished ON jobs (state, finished_at);
+
+-- Key/value state the daemon publishes (heartbeat, pacer/backoff state). Content-free.
+CREATE TABLE daemon_state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 
 CREATE TABLE job_events (                          -- content-free trace for `ao3mirror debug job`
     id      INTEGER PRIMARY KEY,
@@ -230,8 +245,13 @@ CREATE TABLE images (
     status       TEXT NOT NULL DEFAULT 'queued'
                  CHECK (status IN ('queued','ok','failed','skipped','too_large','disallowed')),
     fetched_at   INTEGER NOT NULL DEFAULT 0,
-    last_error   TEXT NOT NULL DEFAULT ''
+    last_error   TEXT NOT NULL DEFAULT '',
+    host         TEXT NOT NULL DEFAULT '',
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    not_before   INTEGER NOT NULL DEFAULT 0,
+    first_seen   INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX images_queue ON images (status, not_before);
 
 CREATE TABLE work_images (
     work_id  INTEGER NOT NULL REFERENCES works (id) ON DELETE CASCADE,

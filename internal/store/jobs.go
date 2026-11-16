@@ -193,22 +193,46 @@ func (s *Store) HasActiveJob(ctx context.Context, dedupeKey string) (bool, error
 
 // ListJobs returns jobs matching optional filters, newest first.
 func (s *Store) ListJobs(ctx context.Context, state string, sourceID int64, dedupePrefix string, limit int) ([]Job, error) {
+	return s.FindJobs(ctx, JobFilter{State: state, SourceID: sourceID, DedupePrefix: dedupePrefix, Limit: limit})
+}
+
+// JobFilter selects jobs; zero fields match everything.
+type JobFilter struct {
+	State        string
+	Kind         string
+	SourceID     int64
+	DedupePrefix string
+	Limit        int
+	// Oldest orders by id ascending (queue order for queued jobs) instead of newest first.
+	Oldest bool
+}
+
+// FindJobs returns jobs matching f.
+func (s *Store) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	q := `SELECT ` + jobCols + ` FROM jobs WHERE 1=1`
 	var args []any
-	if state != "" {
+	if f.State != "" {
 		q += ` AND state = ?`
-		args = append(args, state)
+		args = append(args, f.State)
 	}
-	if sourceID > 0 {
+	if f.Kind != "" {
+		q += ` AND kind = ?`
+		args = append(args, f.Kind)
+	}
+	if f.SourceID > 0 {
 		q += ` AND source_id = ?`
-		args = append(args, sourceID)
+		args = append(args, f.SourceID)
 	}
-	if dedupePrefix != "" {
+	if f.DedupePrefix != "" {
 		q += ` AND dedupe_key LIKE ? ESCAPE '\'`
-		args = append(args, likeEscape(dedupePrefix)+"%")
+		args = append(args, likeEscape(f.DedupePrefix)+"%")
 	}
-	q += ` ORDER BY id DESC LIMIT ?`
-	args = append(args, limit)
+	if f.Oldest {
+		q += ` ORDER BY id ASC LIMIT ?`
+	} else {
+		q += ` ORDER BY id DESC LIMIT ?`
+	}
+	args = append(args, f.Limit)
 	rows, err := s.Meta.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

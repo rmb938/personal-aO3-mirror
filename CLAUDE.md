@@ -34,7 +34,8 @@ Claude MAY:
 - Read skeletons (`testdata/skeletons/*.skel.html`, `data/debug/*.skel.html`). These are produced by
   `cmd/skeletonize`, which replaces all text and attribute values with placeholders.
 - Run the live scraper (`ao3mirror run`, `ao3mirror source add ...`), and read `ao3mirror status`,
-  `ao3mirror debug ...` and `data/logs/` output. Those are designed to be content-free.
+  `ao3mirror jobs ...`, `ao3mirror debug ...` and `data/logs/` output. Those are designed to be
+  content-free.
 - If any output ever appears to contain fanwork content, stop, do not repeat or use it, tell the
   user, and fix the leak (it is a bug).
 

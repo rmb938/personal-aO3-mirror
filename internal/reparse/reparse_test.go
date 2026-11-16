@@ -52,12 +52,18 @@ func TestReparse(t *testing.T) {
 	st.Meta.QueryRow(`SELECT last_fetched FROM works WHERE id = 1001`).Scan(&lastFetchedBefore)
 	clk = clk.Add(time.Hour)
 
-	res, err := Run(ctx, st, Options{DataDir: dir, Logger: log})
+	res, err := Run(ctx, st, Options{DataDir: dir, QueueImages: true, Logger: log})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Seen != 3 || res.Reparsed != 1 || res.Skipped != 1 || res.Failed != 1 {
 		t.Fatalf("result %+v", res)
+	}
+	// work_chaptered.html embeds one absolute image in a chapter body.
+	var queued int
+	st.Meta.QueryRow(`SELECT COUNT(*) FROM work_images WHERE work_id = 1001`).Scan(&queued)
+	if res.ImagesQueued != 1 || queued != 1 {
+		t.Fatalf("reparse should queue the embedded image: result %d, work_images %d", res.ImagesQueued, queued)
 	}
 	var title, status string
 	var pv int
@@ -75,8 +81,8 @@ func TestReparse(t *testing.T) {
 
 	// Newer listing blurb wins over an older page on --all.
 	st.UpsertWork(ctx, model.Work{ID: 1001, Title: "Newer Blurb Title", Stats: model.Stats{Kudos: 5000}}, model.FromBlurb, parse.Version)
-	if _, err := Run(ctx, st, Options{All: true, Logger: log}); err != nil {
-		t.Fatal(err)
+	if res, err := Run(ctx, st, Options{All: true, QueueImages: true, Logger: log}); err != nil || res.ImagesQueued != 0 {
+		t.Fatalf("already-queued images must not be counted again: %+v %v", res, err)
 	}
 	var kudos int
 	st.Meta.QueryRow(`SELECT title, kudos FROM works WHERE id = 1001`).Scan(&title, &kudos)

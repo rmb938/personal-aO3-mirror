@@ -78,6 +78,120 @@ func (s *Store) SeriesNeedingInfo(ctx context.Context, before time.Time, limit i
 	return out, rows.Err()
 }
 
+// SeriesMember is one work listed on a series page.
+type SeriesMember struct {
+	WorkID   int64
+	Position int // AO3 part number from the blurb (0 if absent)
+}
+
+// SetSeriesMembers records the works seen on a series page in series_works, including works we
+// do not mirror (no works row). Rows for fetched works are left alone: their work page is the
+// authority for their position. Only page 1 is fetched for non-source series, so for series
+// longer than one page this covers the first page only.
+func (s *Store) SetSeriesMembers(ctx context.Context, seriesID int64, members []SeriesMember) error {
+	tx, err := s.Meta.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Drop stale unfetched members (a work may have left the series), keep fetched ones.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM series_works WHERE series_id = ?
+		AND work_id NOT IN (SELECT id FROM works WHERE last_fetched > 0)`, seriesID); err != nil {
+		return err
+	}
+	for _, m := range members {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO series_works (series_id, work_id, position) VALUES (?,?,?)`,
+			seriesID, m.WorkID, m.Position); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// PartialSeries is a series that is not a source and has fewer mirrored works than AO3 lists.
+type PartialSeries struct {
+	ID               int64
+	WorksTotal       int     // AO3's count (series page stats)
+	Mirrored         int     // works in the series we have fetched
+	MissingPositions []int   // AO3 part numbers (1..WorksTotal) none of our fetched works has
+	MissingWorkIDs   []int64 // series_works members we have not fetched (from the series page)
+}
+
+// PartialSeriesList returns partial series, most missing works first. Content-free (ids and
+// counts only).
+func (s *Store) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeries, error) {
+	rows, err := s.Meta.QueryContext(ctx, `SELECT se.id, se.works_count,
+			(SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
+			 WHERE sw.series_id = se.id AND w.last_fetched > 0) AS mirrored
+		FROM series se
+		WHERE se.last_fetched > 0
+		  AND NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
+			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
+		  AND se.works_count > (SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
+			 WHERE sw.series_id = se.id AND w.last_fetched > 0)
+		ORDER BY se.works_count - mirrored DESC, se.id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []PartialSeries
+	for rows.Next() {
+		var p PartialSeries
+		if err := rows.Scan(&p.ID, &p.WorksTotal, &p.Mirrored); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if err := s.fillMissing(ctx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) fillMissing(ctx context.Context, p *PartialSeries) error {
+	have := map[int]bool{}
+	rows, err := s.Meta.QueryContext(ctx, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
+		WHERE sw.series_id = ? AND w.last_fetched > 0`, p.ID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var pos int
+		if err := rows.Scan(&pos); err != nil {
+			rows.Close()
+			return err
+		}
+		have[pos] = true
+	}
+	rows.Close()
+	for pos := 1; pos <= p.WorksTotal; pos++ {
+		if !have[pos] {
+			p.MissingPositions = append(p.MissingPositions, pos)
+		}
+	}
+	rows, err = s.Meta.QueryContext(ctx, `SELECT sw.work_id FROM series_works sw
+		WHERE sw.series_id = ? AND NOT EXISTS (SELECT 1 FROM works w WHERE w.id = sw.work_id AND w.last_fetched > 0)
+		ORDER BY sw.position, sw.work_id`, p.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		p.MissingWorkIDs = append(p.MissingWorkIDs, id)
+	}
+	return rows.Err()
+}
+
 // WorkExists reports whether a work row exists.
 func (s *Store) WorkExists(ctx context.Context, id int64) (bool, error) {
 	var n int

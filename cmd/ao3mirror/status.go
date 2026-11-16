@@ -83,6 +83,16 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	}
 	tw.Flush()
 
+	if ps, err := a.store.PartialSeriesList(ctx, 20); err == nil && len(ps) > 0 {
+		fmt.Fprintln(out, "\n== partial series (not a source; add one to mirror all of it)")
+		tw = tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(tw, "SERIES\tHAVE\tMISSING PARTS\tMISSING WORK IDS")
+		for _, p := range ps {
+			fmt.Fprintf(tw, "%d\t%d/%d\t%s\t%s\n", p.ID, p.Mirrored, p.WorksTotal, intList(p.MissingPositions, 10), idList(p.MissingWorkIDs, 5))
+		}
+		tw.Flush()
+	}
+
 	fmt.Fprintln(out, "\n== recent request errors")
 	reqs, _ := a.store.RecentRequests(ctx, true, 0, "", 10)
 	if len(reqs) == 0 {
@@ -227,6 +237,31 @@ func localRFC(s string) string {
 		return ""
 	}
 	return t.Local().Format("2006-01-02 15:04:05")
+}
+
+// intList joins up to max ints with commas, then "+N more"; "-" when empty.
+func intList(xs []int, max int) string {
+	ids := make([]int64, len(xs))
+	for i, x := range xs {
+		ids[i] = int64(x)
+	}
+	return idList(ids, max)
+}
+
+func idList(xs []int64, max int) string {
+	if len(xs) == 0 {
+		return "-"
+	}
+	n := min(len(xs), max)
+	parts := make([]string, n)
+	for i := range n {
+		parts[i] = strconv.FormatInt(xs[i], 10)
+	}
+	s := strings.Join(parts, ",")
+	if len(xs) > n {
+		s += fmt.Sprintf(" +%d more", len(xs)-n)
+	}
+	return s
 }
 
 func kv(m map[string]int) string {

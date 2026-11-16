@@ -14,6 +14,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 func TestRunStatusDebugEndToEnd(t *testing.T) {
@@ -167,6 +168,48 @@ func TestSourceCLI(t *testing.T) {
 		if !strings.Contains(r.UserAgent, "contact: discord @fixture_user") {
 			t.Errorf("%s sent UA %q", r.URI, r.UserAgent)
 		}
+	}
+}
+
+func TestJobsCLI(t *testing.T) {
+	c := newCLI(t, "")
+	cfg, err := config.Load(c.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, cfg.DataDir, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range []store.Job{
+		{Kind: "work", Target: "101", Priority: 3, DedupeKey: "work:101"},
+		{Kind: "work", Target: "102", Priority: 3, DedupeKey: "work:102"},
+		{Kind: "tag_info", Target: "7", Priority: 5, DedupeKey: "tag:7"},
+	} {
+		if _, _, err := st.EnqueueJob(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+
+	code, out, errOut := c.run("jobs")
+	if code != 0 || !strings.Contains(out, "ID") || !strings.Contains(out, "tag_info") || !strings.Contains(out, "102") {
+		t.Fatalf("jobs: %d %s %s", code, out, errOut)
+	}
+	_, out, _ = c.run("jobs", "--kind", "work", "--state", "queued")
+	if strings.Contains(out, "tag_info") || strings.Index(out, "101") > strings.Index(out, "102") {
+		t.Errorf("queued work jobs should be filtered and in queue order:\n%s", out)
+	}
+	_, out, _ = c.run("jobs", "--limit", "1")
+	if !strings.Contains(out, "first 1") {
+		t.Errorf("limit note missing:\n%s", out)
+	}
+	if code, _, _ := c.run("jobs", "--state", "failed"); code != 0 {
+		t.Error("empty result should still exit 0")
+	}
+	if len(c.srv.Requests()) != 0 {
+		t.Error("jobs must make no requests")
 	}
 }
 

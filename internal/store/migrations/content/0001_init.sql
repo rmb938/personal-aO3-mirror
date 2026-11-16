@@ -1,4 +1,5 @@
 -- content.db v1: raw pages (source of truth) and parsed bodies. All blobs are zstd.
+-- (Pre-release: earlier migrations were folded into this file.)
 
 CREATE TABLE raw_pages (
     id             INTEGER PRIMARY KEY,
@@ -19,6 +20,7 @@ CREATE TABLE chapter_bodies (
     body_zstd      BLOB NOT NULL,
     notes_zstd     BLOB,
     endnotes_zstd  BLOB,
+    summary_zstd   BLOB,                   -- per-chapter summary (chapters/_chapter.html.erb div#summary)
     PRIMARY KEY (work_id, position)
 );
 

@@ -76,7 +76,7 @@ func runReparse(ctx context.Context, st *store.Store, a appCfg, args []string, o
 		return 2
 	}
 	res, err := reparse.Run(ctx, st, reparse.Options{
-		All: *all, WorkID: *work, DataDir: a.dataDir, Logger: a.log,
+		All: *all, WorkID: *work, DataDir: a.dataDir, QueueImages: a.queueImages, Logger: a.log,
 		Progress: func(r reparse.Result) {
 			fmt.Fprintf(errOut, "... seen %d, reparsed %d, skipped %d, failed %d\n", r.Seen, r.Reparsed, r.Skipped, r.Failed)
 		},
@@ -87,6 +87,9 @@ func runReparse(ctx context.Context, st *store.Store, a appCfg, args []string, o
 	}
 	fmt.Fprintf(out, "reparse done (0 requests): seen %d, reparsed %d, skipped %d (current parser), failed %d\n",
 		res.Seen, res.Reparsed, res.Skipped, res.Failed)
+	if res.ImagesQueued > 0 {
+		fmt.Fprintf(out, "queued %d new images (the running daemon fetches them)\n", res.ImagesQueued)
+	}
 	if res.Failed > 0 {
 		fmt.Fprintln(out, "failed pages were saved as skeletons under data/debug/ (see README \"Parser skeletons\")")
 		return 1

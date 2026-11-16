@@ -30,6 +30,8 @@ commands:
   fetch-work [--now] ID|URL    queue one work at top priority (--now: fetch here if no daemon)
   reparse [--all] [--work ID]  rebuild parsed tables from stored raw pages; makes no requests
   status             content-free queue/progress summary
+  jobs [--state S] [--kind K] [--source ID] [--limit N]
+                     list jobs (ids, targets, states, errors); queued jobs in queue order
   debug job|work ID  content-free trace for one job/work
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
 `
@@ -105,7 +107,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			*cfgPath, cfg.DataDir, cfg.UserAgent(version), cfg.Rate.Interval, config.MinInterval)
 		logger.Debug("config checked", "path", *cfgPath, "interval", cfg.Rate.Interval.String())
 		return 0
-	case "reparse":
+	case "reparse", "jobs":
 		// Offline: opens the store only; no HTTP client is built.
 		st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: logger})
 		if err != nil {
@@ -113,7 +115,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		defer st.Close()
-		return runReparse(ctx, st, appCfg{dataDir: cfg.DataDir, log: logger}, rest[1:], stdout, stderr)
+		if rest[0] == "jobs" {
+			return runJobs(ctx, st, rest[1:], stdout, stderr)
+		}
+		return runReparse(ctx, st, appCfg{dataDir: cfg.DataDir, queueImages: cfg.Images.Enabled, log: logger}, rest[1:], stdout, stderr)
 	case "source", "run", "status", "debug", "fetch-work":
 		a, err := openApp(ctx, cfg, logger)
 		if err != nil {

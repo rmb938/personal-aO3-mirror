@@ -32,8 +32,19 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
+
+// WorkImages lists embedded image URLs from a work's text (summary, notes and every chapter's
+// body, notes, end notes and summary). Used by work fetches and by reparse.
+func WorkImages(w model.Work) []string {
+	frags := []string{w.SummaryHTML, w.NotesHTML, w.EndNotesHTML}
+	for _, c := range w.Chapters {
+		frags = append(frags, c.BodyHTML, c.NotesHTML, c.EndNotesHTML, c.SummaryHTML)
+	}
+	return Extract(frags...)
+}
 
 // Extract returns the absolute http(s) <img src> URLs in the given HTML fragments, deduplicated.
 func Extract(fragments ...string) []string {

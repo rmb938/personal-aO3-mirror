@@ -330,7 +330,7 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 		return detail, err
 	}
 	if s.o.QueueImages {
-		n, err := s.st.QueueImages(ctx, id, workImages(w))
+		n, err := s.st.QueueImages(ctx, id, imagefetch.WorkImages(w))
 		if err != nil {
 			return detail, err
 		}
@@ -418,15 +418,6 @@ func (s *Scheduler) handleTagInfo(ctx context.Context, job store.Job, log *slog.
 	return detail, nil
 }
 
-// workImages lists embedded image URLs from a work's text (bodies, notes, summaries).
-func workImages(w model.Work) []string {
-	frags := []string{w.SummaryHTML, w.NotesHTML, w.EndNotesHTML}
-	for _, c := range w.Chapters {
-		frags = append(frags, c.BodyHTML, c.NotesHTML, c.EndNotesHTML, c.SummaryHTML)
-	}
-	return imagefetch.Extract(frags...)
-}
-
 // handleSeriesInfo fetches page 1 of a non-source series: description, notes, stats and
 // creators. Blurbs refresh only works we already mirror (no new works are added).
 func (s *Scheduler) handleSeriesInfo(ctx context.Context, job store.Job, log *slog.Logger) (map[string]any, error) {
@@ -465,6 +456,21 @@ func (s *Scheduler) handleSeriesInfo(ctx context.Context, job store.Job, log *sl
 	if err := s.st.UpsertSeries(ctx, ser.Series); err != nil {
 		return detail, err
 	}
+	// Record every work on the page in series_works, mirrored or not (ids and part numbers only,
+	// no extra requests), so partial series can name the works they are missing.
+	members := make([]store.SeriesMember, 0, len(ser.Listing.Blurbs))
+	for _, b := range ser.Listing.Blurbs {
+		m := store.SeriesMember{WorkID: b.ID}
+		for _, p := range b.Series {
+			if p.ID == id {
+				m.Position = p.Position
+			}
+		}
+		members = append(members, m)
+	}
+	if err := s.st.SetSeriesMembers(ctx, id, members); err != nil {
+		return detail, err
+	}
 	refreshed := 0
 	for _, b := range ser.Listing.Blurbs {
 		known, err := s.st.WorkExists(ctx, b.ID)
@@ -479,6 +485,6 @@ func (s *Scheduler) handleSeriesInfo(ctx context.Context, job store.Job, log *sl
 		}
 		refreshed++
 	}
-	detail["works_count"], detail["known_works_refreshed"] = ser.WorksCount, refreshed
+	detail["works_count"], detail["known_works_refreshed"], detail["members_seen"] = ser.WorksCount, refreshed, len(members)
 	return detail, nil
 }

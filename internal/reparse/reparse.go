@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -18,7 +19,10 @@ type Options struct {
 	All     bool  // reparse every work, not only parser_version < parse.Version
 	WorkID  int64 // only this work (implies All for it)
 	DataDir string
-	Logger  *slog.Logger
+	// QueueImages queues embedded images found in reparsed works (images.enabled). Queuing makes
+	// no requests; the daemon's image worker fetches them later.
+	QueueImages bool
+	Logger      *slog.Logger
 	// Progress, if set, is called after each batch with running totals.
 	Progress func(Result)
 }
@@ -29,6 +33,8 @@ type Result struct {
 	Reparsed int
 	Skipped  int // already at the current parser version
 	Failed   int
+	// ImagesQueued counts images newly queued (already-known images are not counted again).
+	ImagesQueued int
 }
 
 const batch = 200
@@ -66,7 +72,8 @@ func Run(ctx context.Context, st *store.Store, o Options) (Result, error) {
 			o.Progress(res)
 		}
 	}
-	log.Info("reparse finished", "seen", res.Seen, "reparsed", res.Reparsed, "skipped", res.Skipped, "failed", res.Failed)
+	log.Info("reparse finished", "seen", res.Seen, "reparsed", res.Reparsed, "skipped", res.Skipped, "failed", res.Failed,
+		"images_queued", res.ImagesQueued)
 	return res, nil
 }
 
@@ -107,6 +114,13 @@ func one(ctx context.Context, st *store.Store, o Options, log *slog.Logger, id i
 	}
 	if err := st.ReparseWork(ctx, w, at, parse.Version); err != nil {
 		return err
+	}
+	if o.QueueImages {
+		n, err := st.QueueImages(ctx, id, imagefetch.WorkImages(w))
+		if err != nil {
+			return err
+		}
+		res.ImagesQueued += n
 	}
 	res.Reparsed++
 	return nil
