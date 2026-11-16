@@ -2,14 +2,15 @@ package parse
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
@@ -20,9 +21,7 @@ var fetchedAt = time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return b
 }
 
@@ -38,29 +37,25 @@ func tagsOf(w model.Work, typ model.TagType) []string {
 
 func TestParseListing(t *testing.T) {
 	l, r, err := ParseListing(fixture(t, "listing_tag.html"), fetchedAt)
-	if err != nil {
-		t.Fatal(err, r.Missing)
-	}
-	if l.Total != 1234 || l.Pagination.Current != 2 || l.Pagination.Last != 62 || !l.Pagination.HasNext {
-		t.Fatalf("total/pagination: %d %+v", l.Total, l.Pagination)
-	}
-	if len(l.Blurbs) != 2 || l.Skipped != 1 {
-		t.Fatalf("blurbs=%d skipped=%d", len(l.Blurbs), l.Skipped)
-	}
+	require.NoError(t, err, "missing: %v", r.Missing)
+	require.Equal(t, 1234, l.Total)
+	require.Equal(t, 2, l.Pagination.Current)
+	require.Equal(t, 62, l.Pagination.Last)
+	require.True(t, l.Pagination.HasNext)
+	require.Len(t, l.Blurbs, 2)
+	require.Equal(t, 1, l.Skipped)
+
 	a := l.Blurbs[0]
-	want := model.Work{
+	a2 := a
+	a2.Tags = nil
+	require.Equal(t, model.Work{
 		ID: 1001, Title: "Fixture Title One", Restricted: true,
 		Creators: []model.Creator{{User: "fixture_author", Pseud: "fixture_pseud"}, {User: "second_author", Pseud: "second_author"}},
 		Language: "English", Words: 12345, ChaptersPosted: 3, ChaptersExpected: 0, Revised: "2026-11-01",
 		Stats:       model.Stats{Kudos: 1200, Hits: 54321, Comments: 45, Bookmarks: 300},
 		Series:      []model.SeriesPart{{ID: 3001, Title: "Fixture Series", Position: 2}},
 		SummaryHTML: "<p>Lorem ipsum fixture summary.</p>",
-	}
-	a2 := a
-	a2.Tags = nil
-	if !reflect.DeepEqual(a2, want) {
-		t.Fatalf("blurb 1:\n got %+v\nwant %+v", a2, want)
-	}
+	}, a2, "blurb 1")
 	for typ, names := range map[model.TagType][]string{
 		model.TagRating:    {"Teen And Up Audiences"},
 		model.TagWarning:   {"No Archive Warnings Apply"},
@@ -70,125 +65,117 @@ func TestParseListing(t *testing.T) {
 		model.TagCharacter: {"Fixture A", "Fixture B"},
 		model.TagFreeform:  {"fixture freeform"},
 	} {
-		if got := tagsOf(a, typ); !reflect.DeepEqual(got, names) {
-			t.Errorf("%s tags = %v, want %v", typ, got, names)
-		}
+		assert.Equal(t, names, tagsOf(a, typ), "%s tags", typ)
 	}
 
 	b := l.Blurbs[1]
-	if !b.Anonymous || len(b.Creators) != 0 || !b.Complete || !b.RevisedApprox || b.Revised != "2026-11-12" {
-		t.Fatalf("blurb 2: %+v", b)
-	}
-	if got := tagsOf(b, model.TagCategory); len(got) != 0 {
-		t.Fatalf("'No category' must not become a tag: %v", got)
-	}
+	require.True(t, b.Anonymous)
+	require.Empty(t, b.Creators)
+	require.True(t, b.Complete)
+	require.True(t, b.RevisedApprox)
+	require.Equal(t, "2026-11-12", b.Revised)
+	require.Empty(t, tagsOf(b, model.TagCategory), "'No category' must not become a tag")
 }
 
 func TestParseWorkChaptered(t *testing.T) {
 	w, r, err := ParseWork(1001, fixture(t, "work_chaptered.html"))
-	if err != nil {
-		t.Fatal(err, r.Missing)
-	}
-	if w.Title != "Fixture Title One" || !w.Restricted || w.Anonymous || len(w.Creators) != 2 {
-		t.Fatalf("header: %+v", w)
-	}
-	if w.Published != "2026-10-01" || w.Revised != "2026-11-01" || w.Words != 12345 ||
-		w.ChaptersPosted != 3 || w.ChaptersExpected != 0 || w.Complete {
-		t.Fatalf("stats: pub=%s rev=%s words=%d ch=%d/%d complete=%v", w.Published, w.Revised, w.Words, w.ChaptersPosted, w.ChaptersExpected, w.Complete)
-	}
-	if w.Stats != (model.Stats{Kudos: 1200, Hits: 54321, Comments: 45, Bookmarks: 300}) {
-		t.Fatalf("stats: %+v", w.Stats)
-	}
-	if !reflect.DeepEqual(tagsOf(w, model.TagFandom), []string{"Fixture Fandom", "Other Fixture Fandom & Co."}) ||
-		!reflect.DeepEqual(tagsOf(w, model.TagCategory), []string{"F/M", "Gen"}) || len(w.Tags) != 10 {
-		t.Fatalf("tags: %+v", w.Tags)
-	}
-	if !reflect.DeepEqual(w.Series, []model.SeriesPart{{ID: 3001, Title: "Fixture Series", Position: 2}}) {
-		t.Fatalf("series: %+v", w.Series)
-	}
-	if !reflect.DeepEqual(w.Collections, []model.Collection{{Name: "fixture_collection", Title: "Fixture Collection"}}) {
-		t.Fatalf("collections: %+v", w.Collections)
-	}
-	if !strings.Contains(w.SummaryHTML, "fixture summary") || !strings.Contains(w.NotesHTML, "Fixture work notes") ||
-		!strings.Contains(w.NotesHTML, "associations") || strings.Contains(w.NotesHTML, "Notes:") {
-		t.Fatalf("notes/summary: %q / %q", w.SummaryHTML, w.NotesHTML)
-	}
-	if !strings.Contains(w.EndNotesHTML, "Fixture work end notes") || !strings.Contains(w.SkinCSS, ".fixture-class") {
-		t.Fatalf("endnotes/skin: %q / %q", w.EndNotesHTML, w.SkinCSS)
-	}
-	if len(w.Chapters) != 3 {
-		t.Fatalf("chapters = %d", len(w.Chapters))
-	}
+	require.NoError(t, err, "missing: %v", r.Missing)
+	require.Equal(t, "Fixture Title One", w.Title)
+	require.True(t, w.Restricted)
+	require.False(t, w.Anonymous)
+	require.Len(t, w.Creators, 2)
+	require.Equal(t, "2026-10-01", w.Published)
+	require.Equal(t, "2026-11-01", w.Revised)
+	require.Equal(t, 12345, w.Words)
+	require.Equal(t, 3, w.ChaptersPosted)
+	require.Equal(t, 0, w.ChaptersExpected)
+	require.False(t, w.Complete)
+	require.Equal(t, model.Stats{Kudos: 1200, Hits: 54321, Comments: 45, Bookmarks: 300}, w.Stats)
+	require.Equal(t, []string{"Fixture Fandom", "Other Fixture Fandom & Co."}, tagsOf(w, model.TagFandom))
+	require.Equal(t, []string{"F/M", "Gen"}, tagsOf(w, model.TagCategory))
+	require.Len(t, w.Tags, 10)
+	require.Equal(t, []model.SeriesPart{{ID: 3001, Title: "Fixture Series", Position: 2}}, w.Series)
+	require.Equal(t, []model.Collection{{Name: "fixture_collection", Title: "Fixture Collection"}}, w.Collections)
+	require.Contains(t, w.SummaryHTML, "fixture summary")
+	require.Contains(t, w.NotesHTML, "Fixture work notes")
+	require.Contains(t, w.NotesHTML, "associations")
+	require.NotContains(t, w.NotesHTML, "Notes:", "notes heading must be stripped")
+	require.Contains(t, w.EndNotesHTML, "Fixture work end notes")
+	require.Contains(t, w.SkinCSS, ".fixture-class")
+
+	require.Len(t, w.Chapters, 3)
 	c1, c2, c3 := w.Chapters[0], w.Chapters[1], w.Chapters[2]
-	if c1.ID != 2001 || c1.Position != 1 || c1.Title != "Fixture Chapter Alpha" ||
-		!strings.Contains(c1.SummaryHTML, "chapter summary") || !strings.Contains(c1.NotesHTML, "chapter notes") ||
-		!strings.Contains(c1.EndNotesHTML, "chapter end notes") || !strings.Contains(c1.BodyHTML, "body one") ||
-		strings.Contains(c1.BodyHTML, "Chapter Text") {
-		t.Fatalf("chapter 1: %+v", c1)
-	}
-	if c2.ID != 2002 || c2.Title != "" || c3.Title != "Fixture: With Colon" {
-		t.Fatalf("chapter titles: %q %q", c2.Title, c3.Title)
-	}
-	if r.Counts["images"] != 1 || r.Counts["chapters"] != 3 {
-		t.Fatalf("report counts: %+v", r.Counts)
-	}
+	require.Equal(t, int64(2001), c1.ID)
+	require.Equal(t, 1, c1.Position)
+	require.Equal(t, "Fixture Chapter Alpha", c1.Title)
+	require.Contains(t, c1.SummaryHTML, "chapter summary")
+	require.Contains(t, c1.NotesHTML, "chapter notes")
+	require.Contains(t, c1.EndNotesHTML, "chapter end notes")
+	require.Contains(t, c1.BodyHTML, "body one")
+	require.NotContains(t, c1.BodyHTML, "Chapter Text", "landmark heading must be stripped")
+	require.Equal(t, int64(2002), c2.ID)
+	require.Empty(t, c2.Title)
+	require.Equal(t, "Fixture: With Colon", c3.Title)
+	require.Equal(t, 1, r.Counts["images"])
+	require.Equal(t, 3, r.Counts["chapters"])
 }
 
 func TestParseWorkOneshot(t *testing.T) {
 	w, r, err := ParseWork(1002, fixture(t, "work_oneshot.html"))
-	if err != nil {
-		t.Fatal(err, r.Missing)
-	}
-	if !w.Anonymous || w.Revised != "2026-11-12" || w.Published != "2026-11-12" || !w.Complete || len(w.Chapters) != 1 ||
-		!strings.Contains(w.Chapters[0].BodyHTML, "oneshot body") || w.SkinCSS != "" {
-		t.Fatalf("oneshot: %+v", w)
-	}
+	require.NoError(t, err, "missing: %v", r.Missing)
+	require.True(t, w.Anonymous)
+	require.Equal(t, "2026-11-12", w.Revised)
+	require.Equal(t, "2026-11-12", w.Published)
+	require.True(t, w.Complete)
+	require.Len(t, w.Chapters, 1)
+	require.Contains(t, w.Chapters[0].BodyHTML, "oneshot body")
+	require.Empty(t, w.SkinCSS)
 }
 
 func TestParseWorkUnexpected(t *testing.T) {
 	_, r, err := ParseWork(1, []byte(`<html><body><div id="outer"><div id="main"><p>x</p></div></div></body></html>`))
-	if !errors.Is(err, ErrUnexpected) || len(r.Missing) == 0 {
-		t.Fatalf("want ErrUnexpected, got %v (%v)", err, r.Missing)
-	}
-	if strings.Contains(err.Error(), "<p>") {
-		t.Fatal("error must name selectors only")
-	}
+	require.ErrorIs(t, err, ErrUnexpected)
+	require.NotEmpty(t, r.Missing)
+	require.NotContains(t, err.Error(), "<p>", "error must name selectors only")
 }
 
 func TestParseSeries(t *testing.T) {
 	s, r, err := ParseSeries(3001, fixture(t, "series.html"), fetchedAt)
-	if err != nil {
-		t.Fatal(err, r.Missing)
-	}
-	if s.Title != "Fixture Series" || s.Begun != "2026-01-05" || s.Updated != "2026-11-01" || s.Words != 13145 ||
-		s.WorksCount != 2 || s.Complete || s.Bookmarks != 7 || len(s.Creators) != 1 ||
-		!strings.Contains(s.SummaryHTML, "series description") || !strings.Contains(s.NotesHTML, "series notes") {
-		t.Fatalf("series: %+v", s)
-	}
-	if len(s.Listing.Blurbs) != 2 || s.Listing.Blurbs[0].ID != 999 || s.Listing.Blurbs[1].Series[0].Position != 2 {
-		t.Fatalf("series blurbs: %+v", s.Listing.Blurbs)
-	}
+	require.NoError(t, err, "missing: %v", r.Missing)
+	require.Equal(t, "Fixture Series", s.Title)
+	require.Equal(t, "2026-01-05", s.Begun)
+	require.Equal(t, "2026-11-01", s.Updated)
+	require.Equal(t, 13145, s.Words)
+	require.Equal(t, 2, s.WorksCount)
+	require.False(t, s.Complete)
+	require.Equal(t, 7, s.Bookmarks)
+	require.Len(t, s.Creators, 1)
+	require.Contains(t, s.SummaryHTML, "series description")
+	require.Contains(t, s.NotesHTML, "series notes")
+	require.Len(t, s.Listing.Blurbs, 2)
+	require.Equal(t, int64(999), s.Listing.Blurbs[0].ID)
+	require.Equal(t, 2, s.Listing.Blurbs[1].Series[0].Position)
 }
 
 func TestReportIsContentFree(t *testing.T) {
 	for _, f := range []string{"work_chaptered.html", "work_oneshot.html", "listing_tag.html", "series.html"} {
 		var r *Report
+		var err error
 		switch {
 		case strings.HasPrefix(f, "work"):
-			_, r, _ = ParseWork(1, fixture(t, f))
+			_, r, err = ParseWork(1, fixture(t, f))
 		case strings.HasPrefix(f, "series"):
-			_, r, _ = ParseSeries(1, fixture(t, f), fetchedAt)
+			_, r, err = ParseSeries(1, fixture(t, f), fetchedAt)
 		default:
-			_, r, _ = ParseListing(fixture(t, f), fetchedAt)
+			_, r, err = ParseListing(fixture(t, f), fetchedAt)
 		}
+		require.NoError(t, err, f)
 		var buf bytes.Buffer
 		for _, a := range r.Attrs() {
 			buf.WriteString(strings.ToLower(fmt.Sprint(a)) + " ")
 		}
 		for _, word := range []string{"lorem", "fixture title", "fixture_author", "fixture fandom", "fixture series"} {
-			if strings.Contains(buf.String(), word) {
-				t.Errorf("%s: report leaked %q: %s", f, word, buf.String())
-			}
+			assert.NotContains(t, buf.String(), word, "%s: report leaked content", f)
 		}
 	}
 }
@@ -205,17 +192,16 @@ func TestBlurbDates(t *testing.T) {
 		"about 1 month":      {"2026-10-16", true},
 	} {
 		d, approx, ok := parseBlurbDate(in, fetchedAt)
-		if !ok || d != want.date || approx != want.approx {
-			t.Errorf("%q => %s %v %v, want %+v", in, d, approx, ok, want)
+		if assert.True(t, ok, "%q should parse", in) {
+			assert.Equal(t, want.date, d, "%q", in)
+			assert.Equal(t, want.approx, approx, "%q approx", in)
 		}
 	}
 }
 
 func TestTagParamRoundTrip(t *testing.T) {
 	for _, name := range []string{"A/B", "Fandom & Co.", "What?", "Tag #1", "plain"} {
-		if got := tagNameFromHref("/tags/" + TagParam(name) + "/works"); got != name {
-			t.Errorf("round trip %q => %q (param %s)", name, got, TagParam(name))
-		}
+		assert.Equal(t, name, tagNameFromHref("/tags/"+TagParam(name)+"/works"), "round trip (param %s)", TagParam(name))
 	}
 }
 
@@ -223,25 +209,24 @@ func TestTagParamRoundTrip(t *testing.T) {
 // contain no text. Real skeletons supplied by the user (testdata/skeletons) are checked too.
 func TestSkeletonsKeepStructure(t *testing.T) {
 	for _, f := range []string{"work_chaptered.html", "work_oneshot.html", "listing_tag.html", "series.html", "tag_character.html"} {
-		skel, err := skeleton.Skeletonize(bytes.NewReader(fixture(t, f)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		low := strings.ToLower(string(skel))
-		for _, word := range []string{"fixture", "english"} {
-			if strings.Contains(low, word) {
-				t.Errorf("%s skeleton leaked %q", f, word)
+		t.Run(f, func(t *testing.T) {
+			skel, err := skeleton.Skeletonize(bytes.NewReader(fixture(t, f)))
+			require.NoError(t, err)
+			low := strings.ToLower(string(skel))
+			for _, word := range []string{"fixture", "english"} {
+				assert.NotContains(t, low, word, "skeleton leaked content")
 			}
-		}
-		checkSkeleton(t, f, skel)
+			checkSkeleton(t, f, skel)
+		})
 	}
-	matches, _ := filepath.Glob(filepath.Join("..", "..", "testdata", "skeletons", "*.skel.html"))
+	matches, err := filepath.Glob(filepath.Join("..", "..", "testdata", "skeletons", "*.skel.html"))
+	require.NoError(t, err)
 	for _, m := range matches {
-		b, err := os.ReadFile(m)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checkSkeleton(t, filepath.Base(m), b)
+		t.Run(filepath.Base(m), func(t *testing.T) {
+			b, err := os.ReadFile(m)
+			require.NoError(t, err)
+			checkSkeleton(t, filepath.Base(m), b)
+		})
 	}
 }
 
@@ -252,10 +237,7 @@ func checkSkeleton(t *testing.T, name string, skel []byte) {
 	switch {
 	case strings.HasPrefix(name, "work"):
 		w, r, err := ParseWork(1, skel)
-		if err != nil {
-			t.Errorf("%s: work skeleton failed: %v missing=%v", name, err, r.Missing)
-			return
-		}
+		require.NoError(t, err, "%s: work skeleton failed, missing=%v", name, r.Missing)
 		var problems []string
 		if len(w.Chapters) == 0 {
 			problems = append(problems, "no chapters")
@@ -279,44 +261,30 @@ func checkSkeleton(t *testing.T, name string, skel []byte) {
 		if len(w.Chapters) != w.ChaptersPosted {
 			problems = append(problems, fmt.Sprintf("chapters parsed %d != posted %d", len(w.Chapters), w.ChaptersPosted))
 		}
-		if len(problems) > 0 {
-			t.Errorf("%s: %s\nreport: %v", name, strings.Join(problems, "; "), r.Attrs())
-		}
+		assert.Empty(t, problems, "%s\nreport: %v", name, r.Attrs())
 	case strings.HasPrefix(name, "listing"):
 		l, r, err := ParseListing(skel, fetchedAt)
-		if err != nil {
-			t.Errorf("%s: listing skeleton failed: %v", name, err)
-			return
-		}
+		require.NoError(t, err, "%s: listing skeleton failed", name)
 		checkBlurbs(t, name, l, r)
-		if l.Total <= 0 {
-			t.Errorf("%s: no total parsed from heading", name)
-		}
+		assert.Positive(t, l.Total, "%s: no total parsed from heading", name)
 	case strings.HasPrefix(name, "tag"):
 		ti, r, err := ParseTag(skel)
-		if err != nil {
-			t.Errorf("%s: tag skeleton failed: %v missing=%v", name, err, r.Missing)
-		} else if ti.Name == "" || ti.Type == model.TagUnknown {
-			t.Errorf("%s: tag skeleton: name=%t type=%s report=%v", name, ti.Name != "", ti.Type, r.Attrs())
-		}
+		require.NoError(t, err, "%s: tag skeleton failed, missing=%v", name, r.Missing)
+		assert.NotEmpty(t, ti.Name, "%s: tag name, report=%v", name, r.Attrs())
+		assert.NotEqual(t, model.TagUnknown, ti.Type, "%s: tag type, report=%v", name, r.Attrs())
 	case strings.HasPrefix(name, "series"):
 		s, r, err := ParseSeries(1, skel, fetchedAt)
-		if err != nil {
-			t.Errorf("%s: series skeleton failed: %v", name, err)
-			return
-		}
-		if s.Title == "" || s.Begun == "" || s.Updated == "" || s.WorksCount == 0 || s.Words == 0 || len(s.Creators) == 0 {
-			t.Errorf("%s: series meta incomplete: title=%t begun=%t updated=%t works=%d words=%d creators=%d\nreport: %v",
-				name, s.Title != "", s.Begun != "", s.Updated != "", s.WorksCount, s.Words, len(s.Creators), r.Attrs())
-		}
+		require.NoError(t, err, "%s: series skeleton failed", name)
+		assert.True(t, s.Title != "" && s.Begun != "" && s.Updated != "" && s.WorksCount != 0 && s.Words != 0 && len(s.Creators) != 0,
+			"%s: series meta incomplete: title=%t begun=%t updated=%t works=%d words=%d creators=%d\nreport: %v",
+			name, s.Title != "", s.Begun != "", s.Updated != "", s.WorksCount, s.Words, len(s.Creators), r.Attrs())
 		checkBlurbs(t, name, s.Listing, r)
 	}
 }
 
 func checkBlurbs(t *testing.T, name string, l Listing, r *Report) {
 	t.Helper()
-	if len(l.Blurbs) == 0 {
-		t.Errorf("%s: no blurbs parsed (skipped=%d)\nreport: %v", name, l.Skipped, r.Attrs())
+	if !assert.NotEmpty(t, l.Blurbs, "%s: no blurbs parsed (skipped=%d)\nreport: %v", name, l.Skipped, r.Attrs()) {
 		return
 	}
 	for i, b := range l.Blurbs {
@@ -333,8 +301,6 @@ func checkBlurbs(t *testing.T, name string, l Listing, r *Report) {
 		if len(b.Creators) == 0 && !b.Anonymous {
 			p = append(p, "creators")
 		}
-		if len(p) > 0 {
-			t.Errorf("%s: blurb %d: %s", name, i, strings.Join(p, "; "))
-		}
+		assert.Empty(t, p, "%s: blurb %d", name, i)
 	}
 }

@@ -6,15 +6,23 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func addSource(t *testing.T, s *Store, target string, state SourceState, prio int) int64 {
 	t.Helper()
 	id, err := s.InsertSource(context.Background(), SourceRow{Kind: "tag", Target: target, FiltersJSON: "{}", Path: "/p",
 		State: state, BackfillOrder: "kudos_desc", PollInterval: time.Hour, Priority: prio, TotalWorks: -1, EstRequests: -1, BackfillCursor: "{}"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	return id
+}
+
+// enqueue adds a job, failing the test on error, and returns its id.
+func enqueue(t *testing.T, s *Store, j Job) int64 {
+	t.Helper()
+	id, _, err := s.EnqueueJob(context.Background(), j)
+	require.NoError(t, err)
 	return id
 }
 
@@ -22,21 +30,19 @@ func TestEnqueueDedupeAndBump(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
 	id1, created, err := s.EnqueueJob(ctx, Job{Kind: "work", Target: "1", Priority: 4, DedupeKey: "work:1"})
-	if err != nil || !created {
-		t.Fatal(err, created)
-	}
-	id2, created, _ := s.EnqueueJob(ctx, Job{Kind: "work", Target: "1", Priority: 1, DedupeKey: "work:1"})
-	if created || id2 != id1 {
-		t.Fatalf("dedupe: %d %v", id2, created)
-	}
-	j, _ := s.GetJob(ctx, id1)
-	if j.Priority != 1 {
-		t.Fatalf("priority not bumped: %d", j.Priority)
-	}
-	s.FinishJob(ctx, id1, JobDone, "")
-	if _, created, _ := s.EnqueueJob(ctx, Job{Kind: "work", Target: "1", Priority: 4, DedupeKey: "work:1"}); !created {
-		t.Fatal("finished job must not block a new one")
-	}
+	require.NoError(t, err)
+	require.True(t, created)
+	id2, created, err := s.EnqueueJob(ctx, Job{Kind: "work", Target: "1", Priority: 1, DedupeKey: "work:1"})
+	require.NoError(t, err)
+	require.False(t, created, "dedupe")
+	require.Equal(t, id1, id2, "dedupe returns the existing job")
+	j, err := s.GetJob(ctx, id1)
+	require.NoError(t, err)
+	require.Equal(t, 1, j.Priority, "priority bumped")
+	require.NoError(t, s.FinishJob(ctx, id1, JobDone, ""))
+	_, created, err = s.EnqueueJob(ctx, Job{Kind: "work", Target: "1", Priority: 4, DedupeKey: "work:1"})
+	require.NoError(t, err)
+	require.True(t, created, "finished job must not block a new one")
 }
 
 func TestPickOrderFairnessAndPaused(t *testing.T) {
@@ -45,14 +51,14 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 	a := addSource(t, s, "a", SourceActive, 0)
 	b := addSource(t, s, "b", SourceActive, 0)
 	p := addSource(t, s, "p", SourcePaused, 0)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		for _, src := range []int64{a, b, p} {
 			key := strconv.FormatInt(src, 10) + ":" + strconv.Itoa(i)
-			s.EnqueueJob(ctx, Job{Kind: "backfill", SourceID: src, Target: strconv.Itoa(i), Priority: 4, DedupeKey: key})
+			enqueue(t, s, Job{Kind: "backfill", SourceID: src, Target: strconv.Itoa(i), Priority: 4, DedupeKey: key})
 		}
 	}
-	s.EnqueueJob(ctx, Job{Kind: "work", Target: "9", Priority: 1, DedupeKey: "work:9"})
-	s.EnqueueJob(ctx, Job{Kind: "work", Target: "8", Priority: 1, NotBefore: clk.t.Add(time.Hour), DedupeKey: "work:8"})
+	enqueue(t, s, Job{Kind: "work", Target: "9", Priority: 1, DedupeKey: "work:9"})
+	enqueue(t, s, Job{Kind: "work", Target: "8", Priority: 1, NotBefore: clk.t.Add(time.Hour), DedupeKey: "work:8"})
 
 	var order []string
 	for {
@@ -61,29 +67,19 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 		if errors.Is(err, ErrNoJob) {
 			break
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		order = append(order, j.Kind+":"+strconv.FormatInt(j.SourceID, 10))
-		s.FinishJob(ctx, j.ID, JobDone, "")
+		require.NoError(t, s.FinishJob(ctx, j.ID, JobDone, ""))
 	}
-	want := []string{"work:0", "backfill:1", "backfill:2", "backfill:1", "backfill:2", "backfill:1", "backfill:2"}
-	if len(order) != len(want) {
-		t.Fatalf("order %v, want %v", order, want)
-	}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Fatalf("order %v, want %v", order, want)
-		}
-	}
+	require.Equal(t, []string{"work:0", "backfill:1", "backfill:2", "backfill:1", "backfill:2", "backfill:1", "backfill:2"}, order)
+
 	// kinds filter: work 8 is not due yet; once due it is picked.
 	clk.t = clk.t.Add(2 * time.Hour)
-	if j, err := s.PickJob(ctx, []string{"backfill"}, clk.t); !errors.Is(err, ErrNoJob) {
-		t.Fatalf("paused source job picked: %+v", j)
-	}
-	if j, err := s.PickJob(ctx, []string{"work"}, clk.t); err != nil || j.Target != "8" {
-		t.Fatalf("delayed job: %+v %v", j, err)
-	}
+	_, err := s.PickJob(ctx, []string{"backfill"}, clk.t)
+	require.ErrorIs(t, err, ErrNoJob, "paused source job must not be picked")
+	j, err := s.PickJob(ctx, []string{"work"}, clk.t)
+	require.NoError(t, err)
+	require.Equal(t, "8", j.Target, "delayed job")
 }
 
 func TestPriorityWithinClass(t *testing.T) {
@@ -91,49 +87,50 @@ func TestPriorityWithinClass(t *testing.T) {
 	ctx := context.Background()
 	lo := addSource(t, s, "lo", SourceActive, 0)
 	hi := addSource(t, s, "hi", SourceActive, 5)
-	s.EnqueueJob(ctx, Job{Kind: "backfill", SourceID: lo, Target: "1", Priority: 4, DedupeKey: "lo"})
-	s.EnqueueJob(ctx, Job{Kind: "backfill", SourceID: hi, Target: "1", Priority: 4, DedupeKey: "hi"})
-	j, _ := s.PickJob(ctx, []string{"backfill"}, clk.t)
-	if j.SourceID != hi {
-		t.Fatalf("higher source priority should win: %d", j.SourceID)
-	}
+	enqueue(t, s, Job{Kind: "backfill", SourceID: lo, Target: "1", Priority: 4, DedupeKey: "lo"})
+	enqueue(t, s, Job{Kind: "backfill", SourceID: hi, Target: "1", Priority: 4, DedupeKey: "hi"})
+	j, err := s.PickJob(ctx, []string{"backfill"}, clk.t)
+	require.NoError(t, err)
+	require.Equal(t, hi, j.SourceID, "higher source priority should win")
 }
 
 func TestRetryRecoverAndEvents(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	id, _, _ := s.EnqueueJob(ctx, Job{Kind: "work", Target: "1", Priority: 3, MaxAttempts: 2, DedupeKey: "work:1"})
-	j, _ := s.PickJob(ctx, []string{"work"}, clk.t)
+	id := enqueue(t, s, Job{Kind: "work", Target: "1", Priority: 3, MaxAttempts: 2, DedupeKey: "work:1"})
+	j, err := s.PickJob(ctx, []string{"work"}, clk.t)
+	require.NoError(t, err)
 	st, err := s.RetryJob(ctx, j.ID, clk.t.Add(time.Minute), "unavailable")
-	if err != nil || st != JobQueued {
-		t.Fatal(st, err)
-	}
-	if _, err := s.PickJob(ctx, []string{"work"}, clk.t); !errors.Is(err, ErrNoJob) {
-		t.Fatal("retry must respect not_before")
-	}
+	require.NoError(t, err)
+	require.Equal(t, JobQueued, st)
+	_, err = s.PickJob(ctx, []string{"work"}, clk.t)
+	require.ErrorIs(t, err, ErrNoJob, "retry must respect not_before")
 	clk.t = clk.t.Add(2 * time.Minute)
-	j, _ = s.PickJob(ctx, []string{"work"}, clk.t)
-	if st, _ := s.RetryJob(ctx, j.ID, clk.t, "unavailable"); st != JobFailed {
-		t.Fatalf("attempts exhausted should fail: %s", st)
-	}
+	j, err = s.PickJob(ctx, []string{"work"}, clk.t)
+	require.NoError(t, err)
+	st, err = s.RetryJob(ctx, j.ID, clk.t, "unavailable")
+	require.NoError(t, err)
+	require.Equal(t, JobFailed, st, "attempts exhausted should fail")
 
-	id2, _, _ := s.EnqueueJob(ctx, Job{Kind: "work", Target: "2", Priority: 3, DedupeKey: "work:2"})
-	s.PickJob(ctx, []string{"work"}, clk.t)
-	if n, _ := s.RecoverRunning(ctx); n != 1 {
-		t.Fatalf("recovered %d", n)
-	}
-	j2, _ := s.GetJob(ctx, id2)
-	if j2.State != JobQueued || j2.Attempts != 0 {
-		t.Fatalf("recovered job: %+v", j2)
-	}
-	s.JobEvent(ctx, id, "picked", map[string]any{"class": 3})
-	if ev, _ := s.JobEvents(ctx, id); len(ev) != 1 || ev[0].Detail != `{"class":3}` {
-		t.Fatalf("events: %+v", ev)
-	}
-	if err := s.SetDaemonState(ctx, map[string]string{"heartbeat": "x"}); err != nil {
-		t.Fatal(err)
-	}
-	if m, at, _ := s.DaemonState(ctx); m["heartbeat"] != "x" || at.IsZero() {
-		t.Fatal(m, at)
-	}
+	id2 := enqueue(t, s, Job{Kind: "work", Target: "2", Priority: 3, DedupeKey: "work:2"})
+	_, err = s.PickJob(ctx, []string{"work"}, clk.t)
+	require.NoError(t, err)
+	n, err := s.RecoverRunning(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n, "recovered")
+	j2, err := s.GetJob(ctx, id2)
+	require.NoError(t, err)
+	require.Equal(t, JobQueued, j2.State)
+	require.Equal(t, 0, j2.Attempts, "recovery refunds the attempt")
+
+	require.NoError(t, s.JobEvent(ctx, id, "picked", map[string]any{"class": 3}))
+	ev, err := s.JobEvents(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, ev, 1)
+	require.JSONEq(t, `{"class":3}`, ev[0].Detail)
+	require.NoError(t, s.SetDaemonState(ctx, map[string]string{"heartbeat": "x"}))
+	m, at, err := s.DaemonState(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "x", m["heartbeat"])
+	require.False(t, at.IsZero())
 }

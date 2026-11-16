@@ -2,9 +2,10 @@ package scheduler
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
@@ -28,48 +29,42 @@ func countRequests(e *env, uri string) int {
 func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e := newEnv(t, 3, nil)
 	ctx := context.Background()
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), sources.AddOptions{})
 	e.drain(50)
 
 	// Work 5001 was mirrored fine. Now AO3 serves a page we cannot parse after an update.
-	good, _, _ := e.st.LatestRawPage(ctx, 5001)
+	good, _, err := e.st.LatestRawPage(ctx, 5001)
+	require.NoError(t, err)
 	e.srv.Handle("/works/5001", fakeao3.Reply{Body: brokenWork})
 	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Words += 100; w.Revised = time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC) })
 	e.clk.Advance(7 * time.Hour)
 	e.drain(50)
 
-	if n := countRequests(e, "/works/5001?view_full_work=true"); n != 2 {
-		t.Fatalf("work 5001 requested %d times, want 2 (initial + one failed update, no retries)", n)
-	}
-	jobs, _ := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5001", 5)
-	if len(jobs) != 1 || !strings.HasPrefix(jobs[0].LastError, "parse_") || jobs[0].Attempts != 1 {
-		t.Fatalf("failed job: %+v", jobs)
-	}
+	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "initial + one failed update, no retries")
+	jobs, err := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5001", 5)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Contains(t, jobs[0].LastError, "parse_")
+	require.Equal(t, 1, jobs[0].Attempts)
 	// Good content kept; failed page stored as the newest raw version, good one still there.
-	if chs, _ := e.st.ChapterBodies(ctx, 5001); len(chs) == 0 {
-		t.Fatal("existing chapter bodies must be kept")
-	}
-	latest, _, _ := e.st.LatestRawPage(ctx, 5001)
-	if string(latest) != brokenWork {
-		t.Fatal("failed page must be stored for reparse")
-	}
+	chs, err := e.st.ChapterBodies(ctx, 5001)
+	require.NoError(t, err)
+	require.NotEmpty(t, chs, "existing chapter bodies must be kept")
+	latest, _, err := e.st.LatestRawPage(ctx, 5001)
+	require.NoError(t, err)
+	require.Equal(t, brokenWork, string(latest), "failed page must be stored for reparse")
 	var versions int
-	e.st.Content.QueryRow(`SELECT COUNT(*) FROM raw_pages WHERE work_id = 5001`).Scan(&versions)
-	if versions != 2 || len(good) == 0 {
-		t.Fatalf("good raw version must survive: versions=%d", versions)
-	}
-	c, _ := e.st.Counts(ctx)
-	if c.ParseFailures != 1 {
-		t.Fatalf("parse failures = %d", c.ParseFailures)
-	}
+	require.NoError(t, e.st.Content.QueryRow(`SELECT COUNT(*) FROM raw_pages WHERE work_id = 5001`).Scan(&versions))
+	require.Equal(t, 2, versions, "good raw version must survive")
+	require.NotEmpty(t, good)
+	c, err := e.st.Counts(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, c.ParseFailures)
 
 	// The next poll sees the same blurb: no re-fetch until the work changes again.
 	e.clk.Advance(7 * time.Hour)
 	e.drain(50)
-	if n := countRequests(e, "/works/5001?view_full_work=true"); n != 2 {
-		t.Fatalf("work re-fetched after parse failure: %d requests", n)
-	}
-	_ = id
+	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "work re-fetched after parse failure")
 }
 
 func TestBackfillBlocksOnParseFailure(t *testing.T) {
@@ -82,23 +77,22 @@ func TestBackfillBlocksOnParseFailure(t *testing.T) {
 	e.clk.Advance(time.Minute)
 	e.drain(100)
 
-	if n := countRequests(e, page2); n != 1 {
-		t.Fatalf("broken listing page requested %d times, want 1", n)
-	}
-	src, _ := e.st.GetSource(ctx, id)
-	cur, _ := store.ParseCursor(src.BackfillCursor)
-	if cur.NextPage != 2 || cur.BlockedParser != parse.Version || !strings.Contains(src.LastError, "backfill page 2") {
-		t.Fatalf("source after failure: cursor=%+v error=%q", cur, src.LastError)
-	}
+	require.Equal(t, 1, countRequests(e, page2), "broken listing page requested once")
+	src := e.source(id)
+	cur, err := store.ParseCursor(src.BackfillCursor)
+	require.NoError(t, err)
+	require.Equal(t, 2, cur.NextPage)
+	require.Equal(t, parse.Version, cur.BlockedParser)
+	require.Contains(t, src.LastError, "backfill page 2")
 
 	// A new parser version (simulated) unblocks; with the page fixed, backfill completes.
 	cur.BlockedParser = parse.Version - 1
 	src.BackfillCursor = cur.JSON()
-	e.st.UpdateSourceProgress(ctx, src)
+	require.NoError(t, e.st.UpdateSourceProgress(ctx, src))
 	e.srv.Handle(page2) // remove override: the synthetic site serves it again
 	e.drain(200)
-	src, _ = e.st.GetSource(ctx, id)
-	if src.State != store.SourceDoneBackfill || src.MemberWorks != 45 || src.LastError != "" {
-		t.Fatalf("after unblock: state=%s members=%d error=%q", src.State, src.MemberWorks, src.LastError)
-	}
+	src = e.source(id)
+	require.Equal(t, store.SourceDoneBackfill, src.State, "after unblock")
+	require.Equal(t, 45, src.MemberWorks)
+	require.Empty(t, src.LastError)
 }

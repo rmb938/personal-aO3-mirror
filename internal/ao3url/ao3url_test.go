@@ -1,13 +1,12 @@
 package ao3url
 
 import (
-	"errors"
 	"net/url"
-	"reflect"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/temoto/robotstxt"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
@@ -40,12 +39,8 @@ func TestParse(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, err := Parse(c.in)
-		if err != nil {
-			t.Errorf("Parse(%q): %v", c.in, err)
-			continue
-		}
-		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("Parse(%q) = %+v, want %+v", c.in, got, c.want)
+		if assert.NoError(t, err, "Parse(%q)", c.in) {
+			assert.Equal(t, c.want, got, "Parse(%q)", c.in)
 		}
 	}
 }
@@ -60,18 +55,16 @@ func TestParseErrors(t *testing.T) {
 		host + "/tags/x/bookmarks":                      ErrUnsupported,
 		host + "/":                                      ErrUnsupported,
 	} {
-		if _, err := Parse(in); !errors.Is(err, want) {
-			t.Errorf("Parse(%q) err = %v, want %v", in, err, want)
-		}
+		_, err := Parse(in)
+		assert.ErrorIs(t, err, want, "Parse(%q)", in)
 	}
 }
 
 func TestListingPathsAllowedByRobots(t *testing.T) {
 	data, err := robotstxt.FromString(fakeao3.Robots)
-	if err != nil {
-		t.Fatal(err)
-	}
-	o, _ := ParseOrder("kudos_desc")
+	require.NoError(t, err)
+	o, err := ParseOrder("kudos_desc")
+	require.NoError(t, err)
 	win := &Window{From: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)}
 	srcs := []Source{
 		{Kind: KindTag, Target: "A/B & C.", Filters: url.Values{"work_search[language_id]": {"en"}}},
@@ -85,51 +78,44 @@ func TestListingPathsAllowedByRobots(t *testing.T) {
 	for _, s := range srcs {
 		for _, page := range []int{1, 2, 5000} {
 			p, err := ListingPath(s, page, o, win)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !data.TestAgent(p, "personal-ao3-mirror") {
-				t.Errorf("%s page %d: robots disallows %s", s.Kind, page, p)
-			}
+			require.NoError(t, err)
+			assert.True(t, data.TestAgent(p, "personal-ao3-mirror"), "%s page %d: robots disallows %s", s.Kind, page, p)
 			back, err := Parse(p)
-			if err != nil || back.Kind != s.Kind || back.Target != s.Target {
-				t.Errorf("round trip %s => %+v, %v", p, back, err)
+			if assert.NoError(t, err, "round trip %s", p) {
+				assert.Equal(t, s.Kind, back.Kind, "round trip %s", p)
+				assert.Equal(t, s.Target, back.Target, "round trip %s", p)
 			}
 		}
 	}
-	p, _ := ListingPath(srcs[0], 3, o, win)
+	p, err := ListingPath(srcs[0], 3, o, win)
+	require.NoError(t, err)
 	for _, want := range []string{"/tags/A*s*B%20*a*%20C*d*/works?", "page=3", "sort_column%5D=kudos_count", "date_from%5D=2020-01-01", "language_id%5D=en"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("tag path %s missing %s", p, want)
-		}
+		assert.Contains(t, p, want, "tag path")
 	}
-	if p, _ := ListingPath(srcs[5], 1, o, nil); p != "/series/77" {
-		t.Errorf("series ignores order: %s", p)
-	}
-	if p, _ := ListingPath(srcs[6], 1, o, nil); p != "/works/123?view_full_work=true" {
-		t.Errorf("work path: %s", p)
-	}
+	p, err = ListingPath(srcs[5], 1, o, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "/series/77", p, "series ignores order")
+	p, err = ListingPath(srcs[6], 1, o, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "/works/123?view_full_work=true", p, "work path")
 }
 
 func TestFiltersJSONCanonical(t *testing.T) {
 	a := url.Values{"b": {"2", "1"}, "a": {"x"}}
 	b := url.Values{"a": {"x"}, "b": {"1", "2"}}
-	if FiltersJSON(a) != FiltersJSON(b) || FiltersJSON(nil) != "{}" {
-		t.Fatalf("%s vs %s", FiltersJSON(a), FiltersJSON(b))
-	}
+	require.Equal(t, FiltersJSON(a), FiltersJSON(b))
+	require.Equal(t, "{}", FiltersJSON(nil))
 	back, err := ParseFiltersJSON(FiltersJSON(a))
-	if err != nil || back.Get("a") != "x" {
-		t.Fatal(back, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "x", back.Get("a"))
 }
 
 func TestParseOrder(t *testing.T) {
-	if o, err := ParseOrder("revised_asc"); err != nil || o != (Order{"revised_at", "asc"}) {
-		t.Fatal(o, err)
-	}
+	o, err := ParseOrder("revised_asc")
+	require.NoError(t, err)
+	require.Equal(t, Order{"revised_at", "asc"}, o)
 	for _, bad := range []string{"kudos", "kudos_up", "nope_desc", ""} {
-		if _, err := ParseOrder(bad); err == nil {
-			t.Errorf("%q should fail", bad)
-		}
+		_, err := ParseOrder(bad)
+		assert.Error(t, err, "%q should fail", bad)
 	}
 }

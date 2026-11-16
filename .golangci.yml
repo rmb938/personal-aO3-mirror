@@ -29,6 +29,7 @@ linters:
     - canonicalheader
     - mirror
     - errname         # ErrX sentinels, XError types
+    - testifylint     # idiomatic testify assertions (require for fatal checks)
   settings:
     nolintlint:
       require-explanation: true

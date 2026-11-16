@@ -5,67 +5,71 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
 func TestTagInfo(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	s.UpsertWork(ctx, fixtureWork(1), model.FromBlurb, 1)
+	_, err := s.UpsertWork(ctx, fixtureWork(1), model.FromBlurb, 1)
+	require.NoError(t, err)
 	w2 := fixtureWork(2)
 	w2.Tags = []model.Tag{{Type: model.TagCharacter, Name: "Fixture Character"}}
-	s.UpsertWork(ctx, w2, model.FromBlurb, 1)
+	_, err = s.UpsertWork(ctx, w2, model.FromBlurb, 1)
+	require.NoError(t, err)
 
-	if total, fetched, due, err := s.TagInfoProgress(ctx, []string{"Character", "Fandom"}, clk.t.Add(-time.Hour)); err != nil ||
-		total != 2 || fetched != 0 || due != 2 {
-		t.Fatalf("progress before: %d/%d due %d %v", fetched, total, due, err)
-	}
-	need, err := s.TagsNeedingInfo(ctx, []string{"Character", "Fandom"}, clk.t.Add(-time.Hour), 10)
-	if err != nil || len(need) != 2 || need[0].Name != "Fixture Character" {
-		t.Fatalf("need: %+v %v", need, err) // character used by 2 works sorts first
-	}
+	types := []string{"Character", "Fandom"}
+	total, fetched, due, err := s.TagInfoProgress(ctx, types, clk.t.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, []int{2, 0, 2}, []int{total, fetched, due}, "progress before (total, fetched, due)")
+
+	need, err := s.TagsNeedingInfo(ctx, types, clk.t.Add(-time.Hour), 10)
+	require.NoError(t, err)
+	require.Len(t, need, 2)
+	require.Equal(t, "Fixture Character", need[0].Name, "character used by 2 works sorts first")
 	char := need[0]
-	if err := s.UpdateTagInfo(ctx, char.ID, TagInfoUpdate{Type: model.TagCharacter, Canonical: true,
-		Parents: []string{"Fixture Fandom"}, MetaTags: []string{"Fixture Meta"}, Synonyms: []string{"FC"}}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, s.UpdateTagInfo(ctx, char.ID, TagInfoUpdate{Type: model.TagCharacter, Canonical: true,
+		Parents: []string{"Fixture Fandom"}, MetaTags: []string{"Fixture Meta"}, Synonyms: []string{"FC"}}))
+
 	var canonical, parents, metas int
 	var fc int64
-	s.Meta.QueryRow(`SELECT canonical FROM tags WHERE id = ?`, char.ID).Scan(&canonical)
-	s.Meta.QueryRow(`SELECT COUNT(*) FROM tag_parents tp JOIN tags p ON p.id = tp.parent_id WHERE tp.child_id = ? AND p.name = 'Fixture Fandom'`, char.ID).Scan(&parents)
-	s.Meta.QueryRow(`SELECT COUNT(*) FROM tag_meta WHERE sub_id = ?`, char.ID).Scan(&metas)
-	s.Meta.QueryRow(`SELECT merger_id FROM tags WHERE name = 'FC'`).Scan(&fc)
-	if canonical != 1 || parents != 1 || metas != 1 || fc != char.ID {
-		t.Fatalf("canonical=%d parents=%d metas=%d fc_merger=%d", canonical, parents, metas, fc)
-	}
+	require.NoError(t, s.Meta.QueryRow(`SELECT canonical FROM tags WHERE id = ?`, char.ID).Scan(&canonical))
+	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM tag_parents tp JOIN tags p ON p.id = tp.parent_id
+		WHERE tp.child_id = ? AND p.name = 'Fixture Fandom'`, char.ID).Scan(&parents))
+	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM tag_meta WHERE sub_id = ?`, char.ID).Scan(&metas))
+	require.NoError(t, s.Meta.QueryRow(`SELECT merger_id FROM tags WHERE name = 'FC'`).Scan(&fc))
+	require.Equal(t, 1, canonical)
+	require.Equal(t, 1, parents)
+	require.Equal(t, 1, metas)
+	require.Equal(t, char.ID, fc, "synonym merged into the fetched tag")
+
 	// The fetched tag no longer needs info, and its now-typed synonym/meta tags (used by no
 	// mirrored work) must not get their own tag page fetches.
-	need, _ = s.TagsNeedingInfo(ctx, []string{"Character"}, clk.t.Add(-time.Hour), 10)
-	if len(need) != 0 {
-		t.Fatalf("only tags used by mirrored works should need info: %+v", need)
-	}
+	need, err = s.TagsNeedingInfo(ctx, []string{"Character"}, clk.t.Add(-time.Hour), 10)
+	require.NoError(t, err)
+	require.Empty(t, need, "only tags used by mirrored works should need info")
 	// Character fetched; the fandom tag (type Fandom, used by work 1) is still due. Synonym/meta
 	// tags typed from the tag page are not counted (no mirrored work uses them).
-	if total, fetched, due, _ := s.TagInfoProgress(ctx, []string{"Character", "Fandom"}, clk.t.Add(-time.Hour)); total != 2 || fetched != 1 || due != 1 {
-		t.Fatalf("progress after: %d/%d due %d", fetched, total, due)
-	}
+	total, fetched, due, err = s.TagInfoProgress(ctx, types, clk.t.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, []int{2, 1, 1}, []int{total, fetched, due}, "progress after (total, fetched, due)")
+
 	// Synonym page: merger recorded, existing fandom type unchanged by Unknown.
-	fandom := TagRef{}
-	s.Meta.QueryRow(`SELECT id FROM tags WHERE name = 'Fixture Fandom'`).Scan(&fandom.ID)
-	s.UpdateTagInfo(ctx, fandom.ID, TagInfoUpdate{Type: model.TagUnknown, MergerOf: "Canonical Fandom"})
+	var fandomID int64
+	require.NoError(t, s.Meta.QueryRow(`SELECT id FROM tags WHERE name = 'Fixture Fandom'`).Scan(&fandomID))
+	require.NoError(t, s.UpdateTagInfo(ctx, fandomID, TagInfoUpdate{Type: model.TagUnknown, MergerOf: "Canonical Fandom"}))
 	var typ string
-	s.Meta.QueryRow(`SELECT type FROM tags WHERE id = ?`, fandom.ID).Scan(&typ)
-	if typ != "Fandom" {
-		t.Fatalf("type changed to %s", typ)
-	}
+	require.NoError(t, s.Meta.QueryRow(`SELECT type FROM tags WHERE id = ?`, fandomID).Scan(&typ))
+	require.Equal(t, "Fandom", typ)
+
 	// Same-type relations inherit the tag's type; parents (mixed types) stay Unknown unless known.
-	types := map[string]string{}
+	got := map[string]string{}
 	for _, n := range []string{"FC", "Fixture Meta", "Canonical Fandom"} {
 		var ty string
-		s.Meta.QueryRow(`SELECT type FROM tags WHERE name = ?`, n).Scan(&ty)
-		types[n] = ty
+		require.NoError(t, s.Meta.QueryRow(`SELECT type FROM tags WHERE name = ?`, n).Scan(&ty))
+		got[n] = ty
 	}
-	if types["FC"] != "Character" || types["Fixture Meta"] != "Character" || types["Canonical Fandom"] != "Fandom" {
-		t.Fatalf("same-type relations not typed: %v", types)
-	}
+	require.Equal(t, map[string]string{"FC": "Character", "Fixture Meta": "Character", "Canonical Fandom": "Fandom"}, got)
 }

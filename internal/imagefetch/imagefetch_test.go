@@ -3,17 +3,15 @@ package imagefetch
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -24,10 +22,7 @@ func TestExtract(t *testing.T) {
 	got := Extract(`<p>x <img src="https://img.example.invalid/a.png" alt="x"> <img src='/rel.png'>
 		<img src="data:image/png;base64,AAAA"> <IMG SRC="http://img.example.invalid/b.jpg#frag"/></p>`,
 		`<img src="https://img.example.invalid/a.png">`, `no images`)
-	want := []string{"https://img.example.invalid/a.png", "http://img.example.invalid/b.jpg"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v want %v", got, want)
-	}
+	require.Equal(t, []string{"https://img.example.invalid/a.png", "http://img.example.invalid/b.jpg"}, got)
 }
 
 type hostServer struct {
@@ -39,8 +34,14 @@ type hostServer struct {
 }
 
 func newHost(t *testing.T) *hostServer {
+	t.Helper()
 	h := &hostServer{}
 	png := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{1}, 100)...)
+	write := func(w http.ResponseWriter, b []byte) {
+		if _, err := w.Write(b); err != nil {
+			t.Errorf("fake image host write: %v", err)
+		}
+	}
 	h.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		h.seen = append(h.seen, r.URL.Path)
@@ -48,16 +49,16 @@ func newHost(t *testing.T) *hostServer {
 		h.mu.Unlock()
 		switch r.URL.Path {
 		case "/robots.txt":
-			fmt.Fprint(w, "User-agent: *\nDisallow: /private/\n")
+			write(w, []byte("User-agent: *\nDisallow: /private/\n"))
 		case "/a.png", "/private/b.png", "/dup.png":
 			w.Header().Set("Content-Type", "image/png")
-			w.Write(png)
+			write(w, png)
 		case "/big.png":
 			w.Header().Set("Content-Type", "image/png")
-			w.Write(bytes.Repeat([]byte{2}, 5000))
+			write(w, bytes.Repeat([]byte{2}, 5000))
 		case "/page":
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, "<html></html>")
+			write(w, []byte("<html></html>"))
 		case "/redir.png":
 			// Redirect to an AO3 host: CheckRedirect must refuse before any request is made.
 			http.Redirect(w, r, "https://archiveofourown.org/images/x.png", http.StatusFound)
@@ -67,17 +68,27 @@ func newHost(t *testing.T) *hostServer {
 			n := h.flaky
 			h.mu.Unlock()
 			if n == 1 {
-				w.WriteHeader(503)
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 			w.Header().Set("Content-Type", "image/png")
-			w.Write(png)
+			write(w, png)
 		default:
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	t.Cleanup(h.Close)
 	return h
+}
+
+func openStore(t *testing.T, dir string, now func() time.Time) *store.Store {
+	t.Helper()
+	st, err := store.Open(context.Background(), dir, store.Options{Now: now})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	_, err = st.Meta.Exec(`INSERT INTO works (id, first_seen) VALUES (1, 0)`)
+	require.NoError(t, err)
+	return st
 }
 
 func TestWorker(t *testing.T) {
@@ -87,55 +98,45 @@ func TestWorker(t *testing.T) {
 	dir := t.TempDir()
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	st, err := store.Open(ctx, filepath.Join(dir, "m"), store.Options{Now: now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openStore(t, filepath.Join(dir, "m"), now)
 	h := newHost(t)
 	paths := []string{"/a.png", "/private/b.png", "/big.png", "/page", "/gone.png", "/flaky.png", "/dup.png", "/redir.png"}
 	var urls []string
 	for _, p := range paths {
 		urls = append(urls, h.URL+p)
 	}
-	st.Meta.Exec(`INSERT INTO works (id, first_seen) VALUES (1, 0)`)
-	if n, err := st.QueueImages(ctx, 1, urls); err != nil || n != len(urls) {
-		t.Fatal(n, err)
-	}
-	if n, _ := st.QueueImages(ctx, 1, urls); n != 0 {
-		t.Fatal("re-queue must not duplicate")
-	}
+	n, err := st.QueueImages(ctx, 1, urls)
+	require.NoError(t, err)
+	require.Len(t, urls, n)
+	n, err = st.QueueImages(ctx, 1, urls)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "re-queue must not duplicate")
 
 	w, err := New(Options{Store: st, UserAgent: testUA, Dir: filepath.Join(dir, "img"), PerHostInterval: 3 * time.Second,
 		MaxBytes: 1000, Logger: log, Now: now, AllowLoopback: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var lastFetch time.Time
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		h.mu.Lock()
 		before := len(h.seen)
 		h.mu.Unlock()
 		ran, wait, err := w.Step(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		h.mu.Lock()
 		requested := len(h.seen) - before
 		h.mu.Unlock()
-		if requested > 1 {
-			t.Fatalf("one step made %d requests to the same host", requested)
-		}
+		require.LessOrEqual(t, requested, 1, "one step made several requests to the same host")
 		if requested == 1 {
-			if !lastFetch.IsZero() && clk.Sub(lastFetch) < 3*time.Second {
-				t.Fatalf("per-host interval violated: %s", clk.Sub(lastFetch))
+			if !lastFetch.IsZero() {
+				require.GreaterOrEqual(t, clk.Sub(lastFetch), 3*time.Second, "per-host interval violated")
 			}
 			lastFetch = clk
 		}
 		if ran {
 			continue
 		}
-		next, _ := st.NextImageDue(ctx)
+		next, err := st.NextImageDue(ctx)
+		require.NoError(t, err)
 		if next.IsZero() {
 			break
 		}
@@ -144,51 +145,35 @@ func TestWorker(t *testing.T) {
 		}
 		clk = clk.Add(wait)
 	}
-	counts, bytesOK, _ := st.ImageCounts(ctx)
+	counts, bytesOK, err := st.ImageCounts(ctx)
+	require.NoError(t, err)
 	// skipped: /page (not an image) and /redir.png (redirects to AO3, refused before following).
-	want := map[string]int{"ok": 3, "disallowed": 1, "too_large": 1, "skipped": 2, "failed": 1}
-	if !reflect.DeepEqual(counts, want) {
-		t.Fatalf("counts %v want %v", counts, want)
-	}
-	if bytesOK != 3*108 {
-		t.Fatalf("bytes %d", bytesOK)
-	}
-	files, _ := filepath.Glob(filepath.Join(dir, "img", "*", "*", "*.png"))
-	if len(files) != 1 { // a.png, flaky.png and dup.png are identical bytes: one file
-		t.Fatalf("content-addressed files: %v", files)
-	}
-	for _, p := range h.seen {
-		if p == "/private/b.png" {
-			t.Fatal("robots-disallowed image was requested")
-		}
-	}
+	require.Equal(t, map[string]int{"ok": 3, "disallowed": 1, "too_large": 1, "skipped": 2, "failed": 1}, counts)
+	require.EqualValues(t, 3*108, bytesOK)
+	files, err := filepath.Glob(filepath.Join(dir, "img", "*", "*", "*.png"))
+	require.NoError(t, err)
+	require.Len(t, files, 1, "a.png, flaky.png and dup.png are identical bytes: one content-addressed file")
+	require.NotContains(t, h.seen, "/private/b.png", "robots-disallowed image was requested")
 	for _, ua := range h.uas {
-		if ua != testUA {
-			t.Fatalf("request without UA: %q", ua)
-		}
+		require.Equal(t, testUA, ua, "every request carries the UA")
 	}
-	if strings.Contains(logs.String(), "/a.png") || strings.Contains(logs.String(), "127.0.0.1") {
-		t.Fatalf("logs leaked image URL/host:\n%s", logs.String())
-	}
+	require.NotContains(t, logs.String(), "/a.png", "logs leaked image URL")
+	require.NotContains(t, logs.String(), "127.0.0.1", "logs leaked image host")
 }
 
 func TestBlocksNonPublicAddresses(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.Open(ctx, t.TempDir(), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
+	st := openStore(t, t.TempDir(), nil)
 	h := newHost(t)
-	st.Meta.Exec(`INSERT INTO works (id, first_seen) VALUES (1, 0)`)
-	st.QueueImages(ctx, 1, []string{h.URL + "/a.png"})
-	w, _ := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), MaxBytes: 1000})
-	if ran, _, err := w.Step(ctx); err != nil || !ran {
-		t.Fatal(ran, err)
-	}
-	counts, _, _ := st.ImageCounts(ctx)
-	if counts["skipped"] != 1 || len(h.seen) != 0 {
-		t.Fatalf("loopback image must be refused before connecting: %v seen=%v", counts, h.seen)
-	}
-	_ = os.Getpid
+	_, err := st.QueueImages(ctx, 1, []string{h.URL + "/a.png"})
+	require.NoError(t, err)
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), MaxBytes: 1000})
+	require.NoError(t, err)
+	ran, _, err := w.Step(ctx)
+	require.NoError(t, err)
+	require.True(t, ran)
+	counts, _, err := st.ImageCounts(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, counts["skipped"], "loopback image must be refused")
+	require.Empty(t, h.seen, "loopback image must be refused before connecting")
 }

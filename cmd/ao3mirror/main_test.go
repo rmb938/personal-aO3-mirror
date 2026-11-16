@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
@@ -24,60 +27,39 @@ func TestRunStatusDebugEndToEnd(t *testing.T) {
 	c := newCLI(t, "")
 	site := fakeao3.NewSite("Fixture Tag", 7000, 2)
 	c.srv.SetSite(site)
-	if code, out, errOut := c.run("source", "add", site.TagPath()); code != 0 {
-		t.Fatalf("add: %s %s", out, errOut)
-	}
+	code, out, errOut := c.run("source", "add", site.TagPath())
+	require.Equal(t, 0, code, "add: %s %s", out, errOut)
 
 	cfg, err := config.Load(c.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a, err := openApp(context.Background(), cfg, logger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
+	require.NoError(t, err)
+	a, err := openApp(context.Background(), cfg, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(a.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int)
 	go func() { done <- runDaemon(ctx, a, io.Discard) }()
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		cnt, _ := a.store.Counts(context.Background())
-		if cnt.WorksFetched == 2 {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		cnt, err := a.store.Counts(context.Background())
+		return err == nil && cnt.WorksFetched == 2
+	}, 60*time.Second, 200*time.Millisecond, "daemon should fetch both works")
 	// A second daemon on the same directory must refuse to start.
-	if code := runDaemon(context.Background(), a, io.Discard); code != 1 {
-		t.Error("second daemon should be refused by the lock")
-	}
+	assert.Equal(t, 1, runDaemon(context.Background(), a, io.Discard), "second daemon should be refused by the lock")
 	cancel()
-	if code := <-done; code != 0 {
-		t.Fatalf("daemon exit %d", code)
-	}
+	require.Equal(t, 0, <-done, "daemon exit code")
 
-	_, out, _ := c.run("status")
+	_, out, _ = c.run("status")
 	for _, want := range []string{"== daemon", "fetched: 2", "ok=2", "work", "done=2", "== sources", "done_backfill"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status missing %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "status")
 	}
 	_, dbg, _ := c.run("debug", "work", "7000")
 	for _, want := range []string{"status:", "ok", "raw versions:", "1 (", "requests:", "/works/7000?view_full_work=true"} {
-		if !strings.Contains(dbg, want) {
-			t.Errorf("debug work missing %q:\n%s", want, dbg)
-		}
+		assert.Contains(t, dbg, want, "debug work")
 	}
 	_, dj, _ := c.run("debug", "job", "1")
-	if !strings.Contains(dj, "events:") || !strings.Contains(dj, "done") {
-		t.Errorf("debug job:\n%s", dj)
-	}
+	assert.Contains(t, dj, "events:", "debug job")
+	assert.Contains(t, dj, "done", "debug job")
 	for name, txt := range map[string]string{"status": out, "debug work": dbg, "debug job": dj} {
-		if strings.Contains(strings.ToLower(txt), "fixture") {
-			t.Errorf("%s leaked content:\n%s", name, txt)
-		}
+		assert.NotContains(t, strings.ToLower(txt), "fixture", "%s leaked content", name)
 	}
 }
 
@@ -96,9 +78,7 @@ func newCLI(t *testing.T, extraYAML string) *cli {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "cfg.yaml")
 	body := "data_dir: " + filepath.Join(dir, "d") + "\ncontact: {discord: \"@fixture_user\"}\nrate: {interval: 3s, jitter: 0}\n" + extraYAML
-	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(cfg, []byte(body), 0o644))
 	return &cli{t: t, cfg: cfg, srv: srv}
 }
 
@@ -109,10 +89,9 @@ func (c *cli) run(args ...string) (int, string, string) {
 }
 
 func fixture(t *testing.T, name string) string {
+	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -124,108 +103,82 @@ func TestSourceCLI(t *testing.T) {
 	c.srv.Handle("/tags/Fixture%20Fandom/works", fakeao3.Reply{Body: fixture(t, "listing_tag.html")})
 
 	code, out, errOut := c.run("source", "add", "/tags/Fixture%20Fandom/works", "--order", "hits_desc")
-	if code != 0 {
-		t.Fatalf("add: %d %s", code, errOut)
-	}
+	require.Equal(t, 0, code, "add: %s", errOut)
 	for _, want := range []string{"source 1 added", "state=pending_confirm", "order=hits_desc", "1,234 works", "62 listing pages", "source confirm 1", "page 1: 2 works stored"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("add output missing %q:\n%s", want, out)
-		}
+		assert.Contains(t, out, want, "add output")
 	}
-	if strings.Contains(out, "Fixture") {
-		t.Errorf("add output leaked the tag name without --names:\n%s", out)
-	}
-	if !strings.Contains(out, httpx.Hash("Fixture Fandom")) {
-		t.Errorf("add output should show the hashed target:\n%s", out)
-	}
+	assert.NotContains(t, out, "Fixture", "add output leaked the tag name without --names")
+	assert.Contains(t, out, httpx.Hash("Fixture Fandom"), "add output should show the hashed target")
 
-	if code, _, errOut := c.run("source", "add", "/tags/Fixture%20Fandom"); code != 1 || !strings.Contains(errOut, "already added as source 1") {
-		t.Errorf("duplicate: %d %s", code, errOut)
-	}
+	code, _, errOut = c.run("source", "add", "/tags/Fixture%20Fandom")
+	assert.Equal(t, 1, code, "duplicate add")
+	assert.Contains(t, errOut, "already added as source 1")
 
 	_, out, _ = c.run("source", "list")
-	if !strings.Contains(out, "pending_confirm") || strings.Contains(out, "Fixture") || !strings.Contains(out, "2/0/1,234") {
-		t.Errorf("list:\n%s", out)
-	}
+	assert.Contains(t, out, "pending_confirm")
+	assert.NotContains(t, out, "Fixture", "list must hash names")
+	assert.Contains(t, out, "2/0/1,234")
 	_, out, _ = c.run("source", "list", "--names")
-	if !strings.Contains(out, "Fixture Fandom") {
-		t.Errorf("list --names:\n%s", out)
-	}
+	assert.Contains(t, out, "Fixture Fandom", "list --names")
 	_, out, _ = c.run("source", "show", "1")
-	if strings.Contains(out, "Fixture") || !strings.Contains(out, "/tags/h") {
-		t.Errorf("show must hash the path:\n%s", out)
-	}
+	assert.NotContains(t, out, "Fixture", "show must hash the path")
+	assert.Contains(t, out, "/tags/h", "show must hash the path")
 
 	for _, step := range [][]string{{"confirm", "1"}, {"pause", "1"}, {"resume", "1"}, {"cancel", "1"}, {"remove", "1"}} {
-		if code, out, errOut := c.run(append([]string{"source"}, step...)...); code != 0 {
-			t.Fatalf("%v: %d %s %s", step, code, out, errOut)
-		}
+		code, out, errOut := c.run(append([]string{"source"}, step...)...)
+		require.Equal(t, 0, code, "%v: %s %s", step, out, errOut)
 	}
-	if code, _, _ := c.run("source", "show", "1"); code != 1 {
-		t.Error("show after remove should fail")
-	}
+	code, _, _ = c.run("source", "show", "1")
+	assert.Equal(t, 1, code, "show after remove should fail")
 	for _, r := range c.srv.Requests() {
-		if !strings.Contains(r.UserAgent, "contact: discord @fixture_user") {
-			t.Errorf("%s sent UA %q", r.URI, r.UserAgent)
-		}
+		assert.Contains(t, r.UserAgent, "contact: discord @fixture_user", "%s UA", r.URI)
 	}
 }
 
 func TestJobsCLI(t *testing.T) {
 	c := newCLI(t, "")
 	cfg, err := config.Load(c.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ctx := context.Background()
 	st, err := store.Open(ctx, cfg.DataDir, store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, j := range []store.Job{
 		{Kind: "work", Target: "101", Priority: 3, DedupeKey: "work:101"},
 		{Kind: "work", Target: "102", Priority: 3, DedupeKey: "work:102"},
 		{Kind: "tag_info", Target: "7", Priority: 5, DedupeKey: "tag:7"},
 	} {
-		if _, _, err := st.EnqueueJob(ctx, j); err != nil {
-			t.Fatal(err)
-		}
+		_, _, err := st.EnqueueJob(ctx, j)
+		require.NoError(t, err)
 	}
-	st.Close()
+	require.NoError(t, st.Close())
 
 	code, out, errOut := c.run("jobs")
-	if code != 0 || !strings.Contains(out, "ID") || !strings.Contains(out, "tag_info") || !strings.Contains(out, "102") {
-		t.Fatalf("jobs: %d %s %s", code, out, errOut)
-	}
+	require.Equal(t, 0, code, "jobs: %s", errOut)
+	require.Contains(t, out, "ID")
+	require.Contains(t, out, "tag_info")
+	require.Contains(t, out, "102")
 	_, out, _ = c.run("jobs", "--kind", "work", "--state", "queued")
-	if strings.Contains(out, "tag_info") || strings.Index(out, "101") > strings.Index(out, "102") {
-		t.Errorf("queued work jobs should be filtered and in queue order:\n%s", out)
-	}
+	assert.NotContains(t, out, "tag_info", "kind filter")
+	assert.Less(t, strings.Index(out, "101"), strings.Index(out, "102"), "queued jobs in queue order")
 	_, out, _ = c.run("jobs", "--limit", "1")
-	if !strings.Contains(out, "first 1") {
-		t.Errorf("limit note missing:\n%s", out)
-	}
-	if code, _, _ := c.run("jobs", "--state", "failed"); code != 0 {
-		t.Error("empty result should still exit 0")
-	}
-	if len(c.srv.Requests()) != 0 {
-		t.Error("jobs must make no requests")
-	}
+	assert.Contains(t, out, "first 1", "limit note")
+	code, _, _ = c.run("jobs", "--state", "failed")
+	assert.Equal(t, 0, code, "empty result should still exit 0")
+	assert.Empty(t, c.srv.Requests(), "jobs must make no requests")
 }
 
 func TestBaseURLLoopbackOnly(t *testing.T) {
 	t.Setenv("AO3MIRROR_BASE_URL", "https://example.com")
-	if _, err := baseURL(); err == nil {
-		t.Fatal("non-loopback base URL must be rejected")
-	}
+	_, err := baseURL()
+	require.Error(t, err, "non-loopback base URL must be rejected")
 	t.Setenv("AO3MIRROR_BASE_URL", "http://127.0.0.1:8080")
-	if v, err := baseURL(); err != nil || v != "http://127.0.0.1:8080" {
-		t.Fatal(v, err)
-	}
+	v, err := baseURL()
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:8080", v)
 	t.Setenv("AO3MIRROR_BASE_URL", "")
-	if v, _ := baseURL(); v != httpx.DefaultBaseURL {
-		t.Fatal(v)
-	}
+	v, err = baseURL()
+	require.NoError(t, err)
+	require.Equal(t, httpx.DefaultBaseURL, v)
 }
 
 func TestFetchWorkAndReparse(t *testing.T) {
@@ -236,33 +189,26 @@ func TestFetchWorkAndReparse(t *testing.T) {
 	c.srv.SetSite(fakeao3.NewSite("Fixture Tag", 7100, 2))
 
 	code, out, errOut := c.run("fetch-work", "/works/7100/chapters/5")
-	if code != 0 || !strings.Contains(out, "work 7100 queued as job 1") {
-		t.Fatalf("queue: %d %s %s", code, out, errOut)
-	}
-	if code, out, _ := c.run("fetch-work", "7100"); code != 0 || !strings.Contains(out, "already queued") {
-		t.Fatalf("requeue: %s", out)
-	}
+	require.Equal(t, 0, code, "queue: %s", errOut)
+	require.Contains(t, out, "work 7100 queued as job 1")
+	code, out, _ = c.run("fetch-work", "7100")
+	require.Equal(t, 0, code)
+	require.Contains(t, out, "already queued", "requeue")
 	code, out, errOut = c.run("fetch-work", "--now", "7100")
-	if code != 0 || !strings.Contains(out, "job 1 done") {
-		t.Fatalf("--now: %d %s %s", code, out, errOut)
-	}
-	if code, out, _ := c.run("fetch-work", "7999", "--now"); code != 0 || !strings.Contains(out, "done") {
-		t.Fatalf("missing work should finish (marked deleted): %s", out)
-	}
+	require.Equal(t, 0, code, "--now: %s", errOut)
+	require.Contains(t, out, "job 1 done")
+	code, out, _ = c.run("fetch-work", "7999", "--now")
+	require.Equal(t, 0, code)
+	require.Contains(t, out, "done", "missing work should finish (marked deleted)")
 	_, dbg, _ := c.run("debug", "work", "7999")
-	if !strings.Contains(dbg, "deleted") {
-		t.Fatalf("debug work 7999:\n%s", dbg)
-	}
+	require.Contains(t, dbg, "deleted")
 
 	before := len(c.srv.Requests())
 	code, out, errOut = c.run("reparse", "--all")
-	if code != 0 || !strings.Contains(out, "reparsed 1") {
-		t.Fatalf("reparse: %d %s %s", code, out, errOut)
-	}
-	if after := len(c.srv.Requests()); after != before {
-		t.Fatalf("reparse made %d requests", after-before)
-	}
-	if code, out, _ := c.run("reparse"); code != 0 || !strings.Contains(out, "skipped 1") {
-		t.Fatalf("second reparse should skip current-version works: %s", out)
-	}
+	require.Equal(t, 0, code, "reparse: %s", errOut)
+	require.Contains(t, out, "reparsed 1")
+	require.Len(t, c.srv.Requests(), before, "reparse must make no requests")
+	code, out, _ = c.run("reparse")
+	require.Equal(t, 0, code)
+	require.Contains(t, out, "skipped 1", "second reparse should skip current-version works")
 }

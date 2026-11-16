@@ -3,12 +3,14 @@ package httpx
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
@@ -65,9 +67,7 @@ func newHarness(t *testing.T, interval time.Duration, jitter float64) *harness {
 		Logger: logger, Clock: h.clock, Seed: 42,
 		OnRequest: func(r RequestRecord) { h.recs = append(h.recs, r) },
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	h.c = c
 	return h
 }
@@ -75,9 +75,7 @@ func newHarness(t *testing.T, interval time.Duration, jitter float64) *harness {
 func (h *harness) get(t *testing.T, kind Kind, ref string) *Response {
 	t.Helper()
 	r, err := h.c.Get(context.Background(), kind, ref)
-	if err != nil {
-		t.Fatalf("Get %s: %v", ref, err)
-	}
+	require.NoError(t, err, "Get %s", ref)
 	return r
 }
 
@@ -89,26 +87,16 @@ func TestUserAgentOnEveryRequest(t *testing.T) {
 	h.get(t, KindWork, "/works/1")
 	h.get(t, KindListing, "/tags/fixture/works?page=2")
 	reqs := h.srv.Requests()
-	if len(reqs) != 4 { // robots + 2 hops + listing
-		t.Fatalf("want 4 requests, got %d: %+v", len(reqs), reqs)
-	}
+	require.Len(t, reqs, 4, "robots + 2 hops + listing")
 	for _, r := range reqs {
-		if r.UserAgent != testUA {
-			t.Errorf("%s sent UA %q", r.URI, r.UserAgent)
-		}
-		if got := r.Header.Get("Sec-Fetch-Site"); got != "none" {
-			t.Errorf("%s sent Sec-Fetch-Site %q, want none", r.URI, got)
-		}
+		assert.Equal(t, testUA, r.UserAgent, "%s UA", r.URI)
+		assert.Equal(t, "none", r.Header.Get("Sec-Fetch-Site"), "%s Sec-Fetch-Site", r.URI)
 		// Only the truthful Sec-Fetch-Site: nothing that claims a browser tab or a human click.
 		for _, k := range []string{"Sec-Fetch-User", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Upgrade-Insecure-Requests"} {
-			if v := r.Header.Get(k); v != "" {
-				t.Errorf("%s sent %s: %q", r.URI, k, v)
-			}
+			assert.Empty(t, r.Header.Get(k), "%s sent %s", r.URI, k)
 		}
 	}
-	if reqs[0].URI != "/robots.txt" {
-		t.Errorf("first request must be robots.txt, got %s", reqs[0].URI)
-	}
+	assert.Equal(t, "/robots.txt", reqs[0].URI, "first request must be robots.txt")
 }
 
 func TestViewAdultCookieSent(t *testing.T) {
@@ -116,17 +104,14 @@ func TestViewAdultCookieSent(t *testing.T) {
 	h.srv.Handle("/works/7", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
 	h.get(t, KindWork, "/works/7?view_full_work=true")
 	for _, r := range h.srv.Requests() {
-		if !strings.Contains(r.Cookie, "view_adult=true") {
-			t.Errorf("%s: missing view_adult cookie (Cookie=%q)", r.URI, r.Cookie)
-		}
+		assert.Contains(t, r.Cookie, "view_adult=true", "%s: missing view_adult cookie", r.URI)
 	}
 }
 
 func TestNewRequiresUA(t *testing.T) {
 	for _, ua := range []string{"", "   ", "some-bot/1.0"} {
-		if _, err := New(Options{UserAgent: ua}); !errors.Is(err, ErrNoUA) {
-			t.Errorf("UA %q: want ErrNoUA, got %v", ua, err)
-		}
+		_, err := New(Options{UserAgent: ua})
+		assert.ErrorIs(t, err, ErrNoUA, "UA %q", ua)
 	}
 }
 
@@ -140,14 +125,10 @@ func TestRobotsDisallowedNeverSent(t *testing.T) {
 		"/autocomplete/tag?term=x",
 	} {
 		_, err := h.c.Get(context.Background(), KindPage, ref)
-		if !errors.Is(err, ErrDisallowed) {
-			t.Errorf("%s: want ErrDisallowed, got %v", ref, err)
-		}
+		require.ErrorIs(t, err, ErrDisallowed, ref)
 	}
 	for _, r := range h.srv.Requests() {
-		if r.URI != "/robots.txt" {
-			t.Errorf("disallowed URL was sent: %s", r.URI)
-		}
+		assert.Equal(t, "/robots.txt", r.URI, "disallowed URL was sent")
 	}
 	// Allowed forms we rely on.
 	h.srv.Handle("/works/5", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
@@ -156,46 +137,37 @@ func TestRobotsDisallowedNeverSent(t *testing.T) {
 		"/works/5?view_full_work=true",
 		"/tags/fixture/works?work_search%5Bsort_column%5D=revised_at&page=3",
 	} {
-		if _, err := h.c.Get(context.Background(), KindPage, ref); err != nil {
-			t.Errorf("%s: want allowed, got %v", ref, err)
-		}
+		_, err := h.c.Get(context.Background(), KindPage, ref)
+		require.NoError(t, err, "%s should be allowed", ref)
 	}
 }
 
 func TestForeignHostRefused(t *testing.T) {
 	h := newHarness(t, 10*time.Second, 0)
-	if _, err := h.c.Get(context.Background(), KindPage, "https://example.com/x"); !errors.Is(err, ErrForeign) {
-		t.Fatalf("want ErrForeign, got %v", err)
-	}
-	if n := len(h.srv.Requests()); n != 0 {
-		t.Fatalf("want 0 requests, got %d", n)
-	}
+	_, err := h.c.Get(context.Background(), KindPage, "https://example.com/x")
+	require.ErrorIs(t, err, ErrForeign)
+	require.Empty(t, h.srv.Requests())
 }
 
 func TestPacingFloorAndInterval(t *testing.T) {
 	h := newHarness(t, config.MinInterval, 0.5) // max jitter at the floor: must never go below 3s
 	h.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		h.get(t, KindWork, "/works/1")
 	}
-	var prev time.Time
-	for i, r := range h.recs {
-		if i > 0 && r.Time.Sub(prev) < config.MinInterval {
-			t.Fatalf("request %d only %s after previous (floor %s)", i, r.Time.Sub(prev), config.MinInterval)
-		}
-		prev = r.Time
+	for i := 1; i < len(h.recs); i++ {
+		require.GreaterOrEqual(t, h.recs[i].Time.Sub(h.recs[i-1].Time), config.MinInterval, "request %d below the floor", i)
 	}
 
 	h2 := newHarness(t, 10*time.Second, 0.2)
 	h2.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		h2.get(t, KindWork, "/works/1")
 	}
 	for i := 1; i < len(h2.recs); i++ {
 		gap := h2.recs[i].Time.Sub(h2.recs[i-1].Time)
-		if gap < 8*time.Second || gap > 12*time.Second+time.Second {
-			t.Fatalf("gap %d = %s outside 10s +/-20%%", i, gap)
-		}
+		require.GreaterOrEqual(t, gap, 8*time.Second, "gap %d outside 10s +/-20%%", i)
+		require.LessOrEqual(t, gap, 13*time.Second, "gap %d outside 10s +/-20%%", i)
 	}
 }
 
@@ -204,55 +176,36 @@ func TestRateLimitedHonorsRetryAfterAndSlowsDown(t *testing.T) {
 	h.srv.Handle("/works/1",
 		fakeao3.Reply{Status: 429, Header: map[string]string{"Retry-After": "300"}, Body: "slow down"},
 		fakeao3.Reply{Body: fakeao3.WorkPage("x")})
-	r := h.get(t, KindWork, "/works/1")
-	if r.Class != ClassRateLimited {
-		t.Fatalf("class = %s", r.Class)
-	}
+	require.Equal(t, ClassRateLimited, h.get(t, KindWork, "/works/1").Class)
 	before := h.clock.total()
-	r = h.get(t, KindWork, "/works/1")
-	if r.Class != ClassOK {
-		t.Fatalf("class = %s", r.Class)
-	}
-	if waited := h.clock.total() - before; waited < 300*time.Second {
-		t.Fatalf("waited %s, want >= Retry-After 300s", waited)
-	}
-	if st := h.c.PacerState(); st.Factor != 1.5 || st.Interval != 15*time.Second {
-		t.Fatalf("want slowdown 1.5x => 15s, got %+v", st)
-	}
+	require.Equal(t, ClassOK, h.get(t, KindWork, "/works/1").Class)
+	require.GreaterOrEqual(t, h.clock.total()-before, 300*time.Second, "must wait at least Retry-After")
+	st := h.c.PacerState()
+	require.InDelta(t, 1.5, st.Factor, 1e-9, "slowdown factor")
+	require.Equal(t, 15*time.Second, st.Interval, "slowdown 1.5x => 15s")
 }
 
 func TestUnavailableBackoffAndBreaker(t *testing.T) {
 	h := newHarness(t, 10*time.Second, 0)
 	h.srv.Handle("/works/1", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
 	var waits []time.Duration
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		before := h.clock.total()
 		r := h.get(t, KindWork, "/works/1")
-		if r.Class != ClassUnavailable || !strings.Contains(r.Reason, "status=525") {
-			t.Fatalf("attempt %d: %s %s", i, r.Class, r.Reason)
-		}
+		require.Equal(t, ClassUnavailable, r.Class, "attempt %d", i)
+		require.Contains(t, r.Reason, "status=525", "attempt %d", i)
 		waits = append(waits, h.clock.total()-before)
 	}
 	// waits[0] includes robots + first request spacing; from attempt 2 on: 1m, 2m, 4m, 8m.
-	want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute}
-	for i, w := range want {
-		if waits[i+1] != w {
-			t.Errorf("backoff %d = %s, want %s", i+1, waits[i+1], w)
-		}
-	}
+	assert.Equal(t, []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute}, waits[1:], "backoffs")
 	st := h.c.PacerState()
-	if !st.BreakerOpen || st.ConsecFails != 5 {
-		t.Fatalf("breaker should be open after 5 failures: %+v", st)
-	}
+	require.True(t, st.BreakerOpen, "breaker should be open after 5 failures")
+	require.Equal(t, 5, st.ConsecFails)
 	h.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
 	before := h.clock.total()
 	h.get(t, KindWork, "/works/1")
-	if w := h.clock.total() - before; w < 2*time.Hour {
-		t.Fatalf("breaker should hold 2h, waited %s", w)
-	}
-	if st := h.c.PacerState(); st.ConsecFails != 0 {
-		t.Fatalf("success should reset failures: %+v", st)
-	}
+	require.GreaterOrEqual(t, h.clock.total()-before, 2*time.Hour, "breaker should hold 2h")
+	require.Equal(t, 0, h.c.PacerState().ConsecFails, "success should reset failures")
 }
 
 func TestClassification(t *testing.T) {
@@ -294,9 +247,7 @@ func TestClassification(t *testing.T) {
 	}
 	for _, c := range cases {
 		r := h.get(t, c.kind, c.path)
-		if r.Class != c.want {
-			t.Errorf("%s: class %s (%s), want %s", c.path, r.Class, r.Reason, c.want)
-		}
+		assert.Equal(t, c.want, r.Class, "%s (reason %s)", c.path, r.Reason)
 		// reset backoff noise between cases
 		h.c.pacer.Report(ClassOK, 0)
 	}
@@ -306,18 +257,13 @@ func TestRobotsUnavailableDisallowsAll(t *testing.T) {
 	h := newHarness(t, 10*time.Second, 0)
 	h.srv.SetRobots(fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525}, fakeao3.Reply{Body: fakeao3.Robots})
 	h.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
-	if _, err := h.c.Get(context.Background(), KindWork, "/works/1"); !errors.Is(err, ErrDisallowed) {
-		t.Fatalf("want ErrDisallowed while robots unavailable, got %v", err)
-	}
+	_, err := h.c.Get(context.Background(), KindWork, "/works/1")
+	require.ErrorIs(t, err, ErrDisallowed, "while robots unavailable")
 	for _, r := range h.srv.Requests() {
-		if r.URI != "/robots.txt" {
-			t.Fatalf("sent %s while robots unavailable", r.URI)
-		}
+		require.Equal(t, "/robots.txt", r.URI, "sent a request while robots unavailable")
 	}
-	h.clock.Sleep(context.Background(), robotsErrorTTL+time.Second)
-	if r := h.get(t, KindWork, "/works/1"); r.Class != ClassOK {
-		t.Fatalf("after robots recovered: %s", r.Class)
-	}
+	require.NoError(t, h.clock.Sleep(context.Background(), robotsErrorTTL+time.Second))
+	require.Equal(t, ClassOK, h.get(t, KindWork, "/works/1").Class, "after robots recovered")
 }
 
 func TestDailyBudget(t *testing.T) {
@@ -328,9 +274,8 @@ func TestDailyBudget(t *testing.T) {
 	h.get(t, KindWork, "/works/1")
 	day := h.clock.Now().UTC().Truncate(24 * time.Hour)
 	h.get(t, KindWork, "/works/1")
-	if last := h.recs[len(h.recs)-1].Time; last.Before(day.Add(24 * time.Hour)) {
-		t.Fatalf("budget exceeded: request at %s before next day", last)
-	}
+	last := h.recs[len(h.recs)-1].Time
+	require.False(t, last.Before(day.Add(24*time.Hour)), "budget exceeded: request at %s before next day", last)
 }
 
 func TestLogsAreContentFree(t *testing.T) {
@@ -343,34 +288,24 @@ func TestLogsAreContentFree(t *testing.T) {
 	h.get(t, KindListing, tagPath+"?work_search%5Bother_tag_names%5D="+sentinel+"&page=2")
 	h.get(t, KindWork, "/works/1")
 	h.get(t, KindWork, "/works/2")
-	if strings.Contains(strings.ToLower(h.logs.String()), strings.ToLower(sentinel)) {
-		t.Fatalf("sentinel leaked into logs:\n%s", h.logs.String())
-	}
+	require.NotContains(t, strings.ToLower(h.logs.String()), strings.ToLower(sentinel), "sentinel leaked into logs")
 	for _, r := range h.recs {
-		if strings.Contains(strings.ToLower(r.SafePath+r.Reason), strings.ToLower(sentinel)) {
-			t.Fatalf("sentinel leaked into request record: %+v", r)
-		}
+		require.NotContains(t, strings.ToLower(r.SafePath+r.Reason), strings.ToLower(sentinel), "sentinel leaked into request record")
 	}
-	if !strings.Contains(h.logs.String(), `"path":"/works/1"`) {
-		t.Fatalf("numeric work paths should be logged verbatim:\n%s", h.logs.String())
-	}
+	require.Contains(t, h.logs.String(), `"path":"/works/1"`, "numeric work paths should be logged verbatim")
 }
 
 func TestSafePath(t *testing.T) {
+	c, err := New(Options{BaseURL: "https://ao3.invalid", UserAgent: testUA})
+	require.NoError(t, err)
 	for in, want := range map[string]string{
 		"/works/123/chapters/456":       "/works/123/chapters/456",
 		"/works/1?view_full_work=true":  "/works/1?view_full_work=true",
 		"/tags/x/works?page=3":          "/tags/" + Hash("x") + "/works?page=3",
 		"/users/name/pseuds/name/works": "/users/" + Hash("name") + "/pseuds/" + Hash("name") + "/works",
 	} {
-		u, _ := h0().Resolve(in)
-		if got := SafePath(u); got != want {
-			t.Errorf("SafePath(%s) = %s, want %s", in, got, want)
-		}
+		u, err := c.Resolve(in)
+		require.NoError(t, err)
+		assert.Equal(t, want, SafePath(u), "SafePath(%s)", in)
 	}
-}
-
-func h0() *Client {
-	c, _ := New(Options{BaseURL: "https://ao3.invalid", UserAgent: testUA})
-	return c
 }

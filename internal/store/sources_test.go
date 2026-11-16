@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
@@ -16,54 +16,45 @@ func TestSourcesLifecycle(t *testing.T) {
 	row := SourceRow{Kind: "tag", Target: "Fixture Fandom", FiltersJSON: "{}", Path: "/tags/Fixture%20Fandom/works",
 		State: SourceActive, BackfillOrder: "kudos_desc", PollInterval: 6 * time.Hour, TotalWorks: 3, EstRequests: 4, BackfillCursor: "{}"}
 	id, err := s.InsertSource(ctx, row)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.InsertSource(ctx, row); !errors.Is(err, ErrSourceExists) {
-		t.Fatalf("duplicate: %v", err)
-	}
-	if found, _ := s.FindSource(ctx, "tag", "Fixture Fandom", "{}"); found != id {
-		t.Fatalf("find = %d", found)
-	}
+	require.NoError(t, err)
+	_, err = s.InsertSource(ctx, row)
+	require.ErrorIs(t, err, ErrSourceExists)
+	found, err := s.FindSource(ctx, "tag", "Fixture Fandom", "{}")
+	require.NoError(t, err)
+	require.Equal(t, id, found)
 
-	s.UpsertWork(ctx, fixtureWork(1), model.FromBlurb, 1)
-	s.UpsertWork(ctx, fixtureWork(2), model.FromPage, 1)
-	if err := s.LinkSourceWorks(ctx, id, []int64{1, 2}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = s.UpsertWork(ctx, fixtureWork(1), model.FromBlurb, 1)
+	require.NoError(t, err)
+	_, err = s.UpsertWork(ctx, fixtureWork(2), model.FromPage, 1)
+	require.NoError(t, err)
+	require.NoError(t, s.LinkSourceWorks(ctx, id, []int64{1, 2}))
 	got, err := s.GetSource(ctx, id)
-	if err != nil || got.MemberWorks != 2 || got.FetchedWorks != 1 || got.PollInterval != 6*time.Hour {
-		t.Fatalf("get: %+v %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 2, got.MemberWorks)
+	require.Equal(t, 1, got.FetchedWorks)
+	require.Equal(t, 6*time.Hour, got.PollInterval)
 
 	// Jobs: queued ones get cancelled, running ones are left alone.
 	now := time.Now().Unix()
 	for _, st := range []string{"queued", "queued", "running"} {
-		if _, err := s.Meta.Exec(`INSERT INTO jobs (kind, source_id, target, priority_class, state, dedupe_key, created_at, updated_at)
-			VALUES ('listing_page', ?, '/x', 4, ?, ?, ?, ?)`, id, st, st+time.Now().String(), now, now); err != nil {
-			t.Fatal(err)
-		}
+		_, err := s.Meta.Exec(`INSERT INTO jobs (kind, source_id, target, priority_class, state, dedupe_key, created_at, updated_at)
+			VALUES ('listing_page', ?, '/x', 4, ?, ?, ?, ?)`, id, st, st+time.Now().String(), now, now)
+		require.NoError(t, err)
 	}
-	if err := s.SetSourceState(ctx, id, SourcePaused, SourceActive); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetSourceState(ctx, id, SourceActive, SourcePendingConfirm); err == nil || !strings.Contains(err.Error(), "is paused") {
-		t.Fatalf("bad transition should fail: %v", err)
-	}
+	require.NoError(t, s.SetSourceState(ctx, id, SourcePaused, SourceActive))
+	err = s.SetSourceState(ctx, id, SourceActive, SourcePendingConfirm)
+	require.ErrorIs(t, err, ErrStateConflict, "bad transition should fail")
+	require.ErrorContains(t, err, "is paused")
 	n, err := s.CancelSourceJobs(ctx, id)
-	if err != nil || n != 2 {
-		t.Fatalf("cancelled %d %v", n, err)
-	}
-	if err := s.DeleteSource(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.GetSource(ctx, id); !errors.Is(err, ErrNoSource) {
-		t.Fatalf("after delete: %v", err)
-	}
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
+	require.NoError(t, s.DeleteSource(ctx, id))
+	_, err = s.GetSource(ctx, id)
+	require.ErrorIs(t, err, ErrNoSource)
+
 	var works, members int
-	s.Meta.QueryRow(`SELECT COUNT(*) FROM works`).Scan(&works)
-	s.Meta.QueryRow(`SELECT COUNT(*) FROM source_works`).Scan(&members)
-	if works != 2 || members != 0 {
-		t.Fatalf("works must be kept, memberships removed: works=%d members=%d", works, members)
-	}
+	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM works`).Scan(&works))
+	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM source_works`).Scan(&members))
+	require.Equal(t, 2, works, "works must be kept")
+	require.Equal(t, 0, members, "memberships removed")
 }
