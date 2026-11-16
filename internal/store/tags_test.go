@@ -34,9 +34,11 @@ func TestTagInfo(t *testing.T) {
 	if canonical != 1 || parents != 1 || metas != 1 || fc != char.ID {
 		t.Fatalf("canonical=%d parents=%d metas=%d fc_merger=%d", canonical, parents, metas, fc)
 	}
+	// The fetched tag no longer needs info, and its now-typed synonym/meta tags (used by no
+	// mirrored work) must not get their own tag page fetches.
 	need, _ = s.TagsNeedingInfo(ctx, []string{"Character"}, clk.t.Add(-time.Hour), 10)
 	if len(need) != 0 {
-		t.Fatalf("fetched tag should not need info: %+v", need)
+		t.Fatalf("only tags used by mirrored works should need info: %+v", need)
 	}
 	// Synonym page: merger recorded, existing fandom type unchanged by Unknown.
 	fandom := TagRef{}
@@ -46,5 +48,15 @@ func TestTagInfo(t *testing.T) {
 	s.Meta.QueryRow(`SELECT type FROM tags WHERE id = ?`, fandom.ID).Scan(&typ)
 	if typ != "Fandom" {
 		t.Fatalf("type changed to %s", typ)
+	}
+	// Same-type relations inherit the tag's type; parents (mixed types) stay Unknown unless known.
+	types := map[string]string{}
+	for _, n := range []string{"FC", "Fixture Meta", "Canonical Fandom"} {
+		var ty string
+		s.Meta.QueryRow(`SELECT type FROM tags WHERE name = ?`, n).Scan(&ty)
+		types[n] = ty
+	}
+	if types["FC"] != "Character" || types["Fixture Meta"] != "Character" || types["Canonical Fandom"] != "Fandom" {
+		t.Fatalf("same-type relations not typed: %v", types)
 	}
 }

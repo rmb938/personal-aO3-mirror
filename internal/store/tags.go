@@ -17,7 +17,8 @@ type TagRef struct {
 }
 
 // TagsNeedingInfo returns tags of the given types never fetched or fetched before `before`,
-// most-used first.
+// most-used first. Only tags used by at least one mirrored work qualify: synonyms and meta tags
+// learned from tag pages get a type too, and fetching each of those would multiply requests.
 func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time.Time, limit int) ([]TagRef, error) {
 	if len(types) == 0 {
 		return nil, nil
@@ -29,6 +30,7 @@ func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time
 	args = append(args, before.Unix(), limit)
 	rows, err := s.Meta.QueryContext(ctx, `SELECT t.id, t.name, t.type FROM tags t
 		WHERE t.type IN (`+placeholders(len(types))+`) AND t.info_fetched_at < ?
+		  AND EXISTS (SELECT 1 FROM work_tags wt WHERE wt.tag_id = t.id)
 		ORDER BY (SELECT COUNT(*) FROM work_tags wt WHERE wt.tag_id = t.id) DESC, t.id
 		LIMIT ?`, args...)
 	if err != nil {
@@ -67,7 +69,11 @@ type TagInfoUpdate struct {
 }
 
 // UpdateTagInfo records wrangling info for a tag (canonical, synonym-of, parents, metatags).
-// Referenced tags are created with type Unknown (their own pages fill them in later).
+//
+// AO3 only links synonyms, mergers and meta tags within one tag type, so those referenced tags
+// get this tag's type (an already-known type is never overwritten). Parent tags can be of other
+// types (a relationship's parents mix fandoms and characters), so they are created as Unknown
+// and get a type when they appear on a work.
 func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) error {
 	tx, err := s.Meta.BeginTx(ctx, nil)
 	if err != nil {
@@ -81,12 +87,21 @@ func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate)
 		}
 		return tx.Commit()
 	}
+	sameType := u.Type
+	if sameType == model.TagUnknown || sameType == "" {
+		if err := tx.QueryRowContext(ctx, `SELECT type FROM tags WHERE id = ?`, tagID).Scan(&sameType); err != nil {
+			return err
+		}
+	}
 	ref := func(name string) (int64, error) {
 		return s.tagID(ctx, tx, model.Tag{Type: model.TagUnknown, Name: name})
 	}
+	refSame := func(name string) (int64, error) {
+		return s.tagID(ctx, tx, model.Tag{Type: sameType, Name: name})
+	}
 	var merger any
 	if u.MergerOf != "" {
-		id, err := ref(u.MergerOf)
+		id, err := refSame(u.MergerOf)
 		if err != nil {
 			return err
 		}
@@ -113,7 +128,7 @@ func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate)
 		return err
 	}
 	for _, m := range u.MetaTags {
-		id, err := ref(m)
+		id, err := refSame(m)
 		if err != nil {
 			return err
 		}
@@ -122,7 +137,7 @@ func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate)
 		}
 	}
 	for _, syn := range u.Synonyms {
-		id, err := ref(syn)
+		id, err := refSame(syn)
 		if err != nil {
 			return err
 		}
