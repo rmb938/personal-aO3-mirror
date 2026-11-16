@@ -1,6 +1,6 @@
 module github.com/rmb938/personal-aO3-mirror
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.14.0

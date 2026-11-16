@@ -71,6 +71,6 @@ user approval. Keep `data_dir` at the default `./data` so the guard covers it.
 - Pure Go only (no cgo): `modernc.org/sqlite`, goquery, klauspost zstd, yaml.v3.
 - **Always run `make check` before committing, and only commit when it passes.** It runs
   `make lint` (gofmt check, `go vet`, `go mod tidy` check, golangci-lint with `.golangci.yml`),
-  `go test -race ./...` and the guard hook tests. Fix findings rather than silencing them; a
+  `make vulncheck` (govulncheck), `go test -race ./...` and the guard hook tests. Fix findings rather than silencing them; a
   `//nolint:<linter> // reason` is only for intentional cases and needs the reason.
 - Commit only when the user asks.
