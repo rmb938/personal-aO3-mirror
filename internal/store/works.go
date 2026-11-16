@@ -65,7 +65,7 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 	if err != nil {
 		return UpsertResult{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 
 	var st workState
 	var res UpsertResult

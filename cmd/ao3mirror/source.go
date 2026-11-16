@@ -58,8 +58,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			return 2
 		}
 		res, err := svc.Add(ctx, u, sources.AddOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
-		var ex sources.ExistsError
-		if errors.As(err, &ex) {
+		if ex, ok := errors.AsType[sources.ExistsError](err); ok {
 			fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", ex.ID, ex.ID)
 			return 1
 		}

@@ -27,7 +27,7 @@ func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page 
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	var existing int64
 	err = tx.QueryRowContext(ctx, `SELECT id FROM raw_pages WHERE work_id = ? AND sha256 = ?`, workID, hash).Scan(&existing)
 	isNew := errors.Is(err, sql.ErrNoRows)
@@ -109,7 +109,7 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chapter_bodies WHERE work_id = ?`, workID); err != nil {
 		return "", err
 	}

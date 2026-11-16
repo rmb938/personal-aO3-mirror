@@ -200,7 +200,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	for {
 		ran, wait, err := w.Step(ctx)
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // shutdown: a step error caused by cancellation is not a failure
 		}
 		if err != nil {
 			w.log.Error("image step failed", "err", err.Error())
@@ -324,15 +324,15 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 	defer resp.Body.Close()
 	ct := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	switch {
-	case resp.StatusCode == 404 || resp.StatusCode == 410 || resp.StatusCode == 403:
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusForbidden:
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, fmt.Sprintf("status=%d", resp.StatusCode))
 		log.Info("image gone", "status", resp.StatusCode)
 		return
-	case resp.StatusCode == 429 || resp.StatusCode >= 500:
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError:
 		log.Warn("image host unavailable; will retry", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"))
 		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), fmt.Sprintf("status=%d", resp.StatusCode), w.o.MaxAttempts)
 		return
-	case resp.StatusCode != 200:
+	case resp.StatusCode != http.StatusOK:
 		log.Info("image failed", "status", resp.StatusCode)
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, fmt.Sprintf("status=%d", resp.StatusCode))
 		return

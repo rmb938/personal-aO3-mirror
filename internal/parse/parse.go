@@ -194,7 +194,6 @@ func creators(s *goquery.Selection) []model.Creator {
 var idInPath = func(prefix string) *regexp.Regexp { return regexp.MustCompile(`^/` + prefix + `/([0-9]+)`) }
 
 var (
-	workPath     = idInPath("works")
 	seriesPath   = idInPath("series")
 	chapterPath  = regexp.MustCompile(`^/works/[0-9]+/chapters/([0-9]+)`)
 	collNamePath = regexp.MustCompile(`^/collections/([^/?#]+)`)

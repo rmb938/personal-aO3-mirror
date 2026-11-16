@@ -52,7 +52,11 @@ func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Wri
 		fmt.Fprintf(errOut, "fetch-work --now: %v; job %d stays queued for the daemon\n", err, jobID)
 		return 1
 	}
-	defer unlock()
+	defer func() {
+		if err := unlock(); err != nil {
+			fmt.Fprintf(errOut, "fetch-work --now: releasing lock: %v\n", err)
+		}
+	}()
 	s := scheduler.New(a.schedulerOptions())
 	j, err := s.RunJob(ctx, jobID)
 	if err != nil {

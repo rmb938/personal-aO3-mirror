@@ -37,7 +37,7 @@ type Site struct {
 func NewSite(tag string, start int64, n int) *Site {
 	s := &Site{Tag: tag, Works: map[int64]*SiteWork{}, MaxResults: 100000, PerPage: 20}
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := start + int64(i)
 		s.Works[id] = &SiteWork{
 			ID: id, Revised: base.AddDate(0, 0, i*7%2000),
@@ -71,10 +71,10 @@ func (s *Site) TagPath() string {
 }
 
 // SetSite makes the server answer listing and work requests from site.
-func (srv *Server) SetSite(site *Site) {
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
-	srv.site = site
+func (s *Server) SetSite(site *Site) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.site = site
 }
 
 // serveSite returns false if the request is not for the site.
@@ -92,7 +92,7 @@ func (s *Site) serve(w http.ResponseWriter, r *http.Request) bool {
 		}
 		sw := s.Works[id]
 		if sw == nil || sw.Deleted {
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, Page(`<h2 class="heading">Error 404</h2>`))
 			return true
 		}
@@ -144,19 +144,12 @@ func (s *Site) listing(w http.ResponseWriter, q url.Values) {
 	if page < 1 {
 		page = 1
 	}
-	visible := total
-	if visible > s.MaxResults {
-		visible = s.MaxResults
-	}
+	visible := min(total, s.MaxResults)
 	last := (visible + s.PerPage - 1) / s.PerPage
 	start := (page - 1) * s.PerPage
 	var items []*SiteWork
 	if start < visible {
-		end := start + s.PerPage
-		if end > visible {
-			end = visible
-		}
-		items = list[start:end]
+		items = list[start:min(start+s.PerPage, visible)]
 	}
 
 	var b strings.Builder

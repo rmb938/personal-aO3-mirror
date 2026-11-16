@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -64,6 +65,25 @@ type Counts struct {
 	ContentSchema   int
 }
 
+// countGroups runs a `SELECT key, COUNT(*) ... GROUP BY key` query into dst. Its own function so
+// the rows can be closed with defer (Counts runs several of these in a loop).
+func countGroups(ctx context.Context, db *sql.DB, q string, dst map[string]int, args ...any) (err error) {
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			return err
+		}
+		dst[k] = n
+	}
+	return rows.Err()
+}
+
 func (s *Store) Counts(ctx context.Context) (Counts, error) {
 	c := Counts{WorksByStatus: map[string]int{}, SourcesByState: map[string]int{}, JobsByState: map[string]int{}, RequestsByClass: map[string]int{}}
 	now := s.now()
@@ -79,21 +99,7 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		{s.Meta, `SELECT class, COUNT(*) FROM requests WHERE ts >= ? GROUP BY class`, c.RequestsByClass, []any{now.Add(-24 * time.Hour).Unix()}},
 	}
 	for _, g := range grouped {
-		rows, err := g.db.QueryContext(ctx, g.q, g.arg...)
-		if err != nil {
-			return c, err
-		}
-		for rows.Next() {
-			var k string
-			var n int
-			if err := rows.Scan(&k, &n); err != nil {
-				rows.Close()
-				return c, err
-			}
-			g.dst[k] = n
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := countGroups(ctx, g.db, g.q, g.dst, g.arg...); err != nil {
 			return c, err
 		}
 	}

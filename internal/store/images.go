@@ -34,7 +34,7 @@ func (s *Store) QueueImages(ctx context.Context, workID int64, urls []string) (i
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	now := s.unix()
 	added := 0
 	for _, raw := range urls {
@@ -122,6 +122,9 @@ func (s *Store) ImageCounts(ctx context.Context) (map[string]int, int64, error) 
 			return nil, 0, err
 		}
 		out[st] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
 	var bytes int64
 	err = s.Meta.QueryRowContext(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM images WHERE status = 'ok'`).Scan(&bytes)

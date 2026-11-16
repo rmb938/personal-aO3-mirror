@@ -17,8 +17,9 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
 )
 
-// lockDaemon takes an exclusive lock so only one daemon runs per data dir.
-func lockDaemon(dataDir string) (func(), error) {
+// lockDaemon takes an exclusive lock so only one daemon runs per data dir. The returned unlock
+// releases it and reports any error.
+func lockDaemon(dataDir string) (unlock func() error, err error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -26,16 +27,27 @@ func lockDaemon(dataDir string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil { // not locked: don't leak the file
+			err = errors.Join(err, f.Close())
+		}
+	}()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, errors.New("another ao3mirror run is already using this data dir")
 		}
 		return nil, err
 	}
-	f.Truncate(0)
-	fmt.Fprintf(f, "%d\n", os.Getpid())
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	// The pid in the lock file is informational (the flock is what matters).
+	if err := f.Truncate(0); err != nil {
+		return nil, fmt.Errorf("lock file: %w", err)
+	}
+	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
+		return nil, fmt.Errorf("lock file: %w", err)
+	}
+	return func() error {
+		return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close())
+	}, nil
 }
 
 func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
@@ -44,7 +56,11 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
 	}
-	defer unlock()
+	defer func() {
+		if err := unlock(); err != nil {
+			fmt.Fprintf(errOut, "run: releasing lock: %v\n", err)
+		}
+	}()
 	s := scheduler.New(a.schedulerOptions())
 	a.log.Info("daemon starting", "interval", a.cfg.Rate.Interval.String(), "daily_budget", a.cfg.Rate.DailyBudget,
 		"user_agent_contact_set", a.cfg.Contact.Discord != "", "images", a.cfg.Images.Enabled,
@@ -62,8 +78,11 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "run: images: %v\n", err)
 			return 1
 		}
-		wg.Add(1)
-		go func() { defer wg.Done(); _ = w.Run(ctx) }()
+		wg.Go(func() {
+			if err := w.Run(ctx); err != nil {
+				a.log.Error("image worker stopped", "err", err.Error())
+			}
+		})
 	}
 	err = s.Run(ctx)
 	wg.Wait()
@@ -87,7 +106,9 @@ func runDev(args []string, out, errOut io.Writer) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
-	srv, err := fakeao3.NewOn(*addr)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	srv, err := fakeao3.NewOn(ctx, *addr)
 	if err != nil {
 		fmt.Fprintf(errOut, "fake-server: %v\n", err)
 		return 1
@@ -102,8 +123,6 @@ in another shell, with a scratch data_dir in your config:
   ao3mirror --config <cfg> run
 Ctrl+C to stop.
 `, srv.URL, site.TagPath())
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
 	return 0
 }

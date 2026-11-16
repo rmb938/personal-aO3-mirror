@@ -1,0 +1,58 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose       # HTTP response bodies are closed
+    - errorlint       # errors.Is/As and %w for wrapped errors
+    - misspell
+    - nilerr          # returning nil after checking err != nil
+    - unconvert       # unnecessary type conversions
+    - rowserrcheck    # sql.Rows.Err is checked
+    - sqlclosecheck   # sql.Rows / sql.Stmt are closed
+    - reassign        # package variables are not reassigned from outside
+    - nolintlint      # //nolint must name the linter and give a reason
+    - modernize       # use current Go language/library features
+    - usestdlibvars   # http.MethodGet etc. instead of literals
+    - thelper         # test helpers call t.Helper()
+    - sloglint        # consistent log/slog usage
+    - noctx           # pass a context to I/O (not enforced in tests, see exclusions)
+    - bidichk         # dangerous unicode sequences
+    - durationcheck   # duration * duration
+    - wastedassign
+    - copyloopvar
+    - makezero
+    - fatcontext
+    - canonicalheader
+    - mirror
+    - errname         # ErrX sentinels, XError types
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    staticcheck:
+      checks:
+        - default     # golangci-lint's staticcheck default set, with these changes:
+        - -QF1001     # De Morgan rewrites: style only, the original conditions read better
+        - ST1016      # consistent receiver names on a type's methods
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling # unchecked Close/Flush/Rollback, fmt.Fprint*, os.Remove, etc.
+    rules:
+      # Tests may use the convenience (context-free) APIs.
+      - path: _test\.go
+        linters:
+          - noctx
+
+issues:
+  # Show every finding (defaults hide repeats after 3 of the same kind).
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt

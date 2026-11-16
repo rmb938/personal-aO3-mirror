@@ -102,7 +102,7 @@ func (s *Store) PickJob(ctx context.Context, kinds []string, now time.Time) (Job
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	args := []any{now.Unix()}
 	for _, k := range kinds {
 		args = append(args, k)
@@ -335,7 +335,7 @@ func (s *Store) SetDaemonState(ctx context.Context, kv map[string]string) error 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	now := s.unix()
 	for k, v := range kv {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?,?,?)

@@ -371,7 +371,10 @@ func (s *Scheduler) schedule(ctx context.Context) error {
 // marks the source done_backfill.
 func (s *Scheduler) finishWalk(ctx context.Context, r store.SourceRow, cur store.Cursor, now time.Time, log *slog.Logger) error {
 	if err := s.st.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
-		return nil // state changed concurrently (paused/cancelled); try next round
+		if errors.Is(err, store.ErrStateConflict) {
+			return nil // state changed concurrently (paused/cancelled); try next round
+		}
+		return err
 	}
 	verify := 0
 	if cur.Rescan {
@@ -417,7 +420,10 @@ func (s *Scheduler) maybeStartRescan(ctx context.Context, r store.SourceRow, now
 		return err
 	}
 	if err := s.st.SetSourceState(ctx, r.ID, store.SourceActive, store.SourceDoneBackfill); err != nil {
-		return nil
+		if errors.Is(err, store.ErrStateConflict) {
+			return nil // paused/cancelled concurrently: no rescan
+		}
+		return err
 	}
 	log.Info("rescan started", "last_full_scan", r.LastFullScanAt)
 	return nil

@@ -69,4 +69,8 @@ user approval. Keep `data_dir` at the default `./data` so the guard covers it.
   set `contact.discord`. Run with `--config ao3mirror.local.yaml`.
 - Tests: `go test ./...` run against `internal/fakeao3` with synthetic fixtures; no network.
 - Pure Go only (no cgo): `modernc.org/sqlite`, goquery, klauspost zstd, yaml.v3.
+- **Always run `make check` before committing, and only commit when it passes.** It runs
+  `make lint` (gofmt check, `go vet`, `go mod tidy` check, golangci-lint with `.golangci.yml`),
+  `go test -race ./...` and the guard hook tests. Fix findings rather than silencing them; a
+  `//nolint:<linter> // reason` is only for intentional cases and needs the reason.
 - Commit only when the user asks.

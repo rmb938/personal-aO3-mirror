@@ -96,7 +96,7 @@ func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	now := s.unix()
 	if u.Missing {
 		if _, err := tx.ExecContext(ctx, `UPDATE tags SET info_fetched_at = ? WHERE id = ?`, now, tagID); err != nil {

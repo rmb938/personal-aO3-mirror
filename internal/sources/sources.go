@@ -149,15 +149,9 @@ func (s *Service) Add(ctx context.Context, rawURL string, o AddOptions) (AddResu
 		res.Blurbs = len(blurbs)
 		pages := ao3url.Pages(total)
 		windowed := total > ao3url.MaxResults
-		listing := pages - 1
-		if listing < 0 {
-			listing = 0
-		}
+		listing := max(pages-1, 0)
 		// Works on page 1 that are already mirrored and unchanged need no fetch.
-		fetches := total - (len(blurbs) - needFetch)
-		if fetches < 0 {
-			fetches = 0
-		}
+		fetches := max(total-(len(blurbs)-needFetch), 0)
 		res.Estimate = s.estimate(total, listing, fetches, windowed)
 		row.TotalWorks, row.EstRequests = total, res.Estimate.Requests
 		next := 2
@@ -262,7 +256,7 @@ func (s *Service) fetchFirstPage(ctx context.Context, log *slog.Logger, src ao3u
 	}
 	log.Debug("parse report", append([]any{"req_id", resp.ReqID}, rep.Attrs()...)...)
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("%w: %v", ErrUnexpected, err)
+		return 0, nil, 0, fmt.Errorf("%w: %w", ErrUnexpected, err)
 	}
 	total := l.Total
 	if total < 0 {

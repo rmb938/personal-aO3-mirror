@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -14,7 +16,7 @@ func (s *Store) UpsertSeries(ctx context.Context, ser model.Series) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	now := s.unix()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO series (id, title, summary_html, notes_html, complete, words, works_count,
 		bookmarks, begun, updated, first_seen, last_fetched) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
@@ -93,7 +95,7 @@ func (s *Store) SetSeriesMembers(ctx context.Context, seriesID int64, members []
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	// Drop stale unfetched members (a work may have left the series), keep fetched ones.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM series_works WHERE series_id = ?
 		AND work_id NOT IN (SELECT id FROM works WHERE last_fetched > 0)`, seriesID); err != nil {
@@ -120,6 +122,19 @@ type PartialSeries struct {
 // PartialSeriesList returns partial series, most missing works first. Content-free (ids and
 // counts only).
 func (s *Store) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeries, error) {
+	out, err := s.partialSeriesRows(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if err := s.fillMissing(ctx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) partialSeriesRows(ctx context.Context, limit int) (out []PartialSeries, err error) {
 	rows, err := s.Meta.QueryContext(ctx, `SELECT se.id, se.works_count,
 			(SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
 			 WHERE sw.series_id = se.id AND w.last_fetched > 0) AS mirrored
@@ -133,63 +148,53 @@ func (s *Store) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeri
 	if err != nil {
 		return nil, err
 	}
-	var out []PartialSeries
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		var p PartialSeries
 		if err := rows.Scan(&p.ID, &p.WorksTotal, &p.Mirrored); err != nil {
-			rows.Close()
 			return nil, err
 		}
 		out = append(out, p)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range out {
-		if err := s.fillMissing(ctx, &out[i]); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *Store) fillMissing(ctx context.Context, p *PartialSeries) error {
-	have := map[int]bool{}
-	rows, err := s.Meta.QueryContext(ctx, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
+	positions, err := queryInt64s(ctx, s.Meta, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.series_id = ? AND w.last_fetched > 0`, p.ID)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var pos int
-		if err := rows.Scan(&pos); err != nil {
-			rows.Close()
-			return err
-		}
+	have := map[int64]bool{}
+	for _, pos := range positions {
 		have[pos] = true
 	}
-	rows.Close()
 	for pos := 1; pos <= p.WorksTotal; pos++ {
-		if !have[pos] {
+		if !have[int64(pos)] {
 			p.MissingPositions = append(p.MissingPositions, pos)
 		}
 	}
-	rows, err = s.Meta.QueryContext(ctx, `SELECT sw.work_id FROM series_works sw
+	p.MissingWorkIDs, err = queryInt64s(ctx, s.Meta, `SELECT sw.work_id FROM series_works sw
 		WHERE sw.series_id = ? AND NOT EXISTS (SELECT 1 FROM works w WHERE w.id = sw.work_id AND w.last_fetched > 0)
 		ORDER BY sw.position, sw.work_id`, p.ID)
+	return err
+}
+
+// queryInt64s runs a single-integer-column query and returns its values in order.
+func queryInt64s(ctx context.Context, db *sql.DB, q string, args ...any) (out []int64, err error) {
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer rows.Close()
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
 		}
-		p.MissingWorkIDs = append(p.MissingWorkIDs, id)
+		out = append(out, v)
 	}
-	return rows.Err()
+	return out, rows.Err()
 }
 
 // WorkExists reports whether a work row exists.

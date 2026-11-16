@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,7 +123,7 @@ func isUI(t string) bool {
 	}
 	// joined title strings: "F/M, Gen"
 	if strings.Contains(t, ", ") {
-		for _, p := range strings.Split(t, ", ") {
+		for p := range strings.SplitSeq(t, ", ") {
 			if !uiText[p] {
 				return false
 			}
@@ -297,12 +298,8 @@ func (s *Skeletonizer) slug(seg string) string {
 
 func hasClass(n *html.Node, cls string) bool {
 	for _, a := range n.Attr {
-		if a.Key == "class" {
-			for _, c := range strings.Fields(a.Val) {
-				if c == cls {
-					return true
-				}
-			}
+		if a.Key == "class" && slices.Contains(strings.Fields(a.Val), cls) {
+			return true
 		}
 	}
 	return false

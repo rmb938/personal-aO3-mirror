@@ -3,6 +3,7 @@
 package fakeao3
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -60,8 +61,9 @@ func New() *Server {
 }
 
 // NewOn listens on addr (e.g. "127.0.0.1:8099") for `ao3mirror dev fake-server`.
-func NewOn(addr string) (*Server, error) {
-	l, err := net.Listen("tcp", addr)
+func NewOn(ctx context.Context, addr string) (*Server, error) {
+	var lc net.ListenConfig
+	l, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}

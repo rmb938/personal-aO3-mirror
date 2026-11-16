@@ -62,25 +62,28 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 		return nil, fmt.Errorf("store: create data dir: %w", err)
 	}
 	log := o.Logger.With("component", "store")
-	meta, err := openDB(filepath.Join(dir, MetaFile), 0)
+	meta, err := openDB(ctx, filepath.Join(dir, MetaFile), 0)
 	if err != nil {
 		return nil, err
 	}
-	content, err := openDB(filepath.Join(dir, ContentFile), ContentPageSize)
+	content, err := openDB(ctx, filepath.Join(dir, ContentFile), ContentPageSize)
 	if err != nil {
-		meta.Close()
-		return nil, err
+		return nil, errors.Join(err, meta.Close())
 	}
-	enc, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
-	dec, _ := zstd.NewReader(nil)
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("store: zstd encoder: %w", err), meta.Close(), content.Close())
+	}
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("store: zstd decoder: %w", err), enc.Close(), meta.Close(), content.Close())
+	}
 	s := &Store{Meta: meta, Content: content, log: log, now: o.Now, enc: enc, dec: dec}
 	if err := s.migrate(ctx, meta, "meta"); err != nil {
-		s.Close()
-		return nil, err
+		return nil, errors.Join(err, s.Close())
 	}
 	if err := s.migrate(ctx, content, "content"); err != nil {
-		s.Close()
-		return nil, err
+		return nil, errors.Join(err, s.Close())
 	}
 	return s, nil
 }
@@ -92,9 +95,9 @@ const ContentPageSize = 16384
 
 // openDB opens a database. pageSize > 0 sets the page size when the file is created; an
 // existing file keeps its page size (changing it needs a VACUUM outside WAL mode).
-func openDB(path string, pageSize int) (*sql.DB, error) {
+func openDB(ctx context.Context, path string, pageSize int) (*sql.DB, error) {
 	if pageSize > 0 {
-		if err := initPageSize(path, pageSize); err != nil {
+		if err := initPageSize(ctx, path, pageSize); err != nil {
 			return nil, fmt.Errorf("store: init %s: %w", filepath.Base(path), err)
 		}
 	}
@@ -108,9 +111,8 @@ func openDB(path string, pageSize int) (*sql.DB, error) {
 		return nil, fmt.Errorf("store: open %s: %w", filepath.Base(path), err)
 	}
 	db.SetMaxOpenConns(4)
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("store: open %s: %w", filepath.Base(path), err)
+	if err := db.PingContext(ctx); err != nil {
+		return nil, errors.Join(fmt.Errorf("store: open %s: %w", filepath.Base(path), err), db.Close())
 	}
 	return db, nil
 }
@@ -118,7 +120,7 @@ func openDB(path string, pageSize int) (*sql.DB, error) {
 // initPageSize creates a new database file with the given page size. It must run before
 // anything else touches the file: page_size only applies before the file is initialized and
 // cannot change once it is in WAL mode (a page_size _pragma in the DSN is ignored for that reason).
-func initPageSize(path string, pageSize int) error {
+func initPageSize(ctx context.Context, path string, pageSize int) (err error) {
 	if _, err := os.Stat(path); err == nil {
 		return nil // existing file: keep its page size
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -128,12 +130,12 @@ func initPageSize(path string, pageSize int) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { err = errors.Join(err, db.Close()) }()
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(fmt.Sprintf(`PRAGMA page_size = %d`, pageSize)); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`PRAGMA page_size = %d`, pageSize)); err != nil {
 		return err
 	}
-	_, err = db.Exec(`PRAGMA journal_mode = WAL`) // writes the header: the file now has pageSize
+	_, err = db.ExecContext(ctx, `PRAGMA journal_mode = WAL`) // writes the header: the file now has pageSize
 	return err
 }
 
@@ -148,22 +150,21 @@ func (s *Store) PageSize(ctx context.Context, name string) (int, error) {
 	return n, err
 }
 
+// Close closes both databases and the zstd coders, returning every error that occurred.
 func (s *Store) Close() error {
-	var first error
+	var errs []error
 	for _, db := range []*sql.DB{s.Meta, s.Content} {
 		if db != nil {
-			if err := db.Close(); err != nil && first == nil {
-				first = err
-			}
+			errs = append(errs, db.Close())
 		}
 	}
 	if s.enc != nil {
-		s.enc.Close()
+		errs = append(errs, s.enc.Close())
 	}
 	if s.dec != nil {
-		s.dec.Close()
+		s.dec.Close() // returns nothing
 	}
-	return first
+	return errors.Join(errs...)
 }
 
 func (s *Store) unix() int64 { return s.now().Unix() }
@@ -206,13 +207,11 @@ func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("store: %s migration %s: %w", name, e.Name(), err)
+			return errors.Join(fmt.Errorf("store: %s migration %s: %w", name, e.Name(), err), tx.Rollback())
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES (?,?,?)`,
 			ver, e.Name(), s.unix()); err != nil {
-			tx.Rollback()
-			return err
+			return errors.Join(fmt.Errorf("store: %s record migration %s: %w", name, e.Name(), err), tx.Rollback())
 		}
 		if err := tx.Commit(); err != nil {
 			return err

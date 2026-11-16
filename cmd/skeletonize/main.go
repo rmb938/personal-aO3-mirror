@@ -81,8 +81,9 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "skeletonize:", err)
 		return 1
 	}
+	// The real page is not used after this point and is never written anywhere: only the
+	// skeleton is.
 	skel, err := skeleton.Skeletonize(strings.NewReader(string(page)))
-	page = nil // drop the real page as soon as possible
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "skeletonize:", err)
 		return 1

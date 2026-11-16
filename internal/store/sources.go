@@ -22,6 +22,10 @@ const (
 
 var ErrNoSource = errors.New("store: no such source")
 
+// ErrStateConflict means a source was not in one of the required states (e.g. it was paused or
+// cancelled concurrently). Callers racing with the CLI can treat it as "try again later".
+var ErrStateConflict = errors.New("store: source state conflict")
+
 // SourceRow is one sources row. Target and FiltersJSON may hold tag/user names: never log them.
 type SourceRow struct {
 	ID             int64
@@ -161,7 +165,7 @@ func (s *Store) SetSourceState(ctx context.Context, id int64, to SourceState, fr
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("store: source %d is %s, cannot become %s", id, cur.State, to)
+		return fmt.Errorf("%w: source %d is %s, cannot become %s", ErrStateConflict, id, cur.State, to)
 	}
 	s.log.Info("source state", "source_id", id, "state", string(to))
 	return nil
@@ -237,7 +241,7 @@ func (s *Store) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []i
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	now := s.unix()
 	for _, w := range workIDs {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
@@ -264,7 +268,7 @@ func (s *Store) CancelSourceJobs(ctx context.Context, sourceID int64) (int64, er
 
 func placeholders(n int) string {
 	b := make([]byte, 0, 2*n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			b = append(b, ',')
 		}

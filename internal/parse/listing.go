@@ -178,7 +178,7 @@ func parseBlurb(li *goquery.Selection, fetchedAt time.Time, r *Report) (model.Wo
 // splitTitle splits get_title_string output ("A, B") into names.
 func splitTitle(t string) []string {
 	var out []string
-	for _, p := range strings.Split(t, ", ") {
+	for p := range strings.SplitSeq(t, ", ") {
 		if p = clean(p); p != "" {
 			out = append(out, p)
 		}

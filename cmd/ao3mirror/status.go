@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"sort"
@@ -199,14 +200,23 @@ func printWork(ctx context.Context, a *app, out io.Writer, id int64) error {
 	if err != nil {
 		return err
 	}
-	var tags, creators, chapters, sources int
-	a.store.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_tags WHERE work_id = ?`, id).Scan(&tags)
-	a.store.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_creators WHERE work_id = ?`, id).Scan(&creators)
-	a.store.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM chapters WHERE work_id = ?`, id).Scan(&chapters)
-	a.store.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_works WHERE work_id = ?`, id).Scan(&sources)
-	var rawVersions, rawBytes, bodies int
-	a.store.Content.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size),0) FROM raw_pages WHERE work_id = ?`, id).Scan(&rawVersions, &rawBytes)
-	a.store.Content.QueryRowContext(ctx, `SELECT COUNT(*) FROM chapter_bodies WHERE work_id = ?`, id).Scan(&bodies)
+	var tags, creators, chapters, sources, rawVersions, rawBytes, bodies int
+	for _, c := range []struct {
+		db  *sql.DB
+		q   string
+		dst []any
+	}{
+		{a.store.Meta, `SELECT COUNT(*) FROM work_tags WHERE work_id = ?`, []any{&tags}},
+		{a.store.Meta, `SELECT COUNT(*) FROM work_creators WHERE work_id = ?`, []any{&creators}},
+		{a.store.Meta, `SELECT COUNT(*) FROM chapters WHERE work_id = ?`, []any{&chapters}},
+		{a.store.Meta, `SELECT COUNT(*) FROM source_works WHERE work_id = ?`, []any{&sources}},
+		{a.store.Content, `SELECT COUNT(*), COALESCE(SUM(size),0) FROM raw_pages WHERE work_id = ?`, []any{&rawVersions, &rawBytes}},
+		{a.store.Content, `SELECT COUNT(*) FROM chapter_bodies WHERE work_id = ?`, []any{&bodies}},
+	} {
+		if err := c.db.QueryRowContext(ctx, c.q, id).Scan(c.dst...); err != nil {
+			return fmt.Errorf("counts: %w", err)
+		}
+	}
 	exp := "?"
 	if chExpected > 0 {
 		exp = strconv.Itoa(chExpected)

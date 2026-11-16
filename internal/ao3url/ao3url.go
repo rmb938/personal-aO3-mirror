@@ -58,7 +58,7 @@ func Parse(raw string) (Source, error) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Source{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
+		return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
 	}
 	if u.Host != "" && !hosts[strings.ToLower(u.Hostname())] {
 		return Source{}, ErrNotAO3
@@ -89,13 +89,13 @@ func Parse(raw string) (Source, error) {
 	case len(segs) >= 2 && segs[0] == "users":
 		login, err := url.PathUnescape(segs[1])
 		if err != nil {
-			return Source{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
+			return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
 		}
 		switch {
 		case len(segs) >= 4 && segs[2] == "pseuds":
 			pseud, err := url.PathUnescape(segs[3])
 			if err != nil {
-				return Source{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
+				return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
 			}
 			if len(segs) > 4 && segs[4] == "bookmarks" {
 				return Source{}, fmt.Errorf("%w: pseud bookmarks; use /users/<login>/bookmarks", ErrUnsupported)
@@ -109,7 +109,7 @@ func Parse(raw string) (Source, error) {
 	case len(segs) >= 2 && segs[0] == "collections":
 		name, err := url.PathUnescape(segs[1])
 		if err != nil {
-			return Source{}, fmt.Errorf("%w: %v", ErrUnsupported, err)
+			return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
 		}
 		if len(segs) > 2 && segs[2] != "works" {
 			return Source{}, fmt.Errorf("%w: only /collections/<name> and /collections/<name>/works are supported", ErrUnsupported)
@@ -136,7 +136,7 @@ func Parse(raw string) (Source, error) {
 
 func splitPath(p string) []string {
 	var out []string
-	for _, s := range strings.Split(p, "/") {
+	for s := range strings.SplitSeq(p, "/") {
 		if s != "" {
 			out = append(out, s)
 		}
@@ -152,7 +152,7 @@ var tagParam = strings.NewReplacer("/", "*s*", "&", "*a*", ".", "*d*", "?", "*q*
 func decodeTag(seg string) (string, error) {
 	dec, err := url.PathUnescape(seg)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUnsupported, err)
+		return "", fmt.Errorf("%w: %w", ErrUnsupported, err)
 	}
 	return tagUnparam.Replace(dec), nil
 }

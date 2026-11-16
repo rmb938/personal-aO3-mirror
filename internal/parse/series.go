@@ -25,7 +25,7 @@ func ParseSeries(seriesID int64, page []byte, fetchedAt time.Time) (Series, *Rep
 	if err != nil {
 		return Series{}, r, err
 	}
-	s := Series{Series: model.Series{ID: seriesID}}
+	s := Series{ID: seriesID}
 	main, err := r.need("#main", doc.Find("#main"))
 	if err != nil {
 		return s, r, err
