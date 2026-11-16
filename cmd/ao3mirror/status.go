@@ -55,6 +55,10 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	if ic, ib, err := a.store.ImageCounts(ctx); err == nil && len(ic) > 0 {
 		fmt.Fprintf(out, "images: %s (%s stored)\n", kv(ic), mb(ib))
 	}
+	if total, fetched, due, err := a.store.TagInfoProgress(ctx, a.cfg.Tags.InfoTypes, time.Now().Add(-a.cfg.Tags.InfoTTL)); err == nil && total > 0 {
+		fmt.Fprintf(out, "tag info: %s/%s fetched, %s due (%s used by mirrored works)\n",
+			comma(fetched), comma(total), comma(due), strings.Join(a.cfg.Tags.InfoTypes, "/"))
+	}
 
 	fmt.Fprintln(out, "\n== queue")
 	jc, _ := a.store.JobCounts(ctx)

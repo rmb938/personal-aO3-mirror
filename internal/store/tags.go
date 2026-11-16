@@ -16,6 +16,23 @@ type TagRef struct {
 	Type string
 }
 
+// TagInfoProgress counts tags that qualify for tag info (given types, used by a mirrored work):
+// total, how many have ever been fetched, and how many are due (never fetched or older than
+// `before`). Same selection as TagsNeedingInfo.
+func (s *Store) TagInfoProgress(ctx context.Context, types []string, before time.Time) (total, fetched, due int, err error) {
+	if len(types) == 0 {
+		return 0, 0, 0, nil
+	}
+	args := []any{before.Unix()}
+	for _, t := range types {
+		args = append(args, t)
+	}
+	err = s.Meta.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(t.info_fetched_at > 0), 0), COALESCE(SUM(t.info_fetched_at < ?), 0)
+		FROM tags t WHERE t.type IN (`+placeholders(len(types))+`)
+		  AND EXISTS (SELECT 1 FROM work_tags wt WHERE wt.tag_id = t.id)`, args...).Scan(&total, &fetched, &due)
+	return total, fetched, due, err
+}
+
 // TagsNeedingInfo returns tags of the given types never fetched or fetched before `before`,
 // most-used first. Only tags used by at least one mirrored work qualify: synonyms and meta tags
 // learned from tag pages get a type too, and fetching each of those would multiply requests.

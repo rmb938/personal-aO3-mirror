@@ -16,6 +16,10 @@ func TestTagInfo(t *testing.T) {
 	w2.Tags = []model.Tag{{Type: model.TagCharacter, Name: "Fixture Character"}}
 	s.UpsertWork(ctx, w2, model.FromBlurb, 1)
 
+	if total, fetched, due, err := s.TagInfoProgress(ctx, []string{"Character", "Fandom"}, clk.t.Add(-time.Hour)); err != nil ||
+		total != 2 || fetched != 0 || due != 2 {
+		t.Fatalf("progress before: %d/%d due %d %v", fetched, total, due, err)
+	}
 	need, err := s.TagsNeedingInfo(ctx, []string{"Character", "Fandom"}, clk.t.Add(-time.Hour), 10)
 	if err != nil || len(need) != 2 || need[0].Name != "Fixture Character" {
 		t.Fatalf("need: %+v %v", need, err) // character used by 2 works sorts first
@@ -39,6 +43,11 @@ func TestTagInfo(t *testing.T) {
 	need, _ = s.TagsNeedingInfo(ctx, []string{"Character"}, clk.t.Add(-time.Hour), 10)
 	if len(need) != 0 {
 		t.Fatalf("only tags used by mirrored works should need info: %+v", need)
+	}
+	// Character fetched; the fandom tag (type Fandom, used by work 1) is still due. Synonym/meta
+	// tags typed from the tag page are not counted (no mirrored work uses them).
+	if total, fetched, due, _ := s.TagInfoProgress(ctx, []string{"Character", "Fandom"}, clk.t.Add(-time.Hour)); total != 2 || fetched != 1 || due != 1 {
+		t.Fatalf("progress after: %d/%d due %d", fetched, total, due)
 	}
 	// Synonym page: merger recorded, existing fandom type unchanged by Unknown.
 	fandom := TagRef{}
