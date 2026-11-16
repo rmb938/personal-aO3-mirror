@@ -176,6 +176,39 @@ func (s *Store) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
 	return err
 }
 
+// UpdateSourceSettings changes a source's poll interval and priority (user settings).
+func (s *Store) UpdateSourceSettings(ctx context.Context, id int64, poll time.Duration, priority int) error {
+	res, err := s.Meta.ExecContext(ctx, `UPDATE sources SET poll_interval_s = ?, priority = ?, updated_at = ? WHERE id = ?`,
+		int64(poll/time.Second), priority, s.unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoSource
+	}
+	s.log.Info("source settings", "source_id", id, "poll_interval", poll.String(), "priority", priority)
+	return nil
+}
+
+// FailedWorkJobs returns the distinct work ids of a source's failed work jobs.
+func (s *Store) FailedWorkJobs(ctx context.Context, sourceID int64) ([]string, error) {
+	rows, err := s.Meta.QueryContext(ctx, `SELECT DISTINCT target FROM jobs WHERE source_id = ? AND kind = 'work' AND state = 'failed'
+		AND target NOT IN (SELECT target FROM jobs WHERE kind = 'work' AND state IN ('queued','running'))`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // DeleteSource removes a source and its memberships (works are kept) after cancelling its jobs.
 func (s *Store) DeleteSource(ctx context.Context, id int64) error {
 	if _, err := s.CancelSourceJobs(ctx, id); err != nil {
@@ -250,6 +283,9 @@ type Cursor struct {
 	// RescanStarted (unix seconds). Works not seen since then get a verification fetch.
 	Rescan        bool  `json:"rescan,omitempty"`
 	RescanStarted int64 `json:"rescan_started,omitempty"`
+	// BlockedParser is set to parse.Version when the NextPage listing failed to parse. Backfill
+	// pauses until the binary ships a different parser version.
+	BlockedParser int `json:"blocked_parser,omitempty"`
 }
 
 func (c Cursor) JSON() string {

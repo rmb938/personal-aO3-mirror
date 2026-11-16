@@ -123,9 +123,19 @@ func (s *Scheduler) handlePoll(ctx context.Context, job store.Job, log *slog.Log
 	}
 	page, _ := strconv.Atoi(job.Target)
 	res, err := s.fetchListing(ctx, log, r, src, page, ao3url.UpdateOrder, nil, ClassPollFetch)
+	if isParseFailure(err) {
+		// No retry: the next poll is a full poll_interval away.
+		r.LastError = "poll page " + strconv.Itoa(page) + ": " + err.Error()
+		r.LastPollAt = s.o.Now()
+		if uerr := s.st.UpdateSourceProgress(ctx, r); uerr != nil {
+			return nil, uerr
+		}
+		return nil, err
+	}
 	if err != nil {
 		return nil, err
 	}
+	r.LastError = ""
 	p := res.listing.Pagination
 	more := p.Current < p.Last && page < s.o.MaxPollPages
 	switch {
@@ -197,9 +207,23 @@ func (s *Scheduler) handleBackfill(ctx context.Context, job store.Job, log *slog
 		fetchClass = ClassMaintenance
 	}
 	res, err := s.fetchListing(ctx, log, r, src, page, order, win, fetchClass)
+	if isParseFailure(err) {
+		// The same page will parse the same way: stop this source's backfill here until a new
+		// parser version ships (it then resumes automatically).
+		cur.BlockedParser = parse.Version
+		r.BackfillCursor = cur.JSON()
+		r.LastError = "backfill page " + strconv.Itoa(page) + ": " + err.Error()
+		if uerr := s.st.UpdateSourceProgress(ctx, r); uerr != nil {
+			return nil, uerr
+		}
+		log.Warn("backfill blocked on parse failure until parser update", "page", page, "parser_version", parse.Version)
+		return map[string]any{"page": page, "blocked_parser": parse.Version}, err
+	}
 	if err != nil {
 		return nil, err
 	}
+	cur.BlockedParser = 0
+	r.LastError = ""
 	detail := map[string]any{"page": page, "blurbs": len(res.listing.Blurbs), "new": res.newWorks, "rescan": cur.Rescan,
 		"work_jobs": res.enqueued, "total": res.listing.Total, "req_id": res.reqID}
 	if win != nil {
@@ -278,8 +302,7 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 		log.Info("work unavailable on AO3; local copy kept", "work_id", id, "status", string(status))
 		return detail, nil
 	case httpx.ClassUnexpected, httpx.ClassAdultGate:
-		s.saveSkeleton("work", job.Target, resp.Body, log)
-		return detail, permanentError{code: string(resp.Class) + ":" + resp.Reason}
+		return detail, s.workParseFailed(ctx, id, path, resp, string(resp.Class)+":"+resp.Reason, log)
 	}
 	if err := outcome(resp); err != nil {
 		return detail, err
@@ -288,11 +311,11 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 	w, rep, err := parse.ParseWork(id, resp.Body)
 	log.Debug("parse report", append([]any{"req_id", resp.ReqID, "work_id", id}, rep.Attrs()...)...)
 	if err != nil {
-		s.saveSkeleton("work", job.Target, resp.Body, log)
+		code := "parse_error"
 		if errors.Is(err, parse.ErrUnexpected) {
-			return detail, permanentError{code: "parse_unexpected:" + strings.Join(rep.Missing, ",")}
+			code = "parse_unexpected:" + strings.Join(rep.Missing, ",")
 		}
-		return detail, permanentError{code: "parse_error"}
+		return detail, s.workParseFailed(ctx, id, path, resp, code, log)
 	}
 	// Raw page first (source of truth for reparse), then bodies, then metadata (marks fetched).
 	isNew, err := s.st.PutRawPage(ctx, id, path, resp.Body, s.o.KeepVersions)
@@ -328,6 +351,31 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 	return detail, nil
 }
 
+// workParseFailed handles a work page we could fetch but not parse. AO3 is fine and a retry
+// would parse the same way, so: keep the raw page (next to any good versions, so reparse can
+// fix it offline after a parser change), save a debug skeleton, mark the work so it is not
+// re-fetched until it changes on AO3, and fail the job without retry. Existing chapter bodies
+// and metadata are left untouched.
+func (s *Scheduler) workParseFailed(ctx context.Context, id int64, path string, resp *httpx.Response, code string, log *slog.Logger) error {
+	if len(resp.Body) > 0 {
+		if _, err := s.st.PutRawPage(ctx, id, path, resp.Body, s.o.KeepVersions+1); err != nil {
+			return err
+		}
+	}
+	s.saveSkeleton("work", strconv.FormatInt(id, 10), resp.Body, log)
+	if err := s.st.MarkWorkParseFailed(ctx, id); err != nil {
+		return err
+	}
+	log.Warn("work parse failed; raw page kept for reparse, not retrying", "work_id", id, "error", code)
+	return permanentError{code: code}
+}
+
+// isParseFailure reports whether err is a page-structure problem (no retry will fix it).
+func isParseFailure(err error) bool {
+	var pe permanentError
+	return errors.As(err, &pe) && (strings.HasPrefix(pe.code, "parse_unexpected") || strings.HasPrefix(pe.code, "parse_error"))
+}
+
 // handleTagInfo fetches /tags/<tag> and records canonical/synonym/parent/meta relations.
 func (s *Scheduler) handleTagInfo(ctx context.Context, job store.Job, log *slog.Logger) (map[string]any, error) {
 	id, _ := strconv.ParseInt(job.Target, 10, 64)
@@ -346,6 +394,10 @@ func (s *Scheduler) handleTagInfo(ctx context.Context, job store.Job, log *slog.
 	if err := outcome(resp); err != nil {
 		if resp.Class == httpx.ClassUnexpected {
 			s.saveSkeleton("tag", job.Target, resp.Body, log)
+			// Mark attempted so the next try waits for tags.info_ttl instead of looping.
+			if uerr := s.st.UpdateTagInfo(ctx, id, store.TagInfoUpdate{Missing: true}); uerr != nil {
+				return detail, uerr
+			}
 		}
 		return detail, err
 	}
@@ -353,6 +405,9 @@ func (s *Scheduler) handleTagInfo(ctx context.Context, job store.Job, log *slog.
 	log.Debug("parse report", append([]any{"req_id", resp.ReqID, "tag_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		s.saveSkeleton("tag", job.Target, resp.Body, log)
+		if uerr := s.st.UpdateTagInfo(ctx, id, store.TagInfoUpdate{Missing: true}); uerr != nil {
+			return detail, uerr
+		}
 		return detail, permanentError{code: "parse_unexpected:" + strings.Join(rep.Missing, ",")}
 	}
 	if err := s.st.UpdateTagInfo(ctx, id, store.TagInfoUpdate{Type: info.Type, Canonical: info.Canonical,
@@ -391,6 +446,10 @@ func (s *Scheduler) handleSeriesInfo(ctx context.Context, job store.Job, log *sl
 	if err := outcome(resp); err != nil {
 		if resp.Class == httpx.ClassUnexpected {
 			s.saveSkeleton("series", job.Target, resp.Body, log)
+			// Mark attempted so the next try waits for series.info_ttl instead of looping.
+			if uerr := s.st.MarkSeriesFetched(ctx, id); uerr != nil {
+				return detail, uerr
+			}
 		}
 		return detail, err
 	}
@@ -398,6 +457,9 @@ func (s *Scheduler) handleSeriesInfo(ctx context.Context, job store.Job, log *sl
 	log.Debug("parse report", append([]any{"req_id", resp.ReqID, "series_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		s.saveSkeleton("series", job.Target, resp.Body, log)
+		if uerr := s.st.MarkSeriesFetched(ctx, id); uerr != nil {
+			return detail, uerr
+		}
 		return detail, permanentError{code: "parse_unexpected:" + strings.Join(rep.Missing, ",")}
 	}
 	if err := s.st.UpsertSeries(ctx, ser.Series); err != nil {

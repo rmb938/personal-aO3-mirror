@@ -45,6 +45,9 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	fmt.Fprintf(out, "by status: %s\n", kv(c.WorksByStatus))
 	fmt.Fprintf(out, "fetched: %s, awaiting first fetch: %s, tags: %s, creators: %s, series: %s\n",
 		comma(c.WorksFetched), comma(c.WorksNeverFetch), comma(c.Tags), comma(c.Creators), comma(c.Series))
+	if c.ParseFailures > 0 {
+		fmt.Fprintf(out, "parse failures: %s (raw pages kept and debug skeletons saved; run reparse after a parser fix)\n", comma(c.ParseFailures))
+	}
 	fmt.Fprintf(out, "raw pages: %s (%s raw, %s stored)\n", comma(c.RawPages), mb(c.RawBytes), mb(c.RawZstdBytes))
 	if ic, ib, err := a.store.ImageCounts(ctx); err == nil && len(ic) > 0 {
 		fmt.Fprintf(out, "images: %s (%s stored)\n", kv(ic), mb(ib))

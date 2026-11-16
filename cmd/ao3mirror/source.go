@@ -29,6 +29,9 @@ const sourceUsage = `usage: ao3mirror source <command> [flags]
   pause ID | resume ID     stop / restart scheduling
   cancel ID                stop for good and drop queued jobs (works are kept)
   remove ID                delete the source (works are kept)
+  refresh ID [--full]      poll now and re-queue failed work fetches; --full re-walks the
+                           whole listing (rescan) and clears a parse-failure block
+  set ID [--poll 3h] [--priority N]   change poll interval / priority after adding
 
 Tag/user/collection names are hidden (shown as hashes) unless --names is given.
 `
@@ -136,6 +139,66 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprintf(tw, "%s:\t%s\n", kv[0], kv[1])
 		}
 		tw.Flush()
+		return 0
+	case "refresh":
+		fs := flag.NewFlagSet("source refresh", flag.ContinueOnError)
+		fs.SetOutput(errOut)
+		full := fs.Bool("full", false, "re-walk the whole listing now (rescan) and clear a parse-failure block")
+		idStr, ok := parseWithPositional(fs, rest)
+		if !ok {
+			fmt.Fprint(errOut, sourceUsage)
+			return 2
+		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			fmt.Fprintf(errOut, "bad id %q\n", idStr)
+			return 2
+		}
+		res, err := svc.Refresh(ctx, id, *full)
+		if err != nil {
+			fmt.Fprintf(errOut, "refresh %d: %v\n", id, err)
+			return 1
+		}
+		fmt.Fprintf(out, "source %d: poll due now, %d failed work fetches re-queued", id, res.RequeuedWorks)
+		if res.RescanStarted {
+			fmt.Fprint(out, ", full re-walk started")
+		}
+		if res.UnblockedParser {
+			fmt.Fprint(out, ", parse-failure block cleared")
+		}
+		fmt.Fprintln(out, " (the running daemon picks this up within seconds)")
+		return 0
+	case "set":
+		fs := flag.NewFlagSet("source set", flag.ContinueOnError)
+		fs.SetOutput(errOut)
+		poll := fs.Duration("poll", 0, "update poll interval, e.g. 3h (>= 10m)")
+		prio := fs.Int("priority", 0, "priority within a scheduling class (higher first)")
+		idStr, ok := parseWithPositional(fs, rest)
+		if !ok {
+			fmt.Fprint(errOut, sourceUsage)
+			return 2
+		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			fmt.Fprintf(errOut, "bad id %q\n", idStr)
+			return 2
+		}
+		var prioPtr *int
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "priority" {
+				prioPtr = prio
+			}
+		})
+		if *poll == 0 && prioPtr == nil {
+			fmt.Fprint(errOut, "set: give --poll and/or --priority\n")
+			return 2
+		}
+		if err := svc.Set(ctx, id, *poll, prioPtr); err != nil {
+			fmt.Fprintf(errOut, "set %d: %v\n", id, err)
+			return 1
+		}
+		r, _ := a.store.GetSource(ctx, id)
+		fmt.Fprintf(out, "source %d: poll every %s, priority %d, next poll %s\n", id, r.PollInterval, r.Priority, when(r.NextPollAt))
 		return 0
 	case "confirm", "pause", "resume", "cancel", "remove":
 		if len(rest) != 1 {

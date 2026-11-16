@@ -21,6 +21,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
+	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -309,6 +310,9 @@ func (s *Scheduler) schedule(ctx context.Context) error {
 		if err != nil {
 			log.Error("bad backfill cursor; resetting", "err", err.Error())
 			cur = store.Cursor{NextPage: 1, Order: r.BackfillOrder}
+		}
+		if cur.NextPage > 0 && cur.BlockedParser == parse.Version {
+			continue // parse failure at this page; resumes when a new parser version ships
 		}
 		if cur.NextPage > 0 {
 			class := ClassBackfill

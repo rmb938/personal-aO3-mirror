@@ -331,6 +331,98 @@ func (s *Service) Cancel(ctx context.Context, id int64) (int64, error) {
 	return s.store.CancelSourceJobs(ctx, id)
 }
 
+// RefreshResult says what a refresh scheduled (content-free).
+type RefreshResult struct {
+	PollNow         bool
+	RequeuedWorks   int
+	RescanStarted   bool
+	UnblockedParser bool
+}
+
+// Refresh makes a source catch up now instead of waiting: its next update poll is due
+// immediately and its failed work fetches are queued again. With full, the whole listing is
+// re-walked (a rescan, picking up anything missed) and a parse-failure block is cleared.
+// Only active and done_backfill sources can be refreshed.
+func (s *Service) Refresh(ctx context.Context, id int64, full bool) (RefreshResult, error) {
+	var res RefreshResult
+	r, err := s.store.GetSource(ctx, id)
+	if err != nil {
+		return res, err
+	}
+	if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
+		return res, fmt.Errorf("sources: source %d is %s; only active or done_backfill sources can be refreshed", id, r.State)
+	}
+	now := s.now()
+	r.NextPollAt = now
+	res.PollNow = true
+	if full {
+		cur, err := store.ParseCursor(r.BackfillCursor)
+		if err != nil {
+			cur = store.Cursor{Order: r.BackfillOrder}
+		}
+		if cur.BlockedParser != 0 {
+			cur.BlockedParser = 0
+			res.UnblockedParser = true
+		}
+		if r.State == store.SourceDoneBackfill && r.Kind != "work" {
+			cur = store.Cursor{NextPage: 1, Order: r.BackfillOrder, Rescan: true, RescanStarted: now.Unix()}
+			res.RescanStarted = true
+		}
+		r.BackfillCursor = cur.JSON()
+	}
+	if err := s.store.UpdateSourceProgress(ctx, r); err != nil {
+		return res, err
+	}
+	if res.RescanStarted {
+		if err := s.store.SetSourceState(ctx, id, store.SourceActive, store.SourceDoneBackfill); err != nil {
+			return res, err
+		}
+	}
+	failed, err := s.store.FailedWorkJobs(ctx, id)
+	if err != nil {
+		return res, err
+	}
+	for _, target := range failed {
+		wid, _ := strconv.ParseInt(target, 10, 64)
+		if _, created, err := s.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: id, Target: target,
+			Priority: jobs.ClassPollFetch, DedupeKey: jobs.WorkKey(wid)}); err != nil {
+			return res, err
+		} else if created {
+			res.RequeuedWorks++
+		}
+	}
+	s.log.Info("source refresh", "source_id", id, "full", full, "requeued_works", res.RequeuedWorks,
+		"rescan_started", res.RescanStarted, "unblocked_parser", res.UnblockedParser)
+	return res, nil
+}
+
+// Set changes a source's poll interval and/or priority. Zero/nil values keep the current one.
+// A shorter poll interval takes effect at once (the next poll is moved earlier if needed).
+func (s *Service) Set(ctx context.Context, id int64, poll time.Duration, priority *int) error {
+	r, err := s.store.GetSource(ctx, id)
+	if err != nil {
+		return err
+	}
+	if poll != 0 && poll < 10*time.Minute {
+		return fmt.Errorf("sources: poll interval %s must be >= 10m", poll)
+	}
+	if poll == 0 {
+		poll = r.PollInterval
+	}
+	prio := r.Priority
+	if priority != nil {
+		prio = *priority
+	}
+	if err := s.store.UpdateSourceSettings(ctx, id, poll, prio); err != nil {
+		return err
+	}
+	if next := s.now().Add(poll); !r.NextPollAt.IsZero() && next.Before(r.NextPollAt) {
+		r.NextPollAt = next
+		return s.store.UpdateSourceProgress(ctx, r)
+	}
+	return nil
+}
+
 // Remove deletes a source (and its memberships). Mirrored works are kept.
 func (s *Service) Remove(ctx context.Context, id int64) error { return s.store.DeleteSource(ctx, id) }
 

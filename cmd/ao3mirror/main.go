@@ -25,7 +25,8 @@ commands:
   version            print version
   config check       validate config and print the User-Agent that will be sent
   run                run the scraper daemon (Ctrl+C to stop; resumes where it left off)
-  source ...         add/list/show/confirm/pause/resume/cancel/remove sources ('source' for help)
+  source ...         add/list/show/confirm/pause/resume/cancel/remove/refresh/set sources
+                     ('ao3mirror source' for details)
   fetch-work [--now] ID|URL    queue one work at top priority (--now: fetch here if no daemon)
   reparse [--all] [--work ID]  rebuild parsed tables from stored raw pages; makes no requests
   status             content-free queue/progress summary
@@ -57,6 +58,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if rest[0] == "dev" {
 		return runDev(rest[1:], stdout, stderr) // synthetic local AO3; makes no outside requests
+	}
+	// Help needs no config.
+	if rest[0] == "help" || rest[0] == "-h" || rest[0] == "--help" {
+		fmt.Fprint(stdout, usage)
+		return 0
+	}
+	if rest[0] == "source" && (len(rest) == 1 || rest[1] == "help" || rest[1] == "-h" || rest[1] == "--help") {
+		fmt.Fprint(stdout, sourceUsage)
+		return 0
 	}
 
 	// Every other command needs a valid config (contact.discord is required).

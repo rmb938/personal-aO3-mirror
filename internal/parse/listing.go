@@ -44,6 +44,12 @@ func ParseListing(page []byte, fetchedAt time.Time) (Listing, *Report, error) {
 	r.num("total", l.Total)
 	l.Pagination = parsePagination(main, r)
 	l.Blurbs, l.Skipped = parseBlurbs(main, fetchedAt, r)
+	// Neither a "N Works" total nor any blurb: the page structure changed (a real empty listing
+	// still says "0 Works"). Fail instead of silently treating it as empty.
+	if l.Total < 0 && len(l.Blurbs) == 0 && l.Skipped == 0 {
+		r.Missing = append(r.Missing, "#main>h2.heading total,li.blurb")
+		return l, r, unexpected("listing total and blurbs")
+	}
 	return l, r, nil
 }
 

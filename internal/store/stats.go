@@ -48,6 +48,7 @@ type Counts struct {
 	WorksByStatus   map[string]int
 	WorksFetched    int
 	WorksNeverFetch int
+	ParseFailures   int // fetched but not parsed (parser_version 0); fixed by reparse after a parser update
 	Tags            int
 	Creators        int
 	Series          int
@@ -103,6 +104,7 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		arg []any
 	}{
 		{s.Meta, `SELECT COUNT(*) FROM works WHERE last_fetched > 0`, &c.WorksFetched, nil},
+		{s.Meta, `SELECT COUNT(*) FROM works WHERE last_fetched > 0 AND parser_version = 0`, &c.ParseFailures, nil},
 		{s.Meta, `SELECT COUNT(*) FROM works WHERE last_fetched = 0 AND status = 'ok'`, &c.WorksNeverFetch, nil},
 		{s.Meta, `SELECT COUNT(*) FROM tags`, &c.Tags, nil},
 		{s.Meta, `SELECT COUNT(*) FROM creators`, &c.Creators, nil},

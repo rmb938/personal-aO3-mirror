@@ -397,3 +397,19 @@ func (s *Store) WorkParserVersion(ctx context.Context, workID int64) (int, error
 	}
 	return v, err
 }
+
+// MarkWorkParseFailed records that a work's page was fetched but could not be parsed. The work
+// is marked fetched (so listings stop asking for it until it changes on AO3) with
+// parser_version 0 (so `reparse` retries it from the stored raw page after a parser fix).
+// Existing content and metadata are kept.
+func (s *Store) MarkWorkParseFailed(ctx context.Context, workID int64) error {
+	now := s.unix()
+	if _, err := s.Meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
+		ON CONFLICT (id) DO NOTHING`, workID, now, now); err != nil {
+		return err
+	}
+	_, err := s.Meta.ExecContext(ctx, `UPDATE works SET last_fetched = ?, last_checked = ?, fetched_revised = revised_at,
+		fetched_chapters = chapters_posted, fetched_words = words, parser_version = 0 WHERE id = ?`, now, now, workID)
+	s.log.Debug("work parse failure recorded", "work_id", workID)
+	return err
+}
