@@ -68,6 +68,7 @@ func (a *app) schedulerOptions() scheduler.Options {
 		TagInfoTypes: a.cfg.Tags.InfoTypes, TagInfoTTL: a.cfg.Tags.InfoTTL,
 		RescanInterval: a.cfg.Sources.FullRescanInterval,
 		QueueImages:    a.cfg.Images.Enabled,
+		SeriesInfo:     a.cfg.Series.Info, SeriesInfoTTL: a.cfg.Series.InfoTTL,
 	}
 }
 

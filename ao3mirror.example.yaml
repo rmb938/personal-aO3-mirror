@@ -38,6 +38,13 @@ tags:
   # off by default; add "Freeform" to include them. [] disables tag-info fetching.
   info_types: [Fandom, Relationship, Character]
 
+series:
+  # Fetch the series page (description, notes, words, works count, complete) for series that
+  # mirrored works belong to. About 1 request per series. Series added as sources are refreshed
+  # by their own polls instead.
+  info: true
+  info_ttl: 720h           # refresh at least this often; sooner when a member work is revised
+
 images:
   enabled: true
   per_host_interval: 3s

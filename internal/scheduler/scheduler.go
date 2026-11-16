@@ -38,6 +38,7 @@ const (
 	KindBackfill = jobs.KindBackfill
 	KindWork     = jobs.KindWork
 	KindTagInfo  = jobs.KindTagInfo
+	KindSeries   = jobs.KindSeries
 )
 
 // Fetcher is the subset of httpx.Client the scheduler needs.
@@ -62,6 +63,8 @@ type Options struct {
 	TagInfoTTL     time.Duration // refetch tag info after this long (default 30d)
 	RescanInterval time.Duration // full re-walk of done sources (default 30d)
 	QueueImages    bool          // queue embedded images of fetched works for the image worker
+	SeriesInfo     bool          // fetch pages of series that mirrored works belong to
+	SeriesInfoTTL  time.Duration // refresh those at least this often (default 30d)
 }
 
 type Scheduler struct {
@@ -100,6 +103,9 @@ func New(o Options) *Scheduler {
 	if o.TagInfoTTL == 0 {
 		o.TagInfoTTL = 30 * 24 * time.Hour
 	}
+	if o.SeriesInfoTTL == 0 {
+		o.SeriesInfoTTL = 30 * 24 * time.Hour
+	}
 	if o.RescanInterval == 0 {
 		o.RescanInterval = 30 * 24 * time.Hour
 	}
@@ -109,6 +115,7 @@ func New(o Options) *Scheduler {
 		KindBackfill: s.handleBackfill,
 		KindWork:     s.handleWork,
 		KindTagInfo:  s.handleTagInfo,
+		KindSeries:   s.handleSeriesInfo,
 	}
 	for k := range s.handlers {
 		s.kinds = append(s.kinds, k)
@@ -382,10 +389,16 @@ func (s *Scheduler) maybeStartRescan(ctx context.Context, r store.SourceRow, now
 
 // scheduleTagInfo keeps a small queue of tag-info fetches (most-used tags first).
 func (s *Scheduler) scheduleTagInfo(ctx context.Context, now time.Time) error {
-	if len(s.o.TagInfoTypes) == 0 || now.Sub(s.lastTags) < time.Minute {
+	if now.Sub(s.lastTags) < time.Minute {
 		return nil
 	}
 	s.lastTags = now
+	if err := s.scheduleSeriesInfo(ctx, now); err != nil {
+		return err
+	}
+	if len(s.o.TagInfoTypes) == 0 {
+		return nil
+	}
 	active, err := s.st.CountActiveJobs(ctx, KindTagInfo)
 	if err != nil || active >= 25 {
 		return err
@@ -405,6 +418,34 @@ func (s *Scheduler) scheduleTagInfo(ctx context.Context, now time.Time) error {
 	}
 	if queued > 0 {
 		s.log.Debug("tag info scheduled", "jobs", queued)
+	}
+	return nil
+}
+
+// scheduleSeriesInfo keeps a small queue of series-page fetches for non-source series.
+func (s *Scheduler) scheduleSeriesInfo(ctx context.Context, now time.Time) error {
+	if !s.o.SeriesInfo {
+		return nil
+	}
+	active, err := s.st.CountActiveJobs(ctx, KindSeries)
+	if err != nil || active >= 25 {
+		return err
+	}
+	ids, err := s.st.SeriesNeedingInfo(ctx, now.Add(-s.o.SeriesInfoTTL), 50)
+	if err != nil {
+		return err
+	}
+	queued := 0
+	for _, id := range ids {
+		if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindSeries, Target: strconv.FormatInt(id, 10),
+			Priority: ClassTagInfo, DedupeKey: jobs.SeriesKey(id)}); err != nil {
+			return err
+		} else if created {
+			queued++
+		}
+	}
+	if queued > 0 {
+		s.log.Debug("series info scheduled", "jobs", queued)
 	}
 	return nil
 }

@@ -110,10 +110,10 @@ func classify(kind Kind, status int, h http.Header, body []byte) Verdict {
 		return Verdict{ClassUnexpected, "status=" + strconv.Itoa(status)}
 	}
 
-	if len(cfHits) > 0 {
-		return Verdict{ClassUnavailable, "status=200" + cfReason(cf)}
-	}
 	if kind == KindRobots {
+		if len(cfHits) > 0 {
+			return Verdict{ClassUnavailable, "status=200" + cfReason(cf)}
+		}
 		return Verdict{ClassOK, "status=200"}
 	}
 	var missing []string
@@ -123,12 +123,22 @@ func classify(kind Kind, status int, h http.Header, body []byte) Verdict {
 		}
 	}
 	if len(missing) > 0 {
-		// Not an AO3 page at all: maintenance/downtime/edge page. Back off rather than misparse.
+		// Not an AO3 page: a Cloudflare challenge/waiting room or a maintenance page. Back off
+		// rather than misparse.
+		if len(cfHits) > 0 {
+			return Verdict{ClassUnavailable, "status=200 cf_page" + cfReason(cf)}
+		}
 		return Verdict{ClassUnavailable, "status=200 missing_layout=" + strings.Join(missing, ",")}
+	}
+	// A real AO3 page. Cloudflare injects its detection script (challenge-platform) into normal
+	// pages too; that is not a challenge, so it only shows up in the reason for debugging.
+	okReason := "status=200"
+	if len(cfHits) > 0 {
+		okReason += " cf_injected=" + cf
 	}
 	if kind == KindWork && bytes.Contains(body, []byte(`class="caution notice"`)) &&
 		bytes.Contains(body, []byte("view_adult=true")) && !bytes.Contains(body, []byte(`id="workskin"`)) {
-		return Verdict{ClassAdultGate, "status=200 adult_interstitial"}
+		return Verdict{ClassAdultGate, okReason + " adult_interstitial"}
 	}
 	for _, m := range kindMarkers[kind] {
 		if !bytes.Contains(body, []byte(m)) {
@@ -136,9 +146,9 @@ func classify(kind Kind, status int, h http.Header, body []byte) Verdict {
 		}
 	}
 	if len(missing) > 0 {
-		return Verdict{ClassUnexpected, "status=200 missing=" + strings.Join(missing, ",")}
+		return Verdict{ClassUnexpected, okReason + " missing=" + strings.Join(missing, ",")}
 	}
-	return Verdict{ClassOK, "status=200"}
+	return Verdict{ClassOK, okReason}
 }
 
 func cfReason(cf string) string {

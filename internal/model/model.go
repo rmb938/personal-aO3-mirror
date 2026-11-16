@@ -101,3 +101,18 @@ type Work struct {
 	Chapters           []Chapter // page only
 	SkinCSS            string    // page only
 }
+
+// Series is a series page's metadata (series/show.html.erb). "Description" on AO3 is SummaryHTML.
+type Series struct {
+	ID          int64
+	Title       string
+	Creators    []Creator
+	Begun       string // YYYY-MM-DD
+	Updated     string // YYYY-MM-DD
+	SummaryHTML string // AO3 "Description"
+	NotesHTML   string
+	Words       int
+	WorksCount  int
+	Complete    bool
+	Bookmarks   int
+}

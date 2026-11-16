@@ -31,6 +31,7 @@ type Config struct {
 	Rate            Rate    `yaml:"rate"`
 	Sources         Sources `yaml:"sources"`
 	Tags            Tags    `yaml:"tags"`
+	Series          Series  `yaml:"series"`
 	Images          Images  `yaml:"images"`
 	Content         Content `yaml:"content"`
 	Auth            Auth    `yaml:"auth"`
@@ -67,6 +68,12 @@ type Tags struct {
 	InfoTypes []string `yaml:"info_types"`
 }
 
+// Series controls fetching series pages for series that are not sources themselves.
+type Series struct {
+	Info    bool          `yaml:"info"`     // fetch description/stats of series that mirrored works belong to
+	InfoTTL time.Duration `yaml:"info_ttl"` // refresh at least this often (sooner when a member work is revised)
+}
+
 // TagInfoTypes are the valid values for tags.info_types.
 var TagInfoTypes = map[string]bool{"Fandom": true, "Relationship": true, "Character": true, "Freeform": true}
 
@@ -97,6 +104,7 @@ func Default() Config {
 			FullRescanInterval:   30 * 24 * time.Hour,
 		},
 		Tags:    Tags{InfoTTL: 30 * 24 * time.Hour, InfoTypes: []string{"Fandom", "Relationship", "Character"}},
+		Series:  Series{Info: true, InfoTTL: 30 * 24 * time.Hour},
 		Images:  Images{Enabled: true, PerHostInterval: 3 * time.Second, MaxBytes: 25 << 20},
 		Content: Content{KeepVersions: 1},
 	}
@@ -172,6 +180,9 @@ func (c Config) Validate() error {
 	}
 	if c.Tags.InfoTTL < time.Hour {
 		add("tags.info_ttl must be >= 1h")
+	}
+	if c.Series.InfoTTL < time.Hour {
+		add("series.info_ttl must be >= 1h")
 	}
 	for _, t := range c.Tags.InfoTypes {
 		if !TagInfoTypes[t] {

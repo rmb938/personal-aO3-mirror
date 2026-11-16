@@ -10,20 +10,10 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
-// Series is a parsed /series/<id> page (metadata + one page of work blurbs).
+// Series is a parsed /series/<id> page: metadata plus one page of work blurbs.
 type Series struct {
-	ID          int64
-	Title       string
-	Creators    []model.Creator
-	Begun       string
-	Updated     string
-	SummaryHTML string
-	NotesHTML   string
-	Words       int
-	WorksCount  int
-	Complete    bool
-	Bookmarks   int
-	Listing     Listing
+	model.Series
+	Listing Listing
 }
 
 // ParseSeries parses a series page per app/views/series/show.html.erb.
@@ -35,7 +25,7 @@ func ParseSeries(seriesID int64, page []byte, fetchedAt time.Time) (Series, *Rep
 	if err != nil {
 		return Series{}, r, err
 	}
-	s := Series{ID: seriesID}
+	s := Series{Series: model.Series{ID: seriesID}}
 	main, err := r.need("#main", doc.Find("#main"))
 	if err != nil {
 		return s, r, err

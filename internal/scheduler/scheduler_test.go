@@ -435,3 +435,66 @@ func TestWorkFetchQueuesImages(t *testing.T) {
 		t.Fatalf("expected the fixture's one embedded image queued: %v", counts)
 	}
 }
+
+func fixtureBody(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestSeriesSourceStoresMetadata(t *testing.T) {
+	e := newEnv(t, 0, nil)
+	ctx := context.Background()
+	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fixtureBody(t, "series.html")})
+	e.add("/series/3001", sources.AddOptions{})
+	var desc string
+	var count, words int
+	e.st.Meta.QueryRow(`SELECT summary_html, works_count, words FROM series WHERE id = 3001`).Scan(&desc, &count, &words)
+	if !strings.Contains(desc, "series description") || count != 2 || words != 13145 {
+		t.Fatalf("series metadata from add: %q %d %d", desc, count, words)
+	}
+	// Poll refreshes it.
+	e.st.Meta.Exec(`UPDATE series SET words = 0 WHERE id = 3001`)
+	e.clk.Advance(7 * time.Hour)
+	e.drain(20)
+	e.st.Meta.QueryRow(`SELECT words FROM series WHERE id = 3001`).Scan(&words)
+	if words != 13145 {
+		t.Fatalf("poll did not refresh series words: %d", words)
+	}
+	_ = ctx
+}
+
+func TestSeriesInfoForNonSourceSeries(t *testing.T) {
+	e := newEnv(t, 0, func(o *Options) { o.SeriesInfo = true })
+	ctx := context.Background()
+	e.srv.Handle("/works/1001", fakeao3.Reply{Body: fixtureBody(t, "work_chaptered.html")}) // part 2 of series 3001
+	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fixtureBody(t, "series.html")})
+	e.st.EnqueueJob(ctx, store.Job{Kind: KindWork, Target: "1001", Priority: ClassOnDemand, DedupeKey: "work:1001"})
+	e.drain(5)
+	e.clk.Advance(2 * time.Minute)
+	e.drain(5)
+	var desc string
+	var fetched int64
+	e.st.Meta.QueryRow(`SELECT summary_html, last_fetched FROM series WHERE id = 3001`).Scan(&desc, &fetched)
+	if !strings.Contains(desc, "series description") || fetched == 0 {
+		t.Fatalf("series info not stored: %q %d", desc, fetched)
+	}
+	if ok, _ := e.st.WorkExists(ctx, 999); ok {
+		t.Fatal("series info must not add works we do not mirror")
+	}
+	// Not refetched again until stale.
+	n := 0
+	e.clk.Advance(2 * time.Minute)
+	e.drain(5)
+	for _, r := range e.srv.Requests() {
+		if r.URI == "/series/3001" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("series page fetched %d times", n)
+	}
+}

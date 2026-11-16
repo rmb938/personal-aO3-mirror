@@ -252,6 +252,11 @@ func (s *Service) fetchFirstPage(ctx context.Context, log *slog.Logger, src ao3u
 		var ser parse.Series
 		ser, rep, err = parse.ParseSeries(mustAtoi(src.Target), resp.Body, fetched)
 		l = ser.Listing
+		if err == nil {
+			if uerr := s.store.UpsertSeries(ctx, ser.Series); uerr != nil {
+				return 0, nil, 0, uerr
+			}
+		}
 	} else {
 		l, rep, err = parse.ParseListing(resp.Body, fetched)
 	}

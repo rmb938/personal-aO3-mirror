@@ -70,6 +70,11 @@ func (s *Scheduler) fetchListing(ctx context.Context, log *slog.Logger, r store.
 		id, _ := strconv.ParseInt(src.Target, 10, 64)
 		ser, rep, err = parse.ParseSeries(id, resp.Body, fetched)
 		res.listing = ser.Listing
+		if err == nil && page == 1 {
+			if uerr := s.st.UpsertSeries(ctx, ser.Series); uerr != nil {
+				return res, uerr
+			}
+		}
 	} else {
 		res.listing, rep, err = parse.ParseListing(resp.Body, fetched)
 	}
@@ -365,4 +370,53 @@ func workImages(w model.Work) []string {
 		frags = append(frags, c.BodyHTML, c.NotesHTML, c.EndNotesHTML, c.SummaryHTML)
 	}
 	return imagefetch.Extract(frags...)
+}
+
+// handleSeriesInfo fetches page 1 of a non-source series: description, notes, stats and
+// creators. Blurbs refresh only works we already mirror (no new works are added).
+func (s *Scheduler) handleSeriesInfo(ctx context.Context, job store.Job, log *slog.Logger) (map[string]any, error) {
+	id, err := strconv.ParseInt(job.Target, 10, 64)
+	if err != nil || id <= 0 {
+		return nil, permanentError{code: "bad_series_id"}
+	}
+	resp, err := s.c.Get(ctx, httpx.KindSeries, "/series/"+job.Target)
+	if err != nil {
+		return nil, err
+	}
+	detail := map[string]any{"series_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
+	switch resp.Class {
+	case httpx.ClassNotFound, httpx.ClassRestricted, httpx.ClassHidden:
+		return detail, s.st.MarkSeriesFetched(ctx, id)
+	}
+	if err := outcome(resp); err != nil {
+		if resp.Class == httpx.ClassUnexpected {
+			s.saveSkeleton("series", job.Target, resp.Body, log)
+		}
+		return detail, err
+	}
+	ser, rep, err := parse.ParseSeries(id, resp.Body, s.o.Now())
+	log.Debug("parse report", append([]any{"req_id", resp.ReqID, "series_id", id}, rep.Attrs()...)...)
+	if err != nil {
+		s.saveSkeleton("series", job.Target, resp.Body, log)
+		return detail, permanentError{code: "parse_unexpected:" + strings.Join(rep.Missing, ",")}
+	}
+	if err := s.st.UpsertSeries(ctx, ser.Series); err != nil {
+		return detail, err
+	}
+	refreshed := 0
+	for _, b := range ser.Listing.Blurbs {
+		known, err := s.st.WorkExists(ctx, b.ID)
+		if err != nil {
+			return detail, err
+		}
+		if !known {
+			continue
+		}
+		if _, err := s.st.UpsertWork(ctx, b, model.FromBlurb, parse.Version); err != nil {
+			return detail, err
+		}
+		refreshed++
+	}
+	detail["works_count"], detail["known_works_refreshed"] = ser.WorksCount, refreshed
+	return detail, nil
 }

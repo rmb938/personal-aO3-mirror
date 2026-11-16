@@ -263,6 +263,11 @@ func TestClassification(t *testing.T) {
 		{"/works/16", fakeao3.Reply{Status: 403, Body: fakeao3.CloudflareChallenge}, KindWork, ClassUnavailable},
 		{"/works/17", fakeao3.Reply{Body: fakeao3.CloudflareChallenge}, KindWork, ClassUnavailable},
 		{"/works/18", fakeao3.Reply{Body: fakeao3.Maintenance}, KindWork, ClassUnavailable},
+		// Real AO3 pages carry Cloudflare's injected detection script: still OK.
+		{"/works/21", fakeao3.Reply{Body: strings.Replace(fakeao3.WorkPage("x"), "</body>",
+			`<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>`, 1)}, KindWork, ClassOK},
+		{"/series/22", fakeao3.Reply{Body: strings.Replace(fakeao3.Page("<p>x</p>"), "</body>",
+			`<script>window.__CF$cv$params={};</script><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>`, 1)}, KindSeries, ClassOK},
 		{"/works/19", fakeao3.Reply{Body: fakeao3.Page("<p>no workskin</p>")}, KindWork, ClassUnexpected},
 		{"/tags/fixture/works", fakeao3.Reply{Body: fakeao3.Page("")}, KindListing, ClassOK},
 		{"/works/20", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/x"}}, KindWork, ClassUnexpected},
