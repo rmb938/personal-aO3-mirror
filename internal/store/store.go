@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -61,11 +62,11 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 		return nil, fmt.Errorf("store: create data dir: %w", err)
 	}
 	log := o.Logger.With("component", "store")
-	meta, err := openDB(filepath.Join(dir, MetaFile))
+	meta, err := openDB(filepath.Join(dir, MetaFile), 0)
 	if err != nil {
 		return nil, err
 	}
-	content, err := openDB(filepath.Join(dir, ContentFile))
+	content, err := openDB(filepath.Join(dir, ContentFile), ContentPageSize)
 	if err != nil {
 		meta.Close()
 		return nil, err
@@ -84,7 +85,19 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 	return s, nil
 }
 
-func openDB(path string) (*sql.DB, error) {
+// ContentPageSize is the page size for new content.db files. content.db holds zstd blobs (raw
+// pages ~46 KB, chapter bodies); larger pages read them a little faster (see
+// blob_bench_test.go). meta.db keeps SQLite's default: small rows, many index lookups.
+const ContentPageSize = 16384
+
+// openDB opens a database. pageSize > 0 sets the page size when the file is created; an
+// existing file keeps its page size (changing it needs a VACUUM outside WAL mode).
+func openDB(path string, pageSize int) (*sql.DB, error) {
+	if pageSize > 0 {
+		if err := initPageSize(path, pageSize); err != nil {
+			return nil, fmt.Errorf("store: init %s: %w", filepath.Base(path), err)
+		}
+	}
 	q := url.Values{}
 	for _, p := range []string{"busy_timeout(10000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(NORMAL)"} {
 		q.Add("_pragma", p)
@@ -100,6 +113,39 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("store: open %s: %w", filepath.Base(path), err)
 	}
 	return db, nil
+}
+
+// initPageSize creates a new database file with the given page size. It must run before
+// anything else touches the file: page_size only applies before the file is initialized and
+// cannot change once it is in WAL mode (a page_size _pragma in the DSN is ignored for that reason).
+func initPageSize(path string, pageSize int) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil // existing file: keep its page size
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA page_size = %d`, pageSize)); err != nil {
+		return err
+	}
+	_, err = db.Exec(`PRAGMA journal_mode = WAL`) // writes the header: the file now has pageSize
+	return err
+}
+
+// PageSize returns the page size of the named db ("meta" or "content").
+func (s *Store) PageSize(ctx context.Context, name string) (int, error) {
+	db := s.Meta
+	if name == "content" {
+		db = s.Content
+	}
+	var n int
+	err := db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&n)
+	return n, err
 }
 
 func (s *Store) Close() error {
@@ -138,6 +184,9 @@ func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
 		return err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if err := checkApplied(ctx, db, name, entries); err != nil {
+		return err
+	}
 	applied := 0
 	for _, e := range entries {
 		ver, err := strconv.Atoi(strings.SplitN(e.Name(), "_", 2)[0])
@@ -173,6 +222,35 @@ func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
 	}
 	s.log.Debug("schema current", "db", name, "from", current, "applied", applied)
 	return nil
+}
+
+// checkApplied refuses a database whose applied migrations this binary does not have (same
+// version and file name). That happens when the db was created by a different build, e.g. one
+// from before migrations were squashed; silently skipping would leave the schema out of date.
+func checkApplied(ctx context.Context, db *sql.DB, name string, entries []fs.DirEntry) error {
+	known := map[int]string{}
+	for _, e := range entries {
+		if ver, err := strconv.Atoi(strings.SplitN(e.Name(), "_", 2)[0]); err == nil {
+			known[ver] = e.Name()
+		}
+	}
+	rows, err := db.QueryContext(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ver int
+		var file string
+		if err := rows.Scan(&ver, &file); err != nil {
+			return err
+		}
+		if known[ver] != file {
+			return fmt.Errorf("store: %s database has migration %s, which this build does not know "+
+				"(created by a different build?); use the matching binary or recreate the store", name, file)
+		}
+	}
+	return rows.Err()
 }
 
 // SchemaVersion returns the current migration version of the named db ("meta" or "content").

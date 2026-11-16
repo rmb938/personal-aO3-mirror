@@ -69,6 +69,46 @@ func TestMigrationsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPageSizes(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	for i := 0; i < 2; i++ { // new files, then reopened existing files
+		s, err := Open(ctx, dir, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n, err := s.PageSize(ctx, "content"); err != nil || n != ContentPageSize {
+			t.Fatalf("open %d: content page_size = %d, %v; want %d", i, n, err, ContentPageSize)
+		}
+		if n, _ := s.PageSize(ctx, "meta"); n != 4096 {
+			t.Fatalf("open %d: meta page_size = %d, want default 4096", i, n)
+		}
+		var mode string
+		s.Content.QueryRow(`PRAGMA journal_mode`).Scan(&mode)
+		if mode != "wal" {
+			t.Fatalf("content journal_mode = %s", mode)
+		}
+		s.Close()
+	}
+}
+
+func TestOpenRefusesUnknownMigrations(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	s, err := Open(ctx, dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a store created by an older build that had a migration this build lacks.
+	if _, err := s.Meta.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, '0003_tags_images.sql', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if _, err := Open(ctx, dir, Options{}); err == nil || !strings.Contains(err.Error(), "0003_tags_images.sql") {
+		t.Fatalf("open should refuse an unknown applied migration, got %v", err)
+	}
+}
+
 func TestUpsertBlurbThenPage(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()

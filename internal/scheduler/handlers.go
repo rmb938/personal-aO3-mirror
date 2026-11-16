@@ -144,6 +144,11 @@ func (s *Scheduler) handlePoll(ctx context.Context, job store.Job, log *slog.Log
 	case res.newWorks+res.changed == 0:
 		more = false // newest-first: an unchanged page means older pages are unchanged too
 	}
+	if capped := p.Current < p.Last && page >= s.o.MaxPollPages &&
+		(src.Kind == ao3url.KindSeries || res.newWorks+res.changed > 0); capped {
+		log.Warn("poll page cap reached; later changes wait for the full rescan (consider source set --poll with a shorter interval)",
+			"source_id", r.ID, "max_poll_pages", s.o.MaxPollPages, "page", page, "last_page", p.Last)
+	}
 	if page == 1 && res.listing.Total >= 0 && res.listing.Total != r.TotalWorks {
 		r.TotalWorks = res.listing.Total
 	}

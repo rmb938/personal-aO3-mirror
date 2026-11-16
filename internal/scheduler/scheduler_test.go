@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -115,6 +116,24 @@ func (e *env) workRequests() map[string]int {
 		}
 	}
 	return out
+}
+
+func TestPollPageCapWarns(t *testing.T) {
+	e := newEnv(t, 45, func(o *Options) { o.MaxPollPages = 1 })
+	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	e.drain(500)
+	if strings.Contains(e.logs.String(), "poll page cap reached") {
+		t.Fatal("backfill must not trigger the poll cap warning")
+	}
+	// Page 1 of the update order changes, and more pages exist: the 1-page cap cuts the poll short.
+	e.site.Add(fakeao3.SiteWork{ID: 9999, Revised: time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC), Kudos: 1, Hits: 1, Words: 10, Chapters: 1, Expected: 1})
+	e.clk.Advance(7 * time.Hour)
+	e.drain(100)
+	logs := e.logs.String()
+	if !strings.Contains(logs, "poll page cap reached") || !strings.Contains(logs, `"max_poll_pages":1`) ||
+		!strings.Contains(logs, fmt.Sprintf(`"source_id":%d`, id)) {
+		t.Fatalf("expected poll page cap warning in logs")
+	}
 }
 
 func TestBackfillThenPoll(t *testing.T) {

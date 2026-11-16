@@ -17,10 +17,12 @@ CREATE TABLE chapter_bodies (
     work_id        INTEGER NOT NULL,
     position       INTEGER NOT NULL,
     chapter_id     INTEGER NOT NULL DEFAULT 0,
-    body_zstd      BLOB NOT NULL,
     notes_zstd     BLOB,
     endnotes_zstd  BLOB,
     summary_zstd   BLOB,                   -- per-chapter summary (chapters/_chapter.html.erb div#summary)
+    -- Large body last: reading only the small columns then never walks the body's overflow
+    -- pages (about 4x faster for long chapters; see blob_bench_test.go).
+    body_zstd      BLOB NOT NULL,
     PRIMARY KEY (work_id, position)
 );
 
