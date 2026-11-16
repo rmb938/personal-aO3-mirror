@@ -96,6 +96,15 @@ func TestUserAgentOnEveryRequest(t *testing.T) {
 		if r.UserAgent != testUA {
 			t.Errorf("%s sent UA %q", r.URI, r.UserAgent)
 		}
+		if got := r.Header.Get("Sec-Fetch-Site"); got != "none" {
+			t.Errorf("%s sent Sec-Fetch-Site %q, want none", r.URI, got)
+		}
+		// Only the truthful Sec-Fetch-Site: nothing that claims a browser tab or a human click.
+		for _, k := range []string{"Sec-Fetch-User", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Upgrade-Insecure-Requests"} {
+			if v := r.Header.Get(k); v != "" {
+				t.Errorf("%s sent %s: %q", r.URI, k, v)
+			}
+		}
 	}
 	if reqs[0].URI != "/robots.txt" {
 		t.Errorf("first request must be robots.txt, got %s", reqs[0].URI)

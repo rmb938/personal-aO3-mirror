@@ -117,9 +117,18 @@ type uaTransport struct {
 	next http.RoundTripper
 }
 
+// fetchSiteNone is the Fetch Metadata value for a request not initiated from any web page.
+// That is literally true for the daemon (no referrer, never cross-site). During AO3's
+// Cloudflare 525 periods, requests without Sec-Fetch-Site were failing while ones with it got
+// through. Only this one, truthful header is sent: never Sec-Fetch-User/Mode/Dest or a browser
+// User-Agent, which would claim a human or a browser tab. The contact UA is always present, so
+// AO3 still sees exactly who we are. Remove this if AO3 asks.
+const fetchSiteNone = "none"
+
 func (t *uaTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r2 := r.Clone(r.Context())
 	r2.Header.Set("User-Agent", t.ua)
+	r2.Header.Set("Sec-Fetch-Site", fetchSiteNone)
 	return t.next.RoundTrip(r2)
 }
 
