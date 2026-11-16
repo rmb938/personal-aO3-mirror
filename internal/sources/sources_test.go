@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sync"
@@ -50,7 +51,7 @@ func newEnv(t *testing.T, autoMax int) *env {
 	srv := fakeao3.New()
 	t.Cleanup(srv.Close)
 	clk := &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
-	c, err := httpx.New(httpx.Options{BaseURL: srv.URL, UserAgent: testUA, Interval: 10 * time.Second, Clock: clk, Seed: 1})
+	c, err := httpx.New(httpx.Options{BaseURL: srv.URL, UserAgent: testUA, Interval: 10 * time.Second, Clock: clk, Rand: rand.NewPCG(1, 1)})
 	require.NoError(t, err)
 	st, err := store.Open(context.Background(), t.TempDir(), store.Options{Now: clk.Now})
 	require.NoError(t, err)

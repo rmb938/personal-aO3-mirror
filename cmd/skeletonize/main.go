@@ -92,7 +92,7 @@ func run(args []string) int {
 		os.Stdout.Write(skel)
 		return 0
 	}
-	if err := os.WriteFile(*out, skel, 0o644); err != nil {
+	if err := os.WriteFile(*out, skel, 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "skeletonize:", err)
 		return 1
 	}

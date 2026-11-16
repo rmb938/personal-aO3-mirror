@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +65,7 @@ func newHarness(t *testing.T, interval time.Duration, jitter float64) *harness {
 	logger := slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	c, err := New(Options{
 		BaseURL: h.srv.URL, UserAgent: testUA, Interval: interval, Jitter: jitter,
-		Logger: logger, Clock: h.clock, Seed: 42,
+		Logger: logger, Clock: h.clock, Rand: rand.NewPCG(42, 42),
 		OnRequest: func(r RequestRecord) { h.recs = append(h.recs, r) },
 	})
 	require.NoError(t, err)

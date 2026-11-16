@@ -2,7 +2,8 @@ package httpx
 
 import (
 	"context"
-	"math/rand/v2"
+	"crypto/rand"
+	"encoding/binary"
 	"sync"
 	"time"
 
@@ -67,7 +68,7 @@ type Pacer struct {
 	base         time.Duration
 	jitter       float64
 	budget       int
-	rnd          *rand.Rand
+	rnd          RandSource
 	last         time.Time
 	backoffTill  time.Time
 	factor       float64
@@ -79,14 +80,35 @@ type Pacer struct {
 	waitingUntil time.Time
 }
 
-func NewPacer(clock Clock, base time.Duration, jitter float64, dailyBudget int, seed uint64) *Pacer {
+// RandSource supplies random bits for jitter and request IDs. *math/rand/v2.PCG satisfies it, so
+// tests can pass a seeded source for repeatable runs.
+type RandSource interface {
+	Uint64() uint64
+}
+
+// CryptoSource is the default RandSource: crypto/rand, so production jitter is truly random.
+type CryptoSource struct{}
+
+func (CryptoSource) Uint64() uint64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error (it crashes the program instead)
+	return binary.LittleEndian.Uint64(b[:])
+}
+
+// randFloat64 returns a uniform float in [0, 1) from the top 53 bits.
+func randFloat64(r RandSource) float64 {
+	return float64(r.Uint64()>>11) / (1 << 53)
+}
+
+// NewPacer builds a pacer. A nil rnd uses CryptoSource.
+func NewPacer(clock Clock, base time.Duration, jitter float64, dailyBudget int, rnd RandSource) *Pacer {
 	if base < config.MinInterval {
 		base = config.MinInterval
 	}
-	return &Pacer{
-		clock: clock, base: base, jitter: jitter, budget: dailyBudget,
-		rnd: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)), factor: 1,
+	if rnd == nil {
+		rnd = CryptoSource{}
 	}
+	return &Pacer{clock: clock, base: base, jitter: jitter, budget: dailyBudget, rnd: rnd, factor: 1}
 }
 
 func (p *Pacer) currentFactor(now time.Time) float64 {
@@ -99,7 +121,7 @@ func (p *Pacer) currentFactor(now time.Time) float64 {
 // nextInterval returns the jittered gap; never below config.MinInterval.
 func (p *Pacer) nextInterval(now time.Time) time.Duration {
 	d := float64(p.base) * p.currentFactor(now)
-	d *= 1 + p.jitter*(2*p.rnd.Float64()-1)
+	d *= 1 + p.jitter*(2*randFloat64(p.rnd)-1)
 	if iv := time.Duration(d); iv > config.MinInterval {
 		return iv
 	}

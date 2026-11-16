@@ -204,7 +204,7 @@ func (s *Skeletonizer) textCore(t string) string {
 }
 
 func (s *Skeletonizer) date(v, layout string) string {
-	days := int(s.h("date", v) % uint64(time.Since(dateBase).Hours()/24+1))
+	days := int(s.h("date", v) % uint64(time.Since(dateBase).Hours()/24+1)) //nolint:gosec // G115: modulo days since dateBase, far below MaxInt
 	return dateBase.AddDate(0, 0, days).Format(layout)
 }
 
@@ -503,11 +503,11 @@ func SaveDebug(dataDir, kind, id string, page []byte, now time.Time) (string, er
 		return "", err
 	}
 	dir := filepath.Join(dataDir, "debug")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", err
 	}
 	name := fmt.Sprintf("%s-%s-%s.skel.html", kind, id, now.UTC().Format("20060102T150405"))
-	if err := os.WriteFile(filepath.Join(dir, name), skel, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), skel, 0o600); err != nil {
 		return "", err
 	}
 	return filepath.Join("debug", name), nil

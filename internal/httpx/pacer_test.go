@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"math/rand/v2"
 	"sync"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func (c *stepClock) Sleep(ctx context.Context, d time.Duration) error {
 
 func TestIntervalCountsFromResponseEnd(t *testing.T) {
 	clk := &stepClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
-	p := NewPacer(clk, 10*time.Second, 0, 0, 1)
+	p := NewPacer(clk, 10*time.Second, 0, 0, rand.NewPCG(1, 1))
 	ctx := context.Background()
 	_, err := p.Wait(ctx) // first request: no wait
 	require.NoError(t, err)
@@ -53,7 +54,7 @@ func TestIntervalCountsFromResponseEnd(t *testing.T) {
 
 func TestStateReadableDuringWait(t *testing.T) {
 	clk := &blockingClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC), sleep: make(chan struct{}), release: make(chan struct{})}
-	p := NewPacer(clk, 10*time.Second, 0, 0, 1)
+	p := NewPacer(clk, 10*time.Second, 0, 0, rand.NewPCG(1, 1))
 	p.Report(ClassUnavailable, 0) // 1 minute backoff
 	waitErr := make(chan error, 1)
 	go func() {

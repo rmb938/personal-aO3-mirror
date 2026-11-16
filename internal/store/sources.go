@@ -151,7 +151,7 @@ func (s *Store) SetSourceState(ctx context.Context, id int64, to SourceState, fr
 	q := `UPDATE sources SET state = ?, updated_at = ? WHERE id = ?`
 	args := []any{string(to), s.unix(), id}
 	if len(from) > 0 {
-		q += ` AND state IN (` + placeholders(len(from)) + `)`
+		q += ` AND state IN (` + placeholders(len(from)) + `)` //nolint:gosec // G202: only "?,?,..." is concatenated; values are bound args
 		for _, f := range from {
 			args = append(args, string(f))
 		}

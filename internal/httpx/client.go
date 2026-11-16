@@ -50,7 +50,7 @@ type Options struct {
 	Clock       Clock               // defaults to real time
 	Transport   http.RoundTripper   // defaults to a tuned http.Transport
 	OnRequest   func(RequestRecord) // optional: persist to the requests table
-	Seed        uint64              // jitter RNG seed; 0 = time-based
+	Rand        RandSource          // jitter and request-ID source; nil = crypto/rand (tests pass a seeded PCG)
 }
 
 // RequestRecord is a content-free summary of one HTTP exchange.
@@ -171,7 +171,9 @@ func New(o Options) (*Client, error) {
 	// Same cookie AO3's own "Proceed" link sets (works_controller#show: cookies[:view_adult]).
 	// It replaces the view_adult=true query param, whose combination with view_full_work=true
 	// returned Cloudflare 525s during the Nov 2026 incident while each param alone worked.
-	jar.SetCookies(base, []*http.Cookie{{Name: "view_adult", Value: "true", Path: "/"}})
+	// Secure: the jar still sends it to the plain-http loopback fakeao3 (loopback counts as secure).
+	jar.SetCookies(base, []*http.Cookie{{Name: "view_adult", Value: "true", Path: "/",
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}})
 	if o.Clock == nil {
 		o.Clock = realClock{}
 	}
@@ -181,13 +183,13 @@ func New(o Options) (*Client, error) {
 	if o.MaxBody <= 0 {
 		o.MaxBody = defaultMaxBody
 	}
-	if o.Seed == 0 {
-		o.Seed = uint64(time.Now().UnixNano())
+	if o.Rand == nil {
+		o.Rand = CryptoSource{}
 	}
 	c := &Client{
 		base: base, ua: o.UserAgent, clock: o.Clock, maxBody: o.MaxBody, onReq: o.OnRequest,
 		log:   o.Logger.With("component", "httpx"),
-		pacer: NewPacer(o.Clock, o.Interval, o.Jitter, o.DailyBudget, o.Seed),
+		pacer: NewPacer(o.Clock, o.Interval, o.Jitter, o.DailyBudget, o.Rand),
 		http: &http.Client{
 			Transport: rt,
 			Jar:       jar,
@@ -196,7 +198,7 @@ func New(o Options) (*Client, error) {
 				return http.ErrUseLastResponse // redirects are followed manually, paced and robots-checked
 			},
 		},
-		idPfx: fmt.Sprintf("%04x", o.Seed&0xffff),
+		idPfx: fmt.Sprintf("%04x", o.Rand.Uint64()&0xffff),
 	}
 	return c, nil
 }

@@ -115,7 +115,7 @@ type RotatingFile struct {
 }
 
 func OpenRotating(path string, maxBytes int64, maxFiles int) (*RotatingFile, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
 	r := &RotatingFile{path: path, maxBytes: maxBytes, maxFiles: maxFiles}
@@ -126,7 +126,7 @@ func OpenRotating(path string, maxBytes int64, maxFiles int) (*RotatingFile, err
 }
 
 func (r *RotatingFile) open() error {
-	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}

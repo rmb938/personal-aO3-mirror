@@ -45,6 +45,7 @@ func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time
 		args = append(args, t)
 	}
 	args = append(args, before.Unix(), limit)
+	//nolint:gosec // G202: only placeholders(n) ("?,?,...") is concatenated; values are bound args
 	rows, err := s.Meta.QueryContext(ctx, `SELECT t.id, t.name, t.type FROM tags t
 		WHERE t.type IN (`+placeholders(len(types))+`) AND t.info_fetched_at < ?
 		  AND EXISTS (SELECT 1 FROM work_tags wt WHERE wt.tag_id = t.id)

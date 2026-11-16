@@ -248,7 +248,7 @@ func TestStatusKeepsContentAndRevives(t *testing.T) {
 func TestRawPagesDedupeAndPrune(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	page := func(n int) []byte { return []byte(strings.Repeat("<p>fixture page</p>", 100) + string(rune('a'+n))) }
+	page := func(n int) []byte { return []byte(strings.Repeat("<p>fixture page</p>", 100) + string(rune('a'+n))) } //nolint:gosec // G115: n is a small page index
 
 	isNew, err := s.PutRawPage(ctx, 1, "/works/1", page(0), 2)
 	require.NoError(t, err)

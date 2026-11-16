@@ -20,10 +20,10 @@ import (
 // lockDaemon takes an exclusive lock so only one daemon runs per data dir. The returned unlock
 // releases it and reports any error.
 func lockDaemon(dataDir string) (unlock func() error, err error) {
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dataDir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(filepath.Join(dataDir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}

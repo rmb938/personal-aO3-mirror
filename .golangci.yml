@@ -30,7 +30,12 @@ linters:
     - mirror
     - errname         # ErrX sentinels, XError types
     - testifylint     # idiomatic testify assertions (require for fatal checks)
+    - gosec           # security checks
   settings:
+    gosec:
+      excludes:
+        - G104 # unhandled errors: errcheck already covers this, with the std-error-handling preset
+        - G304 # file path from variable: paths come from our own config and data dir
     nolintlint:
       require-explanation: true
       require-specific: true

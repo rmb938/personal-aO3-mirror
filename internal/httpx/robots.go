@@ -7,7 +7,7 @@ import (
 )
 
 // ProductToken is the robots.txt user-agent token we match groups against.
-const ProductToken = "personal-ao3-mirror"
+const ProductToken = "personal-ao3-mirror" //nolint:gosec // G101: robots.txt user-agent name, not a credential
 
 const (
 	robotsTTL      = 24 * time.Hour

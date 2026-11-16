@@ -58,7 +58,7 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("store: create data dir: %w", err)
 	}
 	log := o.Logger.With("component", "store")

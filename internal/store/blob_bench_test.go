@@ -48,7 +48,7 @@ func benchDB(b *testing.B, pageSize int) *sql.DB {
 func randBlob(r *rand.Rand, n int) []byte {
 	out := make([]byte, n)
 	for i := range out {
-		out[i] = byte(r.Uint32())
+		out[i] = byte(r.Uint32()) //nolint:gosec // G115: truncation to a random byte is intended
 	}
 	return out
 }
@@ -62,7 +62,7 @@ func BenchmarkBlobRead(b *testing.B) {
 				if _, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY, meta INTEGER NOT NULL, data BLOB NOT NULL)`); err != nil {
 					b.Fatal(err)
 				}
-				r := rand.New(rand.NewPCG(1, 2))
+				r := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: seeded synthetic bench data, repeatable on purpose
 				tx, _ := db.Begin()
 				for i := 1; i <= benchRows; i++ {
 					if _, err := tx.Exec(`INSERT INTO t (id, meta, data) VALUES (?,?,?)`, i, i, randBlob(r, size)); err != nil {
@@ -94,7 +94,7 @@ func BenchmarkBlobWrite(b *testing.B) {
 			if _, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY, data BLOB NOT NULL)`); err != nil {
 				b.Fatal(err)
 			}
-			r := rand.New(rand.NewPCG(3, 4))
+			r := rand.New(rand.NewPCG(3, 4)) //nolint:gosec // G404: seeded synthetic bench data, repeatable on purpose
 			blob := randBlob(r, size)
 			b.SetBytes(size)
 			b.ResetTimer()
@@ -125,7 +125,7 @@ func BenchmarkChapterColumnOrder(b *testing.B) {
 						if _, err := db.Exec(schemas[order]); err != nil {
 							b.Fatal(err)
 						}
-						r := rand.New(rand.NewPCG(5, 6))
+						r := rand.New(rand.NewPCG(5, 6)) //nolint:gosec // G404: seeded synthetic bench data, repeatable on purpose
 						tx, _ := db.Begin()
 						for i := 1; i <= benchRows; i++ {
 							if _, err := tx.Exec(`INSERT INTO c (work_id, position, body, notes, endnotes, summary) VALUES (?,1,?,?,?,?)`,

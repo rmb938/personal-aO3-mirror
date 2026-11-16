@@ -78,7 +78,7 @@ func newCLI(t *testing.T, extraYAML string) *cli {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "cfg.yaml")
 	body := "data_dir: " + filepath.Join(dir, "d") + "\ncontact: {discord: \"@fixture_user\"}\nrate: {interval: 3s, jitter: 0}\n" + extraYAML
-	require.NoError(t, os.WriteFile(cfg, []byte(body), 0o644))
+	require.NoError(t, os.WriteFile(cfg, []byte(body), 0o600))
 	return &cli{t: t, cfg: cfg, srv: srv}
 }
 

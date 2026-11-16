@@ -399,11 +399,11 @@ func (w *Worker) write(sha, ct string, body []byte) error {
 	if _, err := os.Stat(p); err == nil {
 		return nil // content-addressed: already have it
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		return err
 	}
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, p)
