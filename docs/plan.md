@@ -36,6 +36,14 @@ Repo today: only `README.md` and `LICENSE`. Go 1.27 is installed. Greenfield pro
 | 2 | `ao3mirror serve` JSON API | Go `net/http`. Endpoints mirror AO3: `/works/:id`, `/tags/:name/works` with the same `work_search` filter/sort params, search over FTS5 plus filters, fandom browse by media, creators, series, collections. Also source management: add a URL, see the estimate, confirm, pause, cancel. Calls the same `internal/sources` package as the CLI. |
 | 3 | AO3-style UI | Server-rendered `html/template`, embedded in the same binary. Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs are rewritten to the local `images/` at render time. "Mirror this URL" box for on-demand scraping. |
 
+### Requirement (Part 3): serve mirrored images safely
+
+Images are stored exactly as the host served them, including SVG, which can carry scripts.
+The UI must only show them through `<img src>` (never inline the markup, `<object>` or
+`<iframe>`). It must serve `images/` with the stored `Content-Type`, `X-Content-Type-Options: nosniff`
+and a restrictive CSP (`default-src 'none'; style-src 'unsafe-inline'`). Fanwork HTML and work
+skins are untrusted input too, so they get the same sanitizing and CSP treatment.
+
 ### Requirement (Parts 2 and 3): flag partial series
 
 A series is partial when it is not a source and we mirror fewer works than AO3 lists. This happens

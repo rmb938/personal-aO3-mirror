@@ -58,6 +58,9 @@ func newHost(t *testing.T) *hostServer {
 		case "/page":
 			w.Header().Set("Content-Type", "text/html")
 			fmt.Fprint(w, "<html></html>")
+		case "/redir.png":
+			// Redirect to an AO3 host: CheckRedirect must refuse before any request is made.
+			http.Redirect(w, r, "https://archiveofourown.org/images/x.png", http.StatusFound)
 		case "/flaky.png":
 			h.mu.Lock()
 			h.flaky++
@@ -90,7 +93,7 @@ func TestWorker(t *testing.T) {
 	}
 	defer st.Close()
 	h := newHost(t)
-	paths := []string{"/a.png", "/private/b.png", "/big.png", "/page", "/gone.png", "/flaky.png", "/dup.png"}
+	paths := []string{"/a.png", "/private/b.png", "/big.png", "/page", "/gone.png", "/flaky.png", "/dup.png", "/redir.png"}
 	var urls []string
 	for _, p := range paths {
 		urls = append(urls, h.URL+p)
@@ -142,7 +145,8 @@ func TestWorker(t *testing.T) {
 		clk = clk.Add(wait)
 	}
 	counts, bytesOK, _ := st.ImageCounts(ctx)
-	want := map[string]int{"ok": 3, "disallowed": 1, "too_large": 1, "skipped": 1, "failed": 1}
+	// skipped: /page (not an image) and /redir.png (redirects to AO3, refused before following).
+	want := map[string]int{"ok": 3, "disallowed": 1, "too_large": 1, "skipped": 2, "failed": 1}
 	if !reflect.DeepEqual(counts, want) {
 		t.Fatalf("counts %v want %v", counts, want)
 	}

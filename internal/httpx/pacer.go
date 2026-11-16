@@ -168,6 +168,11 @@ func (p *Pacer) Report(class Class, retryAfter time.Duration) PacerState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.clock.Now()
+	// The next request's gap counts from when this one finished (body read), not when it was
+	// sent, so slow responses don't shorten the real spacing.
+	if now.After(p.last) {
+		p.last = now
+	}
 	switch class {
 	case ClassRateLimited:
 		p.consecFails++

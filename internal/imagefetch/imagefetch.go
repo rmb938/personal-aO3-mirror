@@ -129,6 +129,9 @@ type robotsEntry struct {
 
 var errBlockedAddr = errors.New("imagefetch: refusing non-public address")
 
+// errRedirectAO3 refuses an image redirect to an AO3 host.
+var errRedirectAO3 = errors.New("imagefetch: refusing redirect to AO3")
+
 func New(o Options) (*Worker, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -182,6 +185,11 @@ func New(o Options) (*Worker, error) {
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return errors.New("bad redirect scheme")
 			}
+			// Same rule as the queue: the image worker never talks to AO3, even via a redirect
+			// (that request would bypass the AO3 pacer).
+			if isAO3(req.URL.Hostname()) {
+				return errRedirectAO3
+			}
 			return nil
 		}}}, nil
 }
@@ -230,7 +238,7 @@ func (w *Worker) Step(ctx context.Context) (bool, time.Duration, error) {
 			}
 			continue
 		}
-		w.fetch(ctx, r)
+		w.safeFetch(ctx, r)
 		return true, 0, nil
 	}
 	if !earliest.IsZero() {
@@ -243,6 +251,18 @@ func (w *Worker) hostDone(host string) {
 	w.mu.Lock()
 	w.nextHost[host] = w.o.Now().Add(w.o.PerHostInterval)
 	w.mu.Unlock()
+}
+
+// safeFetch runs fetch and turns a panic into a failed image, so the worker goroutine (which
+// would take the whole daemon down) keeps going. Only the panic's type is logged.
+func (w *Worker) safeFetch(ctx context.Context, r store.ImageRow) {
+	defer func() {
+		if p := recover(); p != nil {
+			w.log.Error("image fetch panicked", "image_id", r.ID, "panic_type", fmt.Sprintf("%T", p))
+			_ = w.o.Store.ImageFinal(context.WithoutCancel(ctx), r.ID, store.ImageFailed, "panic")
+		}
+	}()
+	w.fetch(ctx, r)
 }
 
 func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
@@ -290,6 +310,11 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		if errors.Is(err, errBlockedAddr) {
 			log.Warn("image host resolves to a non-public address; skipped")
 			_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "non_public_address")
+			return
+		}
+		if errors.Is(err, errRedirectAO3) {
+			log.Info("image redirects to an AO3 host; skipped")
+			_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "ao3_redirect")
 			return
 		}
 		log.Warn("image request failed", "err", short(err))

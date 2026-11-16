@@ -376,6 +376,28 @@ func (s *Store) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus,
 	return st, err == nil, err
 }
 
+// SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or
+// changed since their last fetch (same rule as WorkNeedsFetch), oldest first.
+func (s *Store) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, limit int) ([]int64, error) {
+	rows, err := s.Meta.QueryContext(ctx, `SELECT w.id FROM source_works sw JOIN works w ON w.id = sw.work_id
+		WHERE sw.source_id = ? AND w.status = 'ok' AND (w.last_fetched = 0 OR w.fetched_revised != w.revised_at
+			OR w.fetched_chapters != w.chapters_posted OR w.fetched_words != w.words)
+		ORDER BY w.id LIMIT ?`, sourceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // WorkNeedsFetch reports whether a work is ok and was never fetched or changed since its last
 // fetch (by revised date, chapters or words).
 func (s *Store) WorkNeedsFetch(ctx context.Context, workID int64) (bool, error) {

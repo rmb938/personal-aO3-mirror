@@ -277,6 +277,14 @@ func TestClassification(t *testing.T) {
 			`<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>`, 1)}, KindWork, ClassOK},
 		{"/series/22", fakeao3.Reply{Body: strings.Replace(fakeao3.Page("<p>x</p>"), "</body>",
 			`<script>window.__CF$cv$params={};</script><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>`, 1)}, KindSeries, ClassOK},
+		// Fanwork text can contain the classifier's marker strings; a real work page must still
+		// classify OK (markers only add, and real work pages always have #workskin).
+		{"/works/23", fakeao3.Reply{Body: fakeao3.WorkPage(`<p class="caution notice">fixture text with view_adult=true and ` +
+			`<a href="/works/1?view_adult=true">a link</a></p>`)}, KindWork, ClassOK},
+		{"/works/24", fakeao3.Reply{Body: fakeao3.WorkPage(`<p>fixture text: challenge-platform cf-wrapper cf-error-details ` +
+			`cf-browser-verification __cf_chl_ waiting room id="outer" id="main"</p>`)}, KindWork, ClassOK},
+		{"/tags/fixture2/works", fakeao3.Reply{Body: fakeao3.Page(`<blockquote class="userstuff summary"><p>fixture ` +
+			`challenge-platform cf-wrapper class="caution notice" view_adult=true</p></blockquote>`)}, KindListing, ClassOK},
 		{"/works/19", fakeao3.Reply{Body: fakeao3.Page("<p>no workskin</p>")}, KindWork, ClassUnexpected},
 		{"/tags/fixture/works", fakeao3.Reply{Body: fakeao3.Page("")}, KindListing, ClassOK},
 		{"/works/20", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/x"}}, KindWork, ClassUnexpected},

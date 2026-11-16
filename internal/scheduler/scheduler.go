@@ -192,49 +192,72 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 	log := s.log.With("job_id", job.ID, "job_kind", job.Kind, "source_id", job.SourceID, "class", job.Priority, "attempt", job.Attempts)
 	jctx := httpx.WithJobID(logx.With(ctx, log), job.ID)
+	// Bookkeeping must land even when ctx is cancelled (shutdown) so a job never stays "running".
+	bk := context.WithoutCancel(ctx)
+	note := func(what string, err error) {
+		if err != nil {
+			log.Error("job bookkeeping failed", "step", what, "err", err.Error())
+		}
+	}
 	s.setPhase(ctx, job.ID, "running")
-	_ = s.st.JobEvent(ctx, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target})
-	start := time.Now()
-	detail, err := s.handlers[job.Kind](jctx, job, log)
+	note("event_start", s.st.JobEvent(bk, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target}))
+	start := s.o.Now()
+	detail, err := s.runHandler(jctx, job, log)
 	if detail == nil {
 		detail = map[string]any{}
 	}
-	detail["ms"] = time.Since(start).Milliseconds()
+	detail["ms"] = s.o.Now().Sub(start).Milliseconds()
 
 	var re retryError
 	var pe permanentError
 	switch {
+	case err == nil:
+		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
+		note("finish", s.st.FinishJob(bk, job.ID, store.JobDone, ""))
+		log.Info("job done", append([]any{"ms", detail["ms"]}, flatten(detail)...)...)
+		note("event_done", s.st.JobEvent(bk, job.ID, "done", detail))
 	case ctx.Err() != nil:
-		_ = s.st.RequeueJob(context.Background(), job.ID, s.o.Now())
+		note("requeue", s.st.RequeueJob(bk, job.ID, s.o.Now()))
 		log.Info("job interrupted; requeued")
 		return
-	case err == nil:
-		_ = s.st.FinishJob(ctx, job.ID, store.JobDone, "")
-		log.Info("job done", append([]any{"ms", detail["ms"]}, flatten(detail)...)...)
-		_ = s.st.JobEvent(ctx, job.ID, "done", detail)
 	case errors.As(err, &re):
 		nb := s.o.Now().Add(time.Minute)
 		if st := s.c.PacerState(); st.BackoffTill.After(nb) {
 			nb = st.BackoffTill
 		}
-		state, _ := s.st.RetryJob(ctx, job.ID, nb, re.code)
+		state, rerr := s.st.RetryJob(bk, job.ID, nb, re.code)
+		note("retry", rerr)
 		detail["error"], detail["next_state"], detail["not_before"] = re.code, state, nb.UTC().Format(time.RFC3339)
 		log.Warn("job retry", "error", re.code, "next_state", state, "not_before", nb)
-		_ = s.st.JobEvent(ctx, job.ID, "retry", detail)
+		note("event_retry", s.st.JobEvent(bk, job.ID, "retry", detail))
 	case errors.As(err, &pe):
-		_ = s.st.FinishJob(ctx, job.ID, store.JobFailed, pe.code)
+		note("finish", s.st.FinishJob(bk, job.ID, store.JobFailed, pe.code))
 		detail["error"] = pe.code
 		log.Warn("job failed", "error", pe.code)
-		_ = s.st.JobEvent(ctx, job.ID, "failed", detail)
+		note("event_failed", s.st.JobEvent(bk, job.ID, "failed", detail))
 	default:
 		// Unexpected (store/transport) errors: retry; the store caps attempts.
 		code := "internal:" + errCode(err)
-		state, _ := s.st.RetryJob(ctx, job.ID, s.o.Now().Add(5*time.Minute), code)
+		state, rerr := s.st.RetryJob(bk, job.ID, s.o.Now().Add(5*time.Minute), code)
+		note("retry", rerr)
 		detail["error"], detail["next_state"] = code, state
 		log.Error("job error", "error", err.Error(), "next_state", state)
-		_ = s.st.JobEvent(ctx, job.ID, "error", detail)
+		note("event_error", s.st.JobEvent(bk, job.ID, "error", detail))
 	}
 	s.setPhase(ctx, 0, "between")
+}
+
+// runHandler runs a job's handler, turning a panic into a permanent failure so one bad page or
+// bug cannot take down the daemon (or crash-loop it via restart recovery). Only the panic's type
+// is logged: its value could carry page content.
+func (s *Scheduler) runHandler(ctx context.Context, job store.Job, log *slog.Logger) (detail map[string]any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("job handler panicked", "panic_type", fmt.Sprintf("%T", r))
+			detail, err = nil, permanentError{code: "panic"}
+		}
+	}()
+	return s.handlers[job.Kind](ctx, job, log)
 }
 
 // errCode keeps internal errors short and content-free (they are ours, not AO3 text).
@@ -533,9 +556,19 @@ func (s *Scheduler) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.heartbeat(ctx)
+			s.safeHeartbeat(ctx)
 		}
 	}
+}
+
+// safeHeartbeat keeps a heartbeat bug from killing the process (it runs on its own goroutine).
+func (s *Scheduler) safeHeartbeat(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("heartbeat panicked", "panic_type", fmt.Sprintf("%T", r))
+		}
+	}()
+	s.heartbeat(ctx)
 }
 
 // heartbeat publishes daemon state for `ao3mirror status` (content-free).

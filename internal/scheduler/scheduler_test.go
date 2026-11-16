@@ -118,6 +118,68 @@ func (e *env) workRequests() map[string]int {
 	return out
 }
 
+func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
+	e := newEnv(t, 45, nil)
+	ctx := context.Background()
+	// 5000 is the oldest work: page 3 of the newest-first update order. Its fetch keeps failing
+	// until its attempts are exhausted.
+	e.srv.Handle("/works/5000", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
+	e.add(e.site.TagPath(), sources.AddOptions{})
+	for i := 0; i < 10; i++ {
+		e.drain(200)
+		e.clk.Advance(3 * time.Hour)
+	}
+	if failed, _ := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5000", 5); len(failed) == 0 {
+		t.Fatal("expected failed jobs for 5000")
+	}
+	e.srv.Handle("/works/5000") // AO3 recovered
+	// A plain poll (pages 1-2 unchanged) must still reach page 3 and re-queue the unfetched work.
+	e.clk.Advance(7 * time.Hour)
+	e.drain(200)
+	var fetched int64
+	e.st.Meta.QueryRow(`SELECT last_fetched FROM works WHERE id = 5000`).Scan(&fetched)
+	if fetched == 0 {
+		t.Fatal("poll should re-queue a work whose earlier fetches failed, not wait for the rescan")
+	}
+}
+
+func TestHandlerPanicFailsJob(t *testing.T) {
+	e := newEnv(t, 1, nil)
+	ctx := context.Background()
+	e.sch.handlers[KindWork] = func(context.Context, store.Job, *slog.Logger) (map[string]any, error) {
+		panic("fixture panic value")
+	}
+	if _, _, err := e.st.EnqueueJob(ctx, store.Job{Kind: KindWork, Target: "5000", Priority: ClassOnDemand, DedupeKey: "work:5000"}); err != nil {
+		t.Fatal(err)
+	}
+	e.drain(5) // must not panic out of Step
+	js, _ := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5000", 1)
+	if len(js) != 1 || js[0].LastError != "panic" {
+		t.Fatalf("panicking job should fail with code panic: %+v", js)
+	}
+	if strings.Contains(e.logs.String(), "fixture panic value") {
+		t.Fatal("panic value leaked into logs")
+	}
+}
+
+func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
+	e := newEnv(t, 1, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	e.sch.handlers[KindWork] = func(context.Context, store.Job, *slog.Logger) (map[string]any, error) {
+		cancel() // shutdown arrives just as the job succeeds
+		return nil, nil
+	}
+	if _, _, err := e.st.EnqueueJob(context.Background(), store.Job{Kind: KindWork, Target: "5000", Priority: ClassOnDemand,
+		DedupeKey: "work:5000"}); err != nil {
+		t.Fatal(err)
+	}
+	e.sch.Step(ctx)
+	js, _ := e.st.ListJobs(context.Background(), "", 0, "work:5000", 1)
+	if len(js) != 1 || js[0].State != store.JobDone {
+		t.Fatalf("job that succeeded during shutdown should be done, got %+v", js)
+	}
+}
+
 func TestPollPageCapWarns(t *testing.T) {
 	e := newEnv(t, 45, func(o *Options) { o.MaxPollPages = 1 })
 	id := e.add(e.site.TagPath(), sources.AddOptions{})

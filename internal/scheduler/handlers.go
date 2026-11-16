@@ -136,6 +136,25 @@ func (s *Scheduler) handlePoll(ctx context.Context, job store.Job, log *slog.Log
 		return nil, err
 	}
 	r.LastError = ""
+	// Once per poll (page 1): re-queue member works that still need a fetch (an earlier fetch
+	// failed or never ran, e.g. daemon down). The walk below stops at the first unchanged page,
+	// so works deeper in the listing would otherwise wait for the full rescan. Zero requests.
+	requeued := 0
+	if page == 1 {
+		ids, err := s.st.SourceWorksNeedingFetch(ctx, r.ID, 500)
+		if err != nil {
+			return nil, err
+		}
+		for _, wid := range ids {
+			id := strconv.FormatInt(wid, 10)
+			if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindWork, SourceID: r.ID, Target: id,
+				Priority: ClassPollFetch, DedupeKey: "work:" + id}); err != nil {
+				return nil, err
+			} else if created {
+				requeued++
+			}
+		}
+	}
 	p := res.listing.Pagination
 	more := p.Current < p.Last && page < s.o.MaxPollPages
 	switch {
@@ -165,7 +184,7 @@ func (s *Scheduler) handlePoll(ctx context.Context, job store.Job, log *slog.Log
 		return nil, err
 	}
 	return map[string]any{"page": page, "blurbs": len(res.listing.Blurbs), "new": res.newWorks, "changed": res.changed,
-		"work_jobs": res.enqueued, "continue": more, "total": res.listing.Total, "req_id": res.reqID}, nil
+		"work_jobs": res.enqueued, "requeued_unfetched": requeued, "continue": more, "total": res.listing.Total, "req_id": res.reqID}, nil
 }
 
 // handleBackfill walks a source in its backfill order; >MaxResults sources go window by window.
