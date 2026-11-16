@@ -249,11 +249,14 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 	log := w.log.With("image_id", r.ID, "host", httpx.Hash(r.Host), "attempt", r.Attempts+1)
 	st := w.o.Store
 	if isAO3(r.Host) {
+		// AO3 traffic only goes through the paced AO3 client, never the image worker.
+		log.Info("image on an AO3 host; skipped")
 		_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "ao3_host")
 		return
 	}
 	u, err := url.Parse(r.URL)
 	if err != nil {
+		log.Info("image URL unparseable; failed")
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "bad_url")
 		return
 	}
@@ -301,9 +304,11 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		log.Info("image gone", "status", resp.StatusCode)
 		return
 	case resp.StatusCode == 429 || resp.StatusCode >= 500:
+		log.Warn("image host unavailable; will retry", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"))
 		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), fmt.Sprintf("status=%d", resp.StatusCode), w.o.MaxAttempts)
 		return
 	case resp.StatusCode != 200:
+		log.Info("image failed", "status", resp.StatusCode)
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, fmt.Sprintf("status=%d", resp.StatusCode))
 		return
 	case !strings.HasPrefix(ct, "image/"):
@@ -311,15 +316,18 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		log.Info("not an image", "content_type", ct)
 		return
 	case resp.ContentLength > w.o.MaxBytes:
+		log.Info("image too large", "content_length", resp.ContentLength, "max_bytes", w.o.MaxBytes)
 		_ = st.ImageFinal(ctx, r.ID, store.ImageTooLarge, fmt.Sprintf("content_length=%d", resp.ContentLength))
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, w.o.MaxBytes+1))
 	if err != nil {
+		log.Warn("image read failed; will retry", "err", short(err))
 		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "read:"+short(err), w.o.MaxAttempts)
 		return
 	}
 	if int64(len(body)) > w.o.MaxBytes {
+		log.Info("image too large", "body_over", w.o.MaxBytes)
 		_ = st.ImageFinal(ctx, r.ID, store.ImageTooLarge, "body")
 		return
 	}
