@@ -102,7 +102,7 @@ func one(ctx context.Context, st *store.Store, o Options, log *slog.Logger, id i
 		}
 		return nil
 	}
-	if err := st.PutWorkContent(ctx, id, w.Chapters, w.SkinCSS); err != nil {
+	if _, err := st.PutWorkContent(ctx, id, w.Chapters, w.SkinCSS); err != nil {
 		return err
 	}
 	if err := st.ReparseWork(ctx, w, at, parse.Version); err != nil {

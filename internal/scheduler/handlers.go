@@ -318,11 +318,11 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 		return detail, s.workParseFailed(ctx, id, path, resp, code, log)
 	}
 	// Raw page first (source of truth for reparse), then bodies, then metadata (marks fetched).
-	isNew, err := s.st.PutRawPage(ctx, id, path, resp.Body, s.o.KeepVersions)
-	if err != nil {
+	if _, err := s.st.PutRawPage(ctx, id, path, resp.Body, s.o.KeepVersions); err != nil {
 		return detail, err
 	}
-	if err := s.st.PutWorkContent(ctx, id, w.Chapters, w.SkinCSS); err != nil {
+	change, err := s.st.PutWorkContent(ctx, id, w.Chapters, w.SkinCSS)
+	if err != nil {
 		return detail, err
 	}
 	up, err := s.st.UpsertWork(ctx, w, model.FromPage, parse.Version)
@@ -343,7 +343,7 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 	}
 	detail["chapters"] = len(w.Chapters)
 	detail["words"] = w.Words
-	detail["raw_new_version"] = isNew
+	detail["content"] = string(change) // new | changed | unchanged (raw page bytes differ on nearly every fetch)
 	detail["revived"] = up.Revived
 	if mismatch, ok := rep.Fields["chapter_count_mismatch"]; ok {
 		detail["chapter_count_mismatch"] = mismatch

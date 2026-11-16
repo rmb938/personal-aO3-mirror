@@ -98,16 +98,20 @@ func (s *Store) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([
 }
 
 // PutWorkContent replaces a work's chapter bodies and skin.
-func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) error {
+func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {
 	start := time.Now()
 	defer s.timed("put_work_content", start, "work_id", workID, "chapters", len(chs))
+	change, err := s.compareWorkContent(ctx, workID, chs, skinCSS)
+	if err != nil {
+		return "", err
+	}
 	tx, err := s.Content.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chapter_bodies WHERE work_id = ?`, workID); err != nil {
-		return err
+		return "", err
 	}
 	total := 0
 	for _, c := range chs {
@@ -119,7 +123,7 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 		if _, err := tx.ExecContext(ctx, `INSERT INTO chapter_bodies (work_id, position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd)
 			VALUES (?,?,?,?,?,?,?)`, workID, c.Position, c.ID, body,
 			s.compress([]byte(c.NotesHTML)), s.compress([]byte(c.EndNotesHTML)), s.compress([]byte(c.SummaryHTML))); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if skinCSS == "" {
@@ -129,13 +133,54 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 			ON CONFLICT (work_id) DO UPDATE SET css = excluded.css`, workID, skinCSS)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return "", err
 	}
-	s.log.Debug("work content stored", "work_id", workID, "chapters", len(chs), "body_bytes", total, "skin_bytes", len(skinCSS))
-	return nil
+	s.log.Debug("work content stored", "work_id", workID, "chapters", len(chs), "body_bytes", total,
+		"skin_bytes", len(skinCSS), "content", string(change))
+	return change, nil
+}
+
+// ContentChange says how a work's stored content (chapter bodies, notes, summaries, skin)
+// compares with what was stored before. Unlike the raw page, which differs on nearly every
+// fetch (hit counts, CSRF tokens, Cloudflare's injected script), this only changes when the
+// work itself does (or the parser extracts it differently).
+type ContentChange string
+
+const (
+	ContentNew       ContentChange = "new"       // nothing stored before
+	ContentChanged   ContentChange = "changed"   // chapters, text, notes or skin differ
+	ContentUnchanged ContentChange = "unchanged" // identical to what was stored
+)
+
+// compareWorkContent compares new content with the stored copy. Content is compared, never
+// logged.
+func (s *Store) compareWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {
+	old, err := s.ChapterBodies(ctx, workID)
+	if err != nil {
+		return "", err
+	}
+	if len(old) == 0 {
+		return ContentNew, nil
+	}
+	var oldSkin string
+	if err := s.Content.QueryRowContext(ctx, `SELECT css FROM work_skins WHERE work_id = ?`, workID).Scan(&oldSkin); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if oldSkin != skinCSS || len(old) != len(chs) {
+		return ContentChanged, nil
+	}
+	for i, c := range chs {
+		o := old[i]
+		if o.Position != c.Position || o.ID != c.ID || o.BodyHTML != c.BodyHTML || o.NotesHTML != c.NotesHTML ||
+			o.EndNotesHTML != c.EndNotesHTML || o.SummaryHTML != c.SummaryHTML {
+			return ContentChanged, nil
+		}
+	}
+	return ContentUnchanged, nil
 }
 
 // ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them).

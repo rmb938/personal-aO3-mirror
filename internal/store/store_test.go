@@ -264,9 +264,21 @@ func TestChapterBodiesRoundTrip(t *testing.T) {
 		{ID: 1, Position: 1, BodyHTML: "<p>fixture one</p>", NotesHTML: "<p>n</p>", SummaryHTML: "<p>s</p>"},
 		{ID: 2, Position: 2, BodyHTML: "<p>fixture two</p>", EndNotesHTML: "<p>e</p>"},
 	}
-	if err := s.PutWorkContent(ctx, 9, in, "#workskin p { color: red; }"); err != nil {
-		t.Fatal(err)
+	if ch, err := s.PutWorkContent(ctx, 9, in, "#workskin p { color: red; }"); err != nil || ch != ContentNew {
+		t.Fatal(ch, err)
 	}
+	if ch, _ := s.PutWorkContent(ctx, 9, in, "#workskin p { color: red; }"); ch != ContentUnchanged {
+		t.Fatalf("same content stored again: %s, want unchanged", ch)
+	}
+	edited := append([]model.Chapter(nil), in...)
+	edited[1].EndNotesHTML = "<p>e2</p>"
+	if ch, _ := s.PutWorkContent(ctx, 9, edited, "#workskin p { color: red; }"); ch != ContentChanged {
+		t.Fatalf("edited end notes: %s, want changed", ch)
+	}
+	if ch, _ := s.PutWorkContent(ctx, 9, edited, ""); ch != ContentChanged {
+		t.Fatalf("skin removed: %s, want changed", ch)
+	}
+	s.PutWorkContent(ctx, 9, in, "#workskin p { color: red; }")
 	out, err := s.ChapterBodies(ctx, 9)
 	if err != nil || len(out) != 2 {
 		t.Fatal(err, len(out))

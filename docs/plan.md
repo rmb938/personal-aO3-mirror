@@ -36,6 +36,25 @@ Repo today: only `README.md` and `LICENSE`. Go 1.27 is installed. Greenfield pro
 | 2 | `ao3mirror serve` JSON API | Go `net/http`. Endpoints mirror AO3: `/works/:id`, `/tags/:name/works` with the same `work_search` filter/sort params, search over FTS5 plus filters, fandom browse by media, creators, series, collections. Also source management: add a URL, see the estimate, confirm, pause, cancel. Calls the same `internal/sources` package as the CLI. |
 | 3 | AO3-style UI | Server-rendered `html/template`, embedded in the same binary. Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs are rewritten to the local `images/` at render time. "Mirror this URL" box for on-demand scraping. |
 
+### Requirement (Parts 2 and 3): flag partial series
+
+A series is partial when it is not a source and we mirror fewer works than AO3 lists. This happens
+when a work from one source also belongs to another series. Readers must never hit a missing part
+mid-series without warning.
+
+- **API:** `GET /series/:id` returns `complete_locally: false`, plus `works_total` (AO3's count,
+  from `series_info`), `works_mirrored`, and `missing_positions` (gaps in the part numbers of the
+  works we have, e.g. we have 1, 2, 4 of 5, so 3 and 5 are missing). It also returns
+  `missing_work_ids` where known, and a `mirror_source_url` that can be passed to source add.
+- **Work views:** works that are part of a partial series carry the same flag in their series
+  block (`GET /works/:id`), so readers see it from inside the work too.
+- **UI:** a clear banner on the series page and on its works ("parts 3 and 5 are not mirrored"),
+  with a one-click "mirror the whole series" action (adds the series as a source).
+- **Status:** list partial series with their counts.
+- **Data:** positions come from fetched work pages. Total comes from `series_info`. Missing IDs
+  (optional, zero extra requests) come from recording the unknown blurbs on the series page 1
+  that `series_info` already fetches. That page currently discards them in `handleSeriesInfo`.
+
 ---
 
 ## Part 1 — Scraper

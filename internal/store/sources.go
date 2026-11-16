@@ -190,10 +190,13 @@ func (s *Store) UpdateSourceSettings(ctx context.Context, id int64, poll time.Du
 	return nil
 }
 
-// FailedWorkJobs returns the distinct work ids of a source's failed work jobs.
+// FailedWorkJobs returns the distinct work ids of a source's failed work jobs that are still
+// unresolved: no work job for that id is active, and none succeeded after the failure (work
+// fetches are global, so a later success from any source counts).
 func (s *Store) FailedWorkJobs(ctx context.Context, sourceID int64) ([]string, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT DISTINCT target FROM jobs WHERE source_id = ? AND kind = 'work' AND state = 'failed'
-		AND target NOT IN (SELECT target FROM jobs WHERE kind = 'work' AND state IN ('queued','running'))`, sourceID)
+	rows, err := s.Meta.QueryContext(ctx, `SELECT DISTINCT f.target FROM jobs f WHERE f.source_id = ? AND f.kind = 'work' AND f.state = 'failed'
+		AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'work' AND j.target = f.target
+			AND (j.state IN ('queued','running') OR (j.state = 'done' AND j.id > f.id)))`, sourceID)
 	if err != nil {
 		return nil, err
 	}

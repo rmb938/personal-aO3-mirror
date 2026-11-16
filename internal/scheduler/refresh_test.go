@@ -54,6 +54,11 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 	if fetched == 0 {
 		t.Fatal("re-queued work was not fetched")
 	}
+	// The old failed jobs are now resolved by the later success: refreshing again must not
+	// re-fetch the work.
+	if res, err := e.srcs.Refresh(ctx, id, false); err != nil || res.RequeuedWorks != 0 {
+		t.Fatalf("second refresh re-queued already-fetched works: %+v %v", res, err)
+	}
 }
 
 func TestRefreshFullAndSet(t *testing.T) {
