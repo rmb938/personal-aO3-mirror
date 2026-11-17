@@ -108,8 +108,12 @@ type Detail = map[string]any
 // logger returns the request-scoped logger (job attrs from the scheduler) or the default one.
 func (c *Controllers) logger(ctx context.Context) *slog.Logger { return logx.From(ctx, c.log) }
 
-// get fetches one AO3 path through the paced client.
+// get fetches one AO3 path through the paced client. It refuses to run inside a transaction
+// (that would hold the SQLite write lock across a request that can wait for minutes).
 func (c *Controllers) get(ctx context.Context, kind httpx.Kind, path string) (*httpx.Response, error) {
+	if err := store.NotInTx(ctx); err != nil {
+		return nil, err
+	}
 	if c.options.Client == nil {
 		return nil, ErrOffline
 	}

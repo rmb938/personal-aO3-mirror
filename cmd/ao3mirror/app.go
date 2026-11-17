@@ -49,7 +49,7 @@ func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, er
 				Time: r.Time, ReqID: r.ReqID, Kind: string(r.Kind), Path: r.SafePath, Status: r.Status,
 				Class: string(r.Class), Reason: r.Reason, Bytes: r.Bytes, Duration: r.Duration, Waited: r.Waited, Hop: r.Hop, JobID: r.JobID,
 			}
-			if _, err := st.InTx(context.Background(), func(ctx context.Context, tx *store.Tx) error {
+			if err := st.InTx(context.Background(), func(ctx context.Context, tx *store.Tx) error {
 				return tx.InsertRequest(ctx, row)
 			}); err != nil {
 				log.Warn("request log insert failed", "err", err.Error())

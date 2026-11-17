@@ -57,6 +57,10 @@ func newEnv(t *testing.T, works int, opts func(*controllers.Options)) *env {
 	t.Helper()
 	e := &env{t: t, srv: fakeao3.New(), clk: &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}, logs: &bytes.Buffer{}}
 	t.Cleanup(e.srv.Close)
+	// A transaction-rule violation inside a job only surfaces as a retried job; fail loudly instead.
+	t.Cleanup(func() {
+		require.NotContains(t, e.logs.String(), "transaction misuse", "a job broke the transaction rules")
+	})
 	e.site = fakeao3.NewSite("Fixture Tag", 5000, works)
 	e.srv.SetSite(e.site)
 	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -94,7 +98,7 @@ func (e *env) drain(limit int) int {
 
 func (e *env) add(url string) int64 {
 	e.t.Helper()
-	res, err := e.ctl.Add(context.Background(), url, controllers.AddOptions{})
+	res, err := e.ctl.AddSource(context.Background(), url, controllers.AddSourceOptions{})
 	require.NoError(e.t, err)
 	return res.Source.ID
 }
@@ -315,11 +319,11 @@ func TestPauseCancelAndRecover(t *testing.T) {
 	id := e.add(e.site.TagPath())
 	_, err := e.sch.Step(ctx) // backfill page 2 (class 4) or work jobs
 	require.NoError(t, err)
-	require.NoError(t, e.ctl.Pause(ctx, id))
+	require.NoError(t, e.ctl.PauseSource(ctx, id))
 	before := len(e.srv.Requests())
 	require.Equal(t, 0, e.drain(10), "paused source ran jobs")
 	require.Len(t, e.srv.Requests(), before, "paused source made requests")
-	require.NoError(t, e.ctl.Resume(ctx, id))
+	require.NoError(t, e.ctl.ResumeSource(ctx, id))
 	// Simulate a crash mid-job: claim a job and leave it running.
 	j, err := e.db.PickJob(ctx, []string{jobs.KindWork, jobs.KindBackfill}, e.clk.Now())
 	require.NoError(t, err)
@@ -329,7 +333,7 @@ func TestPauseCancelAndRecover(t *testing.T) {
 	got, err := e.db.GetJob(ctx, j.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.JobQueued, got.State, "crashed job not recovered")
-	n, err := e.ctl.Cancel(ctx, id)
+	n, err := e.ctl.CancelSource(ctx, id)
 	require.NoError(t, err)
 	require.NotZero(t, n, "cancel should drop queued jobs")
 	require.Equal(t, 0, e.drain(10), "cancelled source ran jobs")

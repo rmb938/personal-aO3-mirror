@@ -43,9 +43,9 @@ func (c *Controllers) Reparse(ctx context.Context, o ReparseOptions) (ReparseRes
 	}
 	var after int64
 	for {
-		// One transaction per batch read and per work: the outer ctx is reused (returned ctx
-		// discarded) so each is its own step.
-		_, ids, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]int64, error) {
+		// One transaction per batch read and one per work: a single transaction over the whole
+		// run would hold the write lock for minutes and stall the daemon.
+		ids, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]int64, error) {
 			return tx.RawPageWorkIDs(ctx, after, reparseBatch)
 		})
 		if err != nil {
@@ -87,7 +87,7 @@ const (
 func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64, force bool, res *ReparseResult) error {
 	outcome := reparseSkipped
 	images := 0
-	_, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		if !force {
 			v, err := tx.WorkParserVersion(ctx, id)
 			if err != nil {

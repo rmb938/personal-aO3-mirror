@@ -21,7 +21,7 @@ import (
 func (c *Controllers) EnqueueWorkFetch(ctx context.Context, workID, sourceID int64, class int) (int64, bool, error) {
 	var jobID int64
 	var created bool
-	_, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var err error
 		jobID, created, err = enqueueWorkFetch(ctx, tx, workID, sourceID, class)
 		return err
@@ -54,7 +54,7 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 	case httpx.ClassNotFound, httpx.ClassHidden, httpx.ClassRestricted:
 		status := map[httpx.Class]model.WorkStatus{httpx.ClassNotFound: model.StatusDeleted,
 			httpx.ClassHidden: model.StatusHidden, httpx.ClassRestricted: model.StatusRestricted}[resp.Class]
-		if _, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 			return tx.SetWorkStatus(ctx, id, status)
 		}); err != nil {
 			return detail, err
@@ -79,7 +79,7 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 		return detail, c.workParseFailed(ctx, id, path, resp, pe)
 	}
 	var sw storedWork
-	if _, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		// Raw page (source of truth for reparse), bodies, then metadata (marks fetched). content.db
 		// commits before meta.db, so a work is never marked fetched without its page.
 		if _, err := tx.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions); err != nil {
@@ -152,7 +152,7 @@ func (c *Controllers) storeWork(ctx context.Context, tx *store.Tx, w model.Work,
 // metadata are left untouched.
 func (c *Controllers) workParseFailed(ctx context.Context, id int64, path string, resp *httpx.Response, pe PermanentError) error {
 	c.saveSkeleton(ctx, "work", strconv.FormatInt(id, 10), resp.Body)
-	if _, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		if len(resp.Body) > 0 {
 			if _, err := tx.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions+1); err != nil {
 				return err

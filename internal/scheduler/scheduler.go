@@ -105,7 +105,7 @@ func atoi64(s string) int64 {
 
 // Run loops until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	_, n, err := store.WriteValue(context.WithoutCancel(ctx), s.store, func(ctx context.Context, tx *store.Tx) (int64, error) {
+	n, err := store.WriteValue(context.WithoutCancel(ctx), s.store, func(ctx context.Context, tx *store.Tx) (int64, error) {
 		return tx.RecoverRunning(ctx)
 	})
 	if err != nil {
@@ -142,7 +142,7 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("schedule: %w", err)
 	}
 	s.maybePrune(ctx)
-	_, job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
+	job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
 		return tx.PickJob(ctx, s.kinds, s.options.Now())
 	})
 	if errors.Is(err, store.ErrNoJob) {
@@ -162,7 +162,7 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 	// Each outcome (state change + its job event) is one transaction.
 	bk := context.WithoutCancel(ctx)
 	book := func(what string, fn func(ctx context.Context, tx *store.Tx) error) {
-		if _, err := s.store.InTx(bk, fn); err != nil {
+		if err := s.store.InTx(bk, fn); err != nil {
 			log.Error("job bookkeeping failed", "step", what, "err", err.Error())
 		}
 	}
@@ -295,7 +295,7 @@ func (s *Scheduler) maybePrune(ctx context.Context) {
 	}
 	s.lastPrune = now
 	var jobs, reqs int64
-	if _, err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	if err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var err error
 		if jobs, err = tx.PruneJobs(ctx, 7*24*time.Hour, 30*24*time.Hour); err != nil {
 			return err
@@ -373,7 +373,7 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 	if !st.WaitingUntil.IsZero() {
 		kv["waiting_until"] = st.WaitingUntil.UTC().Format(time.RFC3339)
 	}
-	if _, err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	if err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		return tx.SetDaemonState(ctx, kv)
 	}); err != nil && ctx.Err() == nil {
 		s.log.Warn("heartbeat failed", "err", err.Error())
@@ -383,15 +383,14 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 // RunJob runs one specific queued job now (used by `fetch-work --now` when no daemon runs).
 // It returns the job's final state.
 func (s *Scheduler) RunJob(ctx context.Context, id int64) (store.Job, error) {
-	_, job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
+	job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
 		return tx.ClaimJob(ctx, id, s.options.Now())
 	})
 	if err != nil {
 		return store.Job{}, err
 	}
 	s.execute(ctx, job)
-	_, job, err = store.ReadValue(ctx, s.store, func(ctx context.Context, tx *store.ReadTx) (store.Job, error) {
+	return store.ReadValue(ctx, s.store, func(ctx context.Context, tx *store.ReadTx) (store.Job, error) {
 		return tx.GetJob(ctx, id)
 	})
-	return job, err
 }

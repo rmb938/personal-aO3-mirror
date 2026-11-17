@@ -67,21 +67,21 @@ func day(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
 // readSource loads a source and its listing description for a crawl step. A missing source is
 // permanent; other store errors are returned as-is (retried).
-func (c *Controllers) readSource(ctx context.Context, sourceID int64) (context.Context, store.SourceRow, ao3url.Source, error) {
-	ctx, r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
+func (c *Controllers) readSource(ctx context.Context, sourceID int64) (store.SourceRow, ao3url.Source, error) {
+	r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
 		return tx.GetSource(ctx, sourceID)
 	})
 	if errors.Is(err, store.ErrNoSource) {
-		return ctx, r, ao3url.Source{}, PermanentError{Code: CodeNoSource}
+		return r, ao3url.Source{}, PermanentError{Code: CodeNoSource}
 	}
 	if err != nil {
-		return ctx, r, ao3url.Source{}, err
+		return r, ao3url.Source{}, err
 	}
 	src, err := sourceOf(r)
 	if err != nil {
-		return ctx, r, src, PermanentError{Code: CodeBadFilters}
+		return r, src, PermanentError{Code: CodeBadFilters}
 	}
-	return ctx, r, src, nil
+	return r, src, nil
 }
 
 // fetchPage fetches and parses one listing page of a source. It touches no store. A page AO3
@@ -115,14 +115,14 @@ func (c *Controllers) fetchPage(ctx context.Context, sourceID int64, src ao3url.
 // is kept.
 func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (Detail, error) {
 	log := c.logger(ctx)
-	ctx, r, src, err := c.readSource(ctx, sourceID)
+	r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
 	p, reqID, err := c.fetchPage(ctx, r.ID, src, page, ao3url.UpdateOrder, nil)
 	if IsParseFailure(err) {
 		// No retry: the next poll is a full poll_interval away.
-		_, uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 			fresh, err2 := tx.GetSource(ctx, sourceID)
 			if err2 != nil {
 				return err2
@@ -137,7 +137,7 @@ func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (D
 		return nil, err
 	}
 	var detail Detail
-	_, err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		fresh, err := tx.GetSource(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
 			return PermanentError{Code: CodeNoSource} // removed during the fetch
@@ -215,7 +215,7 @@ func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (D
 // blurbs are still stored but the cursor is left alone.
 func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int) (Detail, error) {
 	log := c.logger(ctx)
-	ctx, r, src, err := c.readSource(ctx, sourceID)
+	r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +255,7 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 	if IsParseFailure(err) {
 		// The same page will parse the same way: stop this source's backfill here until a new
 		// parser version ships (it then resumes automatically).
-		_, uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 			fresh, err2 := tx.GetSource(ctx, sourceID)
 			if err2 != nil {
 				return err2
@@ -275,7 +275,7 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 	}
 
 	var detail Detail
-	_, err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		fresh, err := tx.GetSource(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
 			return PermanentError{Code: CodeNoSource} // removed during the fetch

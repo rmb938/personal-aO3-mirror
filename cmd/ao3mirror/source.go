@@ -58,7 +58,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprint(errOut, sourceUsage)
 			return 2
 		}
-		res, err := svc.Add(ctx, u, controllers.AddOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
+		res, err := svc.AddSource(ctx, u, controllers.AddSourceOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
 		if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
 			fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", ex.ID, ex.ID)
 			return 1
@@ -154,7 +154,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprintf(errOut, "bad id %q\n", idStr)
 			return 2
 		}
-		res, err := svc.Refresh(ctx, id, *full)
+		res, err := svc.RefreshSource(ctx, id, *full)
 		if err != nil {
 			fmt.Fprintf(errOut, "refresh %d: %v\n", id, err)
 			return 1
@@ -193,7 +193,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprint(errOut, "set: give --poll and/or --priority\n")
 			return 2
 		}
-		if err := svc.Set(ctx, id, *poll, prioPtr); err != nil {
+		if err := svc.SetSourceSettings(ctx, id, *poll, prioPtr); err != nil {
 			fmt.Fprintf(errOut, "set %d: %v\n", id, err)
 			return 1
 		}
@@ -213,17 +213,17 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 		var msg string
 		switch cmd {
 		case "confirm":
-			err, msg = svc.Confirm(ctx, id), "confirmed (active)"
+			err, msg = svc.ConfirmSource(ctx, id), "confirmed (active)"
 		case "pause":
-			err, msg = svc.Pause(ctx, id), "paused"
+			err, msg = svc.PauseSource(ctx, id), "paused"
 		case "resume":
-			err, msg = svc.Resume(ctx, id), "resumed (active)"
+			err, msg = svc.ResumeSource(ctx, id), "resumed (active)"
 		case "cancel":
 			var n int64
-			n, err = svc.Cancel(ctx, id)
+			n, err = svc.CancelSource(ctx, id)
 			msg = fmt.Sprintf("cancelled (%d queued jobs dropped; mirrored works kept)", n)
 		case "remove":
-			err, msg = svc.Remove(ctx, id), "removed (mirrored works kept)"
+			err, msg = svc.RemoveSource(ctx, id), "removed (mirrored works kept)"
 		}
 		if err != nil {
 			fmt.Fprintf(errOut, "%s %d: %v\n", cmd, id, err)

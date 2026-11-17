@@ -36,7 +36,7 @@ type TagInfoProgress struct {
 // Status returns the daemon, queue and progress overview.
 func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 	var r StatusReport
-	_, err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
 		var err error
 		if r.Counts, err = tx.Counts(ctx); err != nil {
 			return err
@@ -80,7 +80,7 @@ type JobDebug struct {
 // DebugJob returns one job with its events and requests.
 func (c *Controllers) DebugJob(ctx context.Context, id int64) (JobDebug, error) {
 	var d JobDebug
-	_, err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
 		var err error
 		if d.Job, err = tx.GetJob(ctx, id); err != nil {
 			return err
@@ -104,7 +104,7 @@ type WorkDebug struct {
 // DebugWork returns one work's diagnostic view, its fetch jobs and its requests.
 func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error) {
 	var d WorkDebug
-	_, err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
 		var err error
 		if d.Diag, err = tx.WorkDiag(ctx, id); err != nil {
 			return err
@@ -120,24 +120,21 @@ func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error
 
 // ListSources returns every source with its progress counts.
 func (c *Controllers) ListSources(ctx context.Context) ([]store.SourceRow, error) {
-	_, rows, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]store.SourceRow, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]store.SourceRow, error) {
 		return tx.ListSources(ctx)
 	})
-	return rows, err
 }
 
 // GetSource returns one source, or store.ErrNoSource.
 func (c *Controllers) GetSource(ctx context.Context, id int64) (store.SourceRow, error) {
-	_, r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
 		return tx.GetSource(ctx, id)
 	})
-	return r, err
 }
 
 // FindJobs lists jobs matching f.
 func (c *Controllers) FindJobs(ctx context.Context, f store.JobFilter) ([]store.Job, error) {
-	_, js, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]store.Job, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]store.Job, error) {
 		return tx.FindJobs(ctx, f)
 	})
-	return js, err
 }

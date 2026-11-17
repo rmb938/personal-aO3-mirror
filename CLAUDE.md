@@ -69,8 +69,25 @@ user approval. Keep `data_dir` at the default `./data` so the guard covers it.
 - `internal/controllers` holds business logic. New code (CLI commands, scheduler handlers,
   Part 2 API handlers) calls controllers, not the store.
 - Direct store calls outside controllers are allowed only for a single call with no logic
-  around it (e.g. imagefetch's per-image status update, status/debug reads). Once such code
-  needs a second store call or a decision between calls, move it into a controller.
+  around it (e.g. imagefetch's per-image status update, the scheduler's job bookkeeping). Once
+  such code needs a second store call or a decision between calls, move it into a controller.
+- All store access is inside a transaction: query methods exist only on `*store.ReadTx` /
+  `*store.Tx`, reached through `store.InReadTx` / `store.InTx` (or `store.ReadValue` /
+  `WriteValue`). `AutoCommitForTestOnly` is for tests only.
+- A controller uses one transaction per step; an AO3 fetch ends a step. Typical shape: read
+  (InReadTx) → fetch → write (InTx, re-reading anything the fetch may have raced with). Writes
+  that belong together go in the same transaction. This is a design rule, checked in review.
+- Two rules are enforced at runtime (`store.ErrTxMisuse`, txguard.go): never fetch from AO3
+  inside a transaction (it would hold the SQLite write lock across the request), and never open
+  a transaction inside another.
+- Internal helpers take the caller's `*store.Tx` and never open their own transaction; an
+  exported controller never calls another exported controller inside a transaction.
+- One intent = one controller call. A database-only operation is an unexported helper taking
+  the caller's `*store.Tx` (`pauseSource(ctx, tx, id)`) plus the exported controller
+  (`PauseSource`, one transaction), so operations can be composed in one transaction. When a
+  caller first needs several in one commit (likely the Part 2 API), add a controller that runs
+  them in one InTx (or an `Atomic(ctx, func(ctx, op *Op) error)` exposing the helpers).
+  Name operations after what they act on (`PauseSource`, `EnqueueWorkFetch`), not just the verb.
 
 ## Dev workflow
 

@@ -14,7 +14,7 @@ import (
 // FetchTagInfo fetches /tags/<tag> and records canonical/synonym/parent/meta relations.
 // Steps: read the tag, fetch its page, then one write transaction for whatever the page said.
 func (c *Controllers) FetchTagInfo(ctx context.Context, id int64) (Detail, error) {
-	ctx, t, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.TagRef, error) {
+	t, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.TagRef, error) {
 		return tx.TagByID(ctx, id)
 	})
 	if errors.Is(err, store.ErrNoTag) {
@@ -28,7 +28,7 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64) (Detail, error
 		return nil, err
 	}
 	update := func(u store.TagInfoUpdate) error {
-		return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.UpdateTagInfo(ctx, id, u) })
+		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.UpdateTagInfo(ctx, id, u) })
 	}
 	skelID := strconv.FormatInt(id, 10)
 	detail := Detail{"tag_id": id, "class": string(resp.Class), "req_id": resp.ReqID}

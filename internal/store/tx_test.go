@@ -19,7 +19,7 @@ func countRows(t *testing.T, s *testStore) (works, rawPages int) {
 func TestInTxCommitsBothDatabases(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
-	_, err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
+	err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
 		if _, err := tx.PutRawPage(ctx, 1, "/works/1", []byte("<p>fixture</p>"), 1); err != nil {
 			return err
 		}
@@ -36,7 +36,7 @@ func TestInTxRollsBackOnError(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
 	boom := errors.New("fixture failure")
-	_, err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
+	err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
 		if _, err := tx.PutRawPage(ctx, 1, "/works/1", []byte("<p>fixture</p>"), 1); err != nil {
 			return err
 		}
@@ -55,7 +55,7 @@ func TestInTxRollsBackOnPanic(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
 	require.PanicsWithValue(t, "fixture panic", func() {
-		_, _ = s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
+		_ = s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
 			if _, err := tx.UpsertWork(ctx, fixtureWork(1), 0, 1); err != nil {
 				return err
 			}
@@ -65,7 +65,7 @@ func TestInTxRollsBackOnPanic(t *testing.T) {
 	works, _ := countRows(t, s)
 	require.Zero(t, works, "panic must roll back")
 	// The locks were released: a new write transaction works.
-	_, err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
+	err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
 		_, err := tx.UpsertWork(ctx, fixtureWork(2), 0, 1)
 		return err
 	})
@@ -78,7 +78,7 @@ func TestReadTxDoesNotBlockWriters(t *testing.T) {
 	inRead, release := make(chan struct{}), make(chan struct{})
 	readDone := make(chan error, 1)
 	go func() {
-		_, err := s.st.InReadTx(ctx, func(ctx context.Context, tx *ReadTx) error {
+		err := s.st.InReadTx(ctx, func(ctx context.Context, tx *ReadTx) error {
 			if _, err := tx.Counts(ctx); err != nil { // take the read snapshot
 				return err
 			}
@@ -90,7 +90,7 @@ func TestReadTxDoesNotBlockWriters(t *testing.T) {
 	}()
 	<-inRead
 	start := time.Now()
-	_, err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
+	err := s.st.InTx(ctx, func(ctx context.Context, tx *Tx) error {
 		_, err := tx.UpsertWork(ctx, fixtureWork(1), 0, 1)
 		return err
 	})
@@ -103,12 +103,12 @@ func TestReadTxDoesNotBlockWriters(t *testing.T) {
 func TestValueHelpers(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
-	_, res, err := WriteValue(ctx, s.st, func(ctx context.Context, tx *Tx) (UpsertResult, error) {
+	res, err := WriteValue(ctx, s.st, func(ctx context.Context, tx *Tx) (UpsertResult, error) {
 		return tx.UpsertWork(ctx, fixtureWork(1), 0, 1)
 	})
 	require.NoError(t, err)
 	require.True(t, res.New)
-	_, ok, err := ReadValue(ctx, s.st, func(ctx context.Context, tx *ReadTx) (bool, error) {
+	ok, err := ReadValue(ctx, s.st, func(ctx context.Context, tx *ReadTx) (bool, error) {
 		return tx.WorkExists(ctx, 1)
 	})
 	require.NoError(t, err)

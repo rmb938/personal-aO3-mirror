@@ -40,7 +40,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 	e.srv.Handle("/works/5002") // AO3 recovered: the synthetic site serves it again
 
 	before := listingRequests(e)
-	res, err := e.ctl.Refresh(ctx, id, false)
+	res, err := e.ctl.RefreshSource(ctx, id, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, res.RequeuedWorks)
 	require.True(t, res.PollNow)
@@ -52,7 +52,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 	require.False(t, e.diag(5002).LastFetched.IsZero(), "re-queued work was not fetched")
 	// The old failed jobs are now resolved by the later success: refreshing again must not
 	// re-fetch the work.
-	res, err = e.ctl.Refresh(ctx, id, false)
+	res, err = e.ctl.RefreshSource(ctx, id, false)
 	require.NoError(t, err)
 	require.Equal(t, 0, res.RequeuedWorks, "second refresh re-queued already-fetched works")
 }
@@ -63,7 +63,7 @@ func TestRefreshFullAndSet(t *testing.T) {
 	id := e.add(e.site.TagPath())
 	e.drain(50)
 	require.Equal(t, store.SourceDoneBackfill, e.source(id).State)
-	res, err := e.ctl.Refresh(ctx, id, true)
+	res, err := e.ctl.RefreshSource(ctx, id, true)
 	require.NoError(t, err)
 	require.True(t, res.RescanStarted)
 	require.Equal(t, store.SourceActive, e.source(id).State, "full refresh should reactivate")
@@ -76,13 +76,13 @@ func TestRefreshFullAndSet(t *testing.T) {
 
 	// set: shorter poll interval moves the next poll earlier; priority changes.
 	prio := 7
-	require.NoError(t, e.ctl.Set(ctx, id, 30*time.Minute, &prio))
+	require.NoError(t, e.ctl.SetSourceSettings(ctx, id, 30*time.Minute, &prio))
 	src = e.source(id)
 	require.Equal(t, 30*time.Minute, src.PollInterval)
 	require.Equal(t, 7, src.Priority)
 	require.False(t, src.NextPollAt.After(e.clk.Now().Add(31*time.Minute)), "next poll %s", src.NextPollAt)
-	require.Error(t, e.ctl.Set(ctx, id, time.Minute, nil), "poll interval below 10m must be rejected")
-	require.NoError(t, e.ctl.Pause(ctx, id))
-	_, err = e.ctl.Refresh(ctx, id, false)
+	require.Error(t, e.ctl.SetSourceSettings(ctx, id, time.Minute, nil), "poll interval below 10m must be rejected")
+	require.NoError(t, e.ctl.PauseSource(ctx, id))
+	_, err = e.ctl.RefreshSource(ctx, id, false)
 	require.Error(t, err, "refresh of a paused source must fail")
 }

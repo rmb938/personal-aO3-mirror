@@ -33,41 +33,50 @@ type Tx struct {
 	ReadTx
 }
 
-// InReadTx runs fn in one read-only transaction and returns ctx for the caller to keep using.
-func (s *Store) InReadTx(ctx context.Context, fn func(ctx context.Context, tx *ReadTx) error) (context.Context, error) {
-	return ctx, s.run(ctx, false, func(ctx context.Context, tx *Tx) error { return fn(ctx, &tx.ReadTx) })
+// InReadTx runs fn in one read-only transaction.
+func (s *Store) InReadTx(ctx context.Context, fn func(ctx context.Context, tx *ReadTx) error) error {
+	return s.guarded(ctx, false, func(ctx context.Context, tx *Tx) error { return fn(ctx, &tx.ReadTx) })
 }
 
-// InTx runs fn in one write transaction and returns ctx for the caller to keep using. It commits
-// when fn returns nil and rolls back when fn returns an error or panics (the panic continues).
+// InTx runs fn in one write transaction. It commits when fn returns nil and rolls back when fn
+// returns an error or panics (the panic continues).
 //
 // The two databases are separate files and cannot commit atomically together. content.db
 // commits first, then meta.db: a work's raw page and bodies land before the metadata that marks
 // it fetched, so a failure between the two commits leaves the work to be fetched again.
-func (s *Store) InTx(ctx context.Context, fn func(ctx context.Context, tx *Tx) error) (context.Context, error) {
-	return ctx, s.run(ctx, true, fn)
+func (s *Store) InTx(ctx context.Context, fn func(ctx context.Context, tx *Tx) error) error {
+	return s.guarded(ctx, true, fn)
+}
+
+// guarded refuses a nested transaction and hands fn a ctx marked "in a transaction", which
+// NotInTx (called before every AO3 fetch) and a nested InTx check.
+func (s *Store) guarded(ctx context.Context, write bool, fn func(ctx context.Context, tx *Tx) error) error {
+	if inTx(ctx) {
+		return misuse("nested transaction (call the tx-taking helper, not the exported controller)")
+	}
+	return s.run(context.WithValue(ctx, inTxKey{}, true), write, fn)
 }
 
 // ReadValue is InReadTx for a function returning one value.
-func ReadValue[T any](ctx context.Context, s *Store, fn func(ctx context.Context, tx *ReadTx) (T, error)) (context.Context, T, error) {
+func ReadValue[T any](ctx context.Context, s *Store, fn func(ctx context.Context, tx *ReadTx) (T, error)) (T, error) {
 	var v T
-	ctx, err := s.InReadTx(ctx, func(ctx context.Context, tx *ReadTx) error {
+	err := s.InReadTx(ctx, func(ctx context.Context, tx *ReadTx) error {
 		var err error
 		v, err = fn(ctx, tx)
 		return err
 	})
-	return ctx, v, err
+	return v, err
 }
 
 // WriteValue is InTx for a function returning one value.
-func WriteValue[T any](ctx context.Context, s *Store, fn func(ctx context.Context, tx *Tx) (T, error)) (context.Context, T, error) {
+func WriteValue[T any](ctx context.Context, s *Store, fn func(ctx context.Context, tx *Tx) (T, error)) (T, error) {
 	var v T
-	ctx, err := s.InTx(ctx, func(ctx context.Context, tx *Tx) error {
+	err := s.InTx(ctx, func(ctx context.Context, tx *Tx) error {
 		var err error
 		v, err = fn(ctx, tx)
 		return err
 	})
-	return ctx, v, err
+	return v, err
 }
 
 // run begins a transaction on both databases (always meta first, so two writers can never wait

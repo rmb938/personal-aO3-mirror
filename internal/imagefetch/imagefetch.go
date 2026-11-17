@@ -370,15 +370,13 @@ type imageStore struct{ s *store.Store }
 func (w *Worker) images() imageStore { return imageStore{s: w.o.Store} }
 
 func (i imageStore) write(ctx context.Context, fn func(ctx context.Context, tx *store.Tx) error) error {
-	_, err := i.s.InTx(ctx, fn)
-	return err
+	return i.s.InTx(ctx, fn)
 }
 
 func (i imageStore) NextImages(ctx context.Context, now time.Time, limit int) ([]store.ImageRow, error) {
-	_, rows, err := store.ReadValue(ctx, i.s, func(ctx context.Context, tx *store.ReadTx) ([]store.ImageRow, error) {
+	return store.ReadValue(ctx, i.s, func(ctx context.Context, tx *store.ReadTx) ([]store.ImageRow, error) {
 		return tx.NextImages(ctx, now, limit)
 	})
-	return rows, err
 }
 
 func (i imageStore) ImageFinal(ctx context.Context, id int64, status, lastError string) error {

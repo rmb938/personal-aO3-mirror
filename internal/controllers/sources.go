@@ -28,8 +28,8 @@ type ExistsError struct{ ID int64 }
 
 func (e ExistsError) Error() string { return fmt.Sprintf("sources: already added as source %d", e.ID) }
 
-// AddOptions tune a new source; zero values use config defaults.
-type AddOptions struct {
+// AddSourceOptions tune a new source; zero values use config defaults.
+type AddSourceOptions struct {
 	Order        string        // e.g. "kudos_desc"
 	Priority     int           // higher is picked first within a class
 	PollInterval time.Duration // update poll interval
@@ -48,23 +48,23 @@ type Estimate struct {
 	Windowed        bool // >100k results: backfill sliced into revised_at date windows
 }
 
-type AddResult struct {
+type AddSourceResult struct {
 	Source   store.SourceRow
 	Estimate Estimate
 	Blurbs   int // blurbs stored from page 1
 }
 
-// Add parses url, fetches page 1 once (for listing sources), stores its blurbs, estimates the
+// AddSource parses url, fetches page 1 once (for listing sources), stores its blurbs, estimates the
 // backfill and inserts the source as active or pending_confirm. Page-1 works that need a fetch
 // are queued; they only run once the source is active (the scheduler skips jobs of pending or
 // paused sources).
 //
 // Everything after the fetch is one transaction: a failure leaves no source and no page-1 data
 // behind.
-func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (AddResult, error) {
+func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceOptions) (AddSourceResult, error) {
 	src, err := ao3url.Parse(rawURL)
 	if err != nil {
-		return AddResult{}, err
+		return AddSourceResult{}, err
 	}
 	orderName := o.Order
 	if orderName == "" {
@@ -72,7 +72,7 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 	}
 	order, err := ao3url.ParseOrder(orderName)
 	if err != nil {
-		return AddResult{}, err
+		return AddSourceResult{}, err
 	}
 	poll := o.PollInterval
 	if poll == 0 {
@@ -81,7 +81,7 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 	filters := ao3url.FiltersJSON(src.Filters)
 	base, err := ao3url.BasePath(src)
 	if err != nil {
-		return AddResult{}, err
+		return AddSourceResult{}, err
 	}
 	log := c.log.With("component", "sources", "kind", string(src.Kind), "target", httpx.Hash(src.Target), "filters", len(src.Filters))
 
@@ -89,19 +89,18 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 	var total int
 	if src.Kind != ao3url.KindWork {
 		// Check for a duplicate before spending a request on page 1.
-		var existing int64
-		ctx, existing, err = store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (int64, error) {
+		existing, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (int64, error) {
 			return tx.FindSource(ctx, string(src.Kind), src.Target, filters)
 		})
 		if err != nil {
-			return AddResult{}, err
+			return AddSourceResult{}, err
 		}
 		if existing != 0 {
-			return AddResult{}, ExistsError{ID: existing}
+			return AddSourceResult{}, ExistsError{ID: existing}
 		}
 		p, t, err := c.addFirstPage(ctx, src, order)
 		if err != nil {
-			return AddResult{}, err
+			return AddSourceResult{}, err
 		}
 		page1, total = &p, t
 	}
@@ -111,8 +110,8 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 		BackfillOrder: orderName, PollInterval: poll, Priority: o.Priority,
 		NextPollAt: c.options.Now().Add(poll),
 	}
-	var res AddResult
-	_, err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	var res AddSourceResult
+	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var blurbs blurbsResult
 		if page1 == nil {
 			// Single work: no listing; the scheduler fetches it (1 request).
@@ -163,7 +162,7 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 		return nil
 	})
 	if err != nil {
-		return AddResult{}, err
+		return AddSourceResult{}, err
 	}
 	log.Info("source added", "source_id", row.ID, "state", string(row.State), "total_works", row.TotalWorks,
 		"est_requests", res.Estimate.Requests, "est_hours", int(res.Estimate.Duration.Hours()),
@@ -213,52 +212,46 @@ func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order
 	return p, total, nil
 }
 
-// inTx runs one database-only operation in its own transaction.
-func (c *Controllers) inTx(ctx context.Context, fn func(ctx context.Context, tx *store.Tx) error) error {
-	_, err := c.store.InTx(ctx, fn)
-	return err
+// ConfirmSource activates a pending source.
+func (c *Controllers) ConfirmSource(ctx context.Context, id int64) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return confirmSource(ctx, tx, id) })
 }
 
-// Confirm activates a pending source.
-func (c *Controllers) Confirm(ctx context.Context, id int64) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return confirmTx(ctx, tx, id) })
-}
-
-func confirmTx(ctx context.Context, tx *store.Tx, id int64) error {
+func confirmSource(ctx context.Context, tx *store.Tx, id int64) error {
 	return tx.SetSourceState(ctx, id, store.SourceActive, store.SourcePendingConfirm)
 }
 
-// Pause stops scheduling for a source; queued jobs stay queued but are not picked.
-func (c *Controllers) Pause(ctx context.Context, id int64) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return pauseTx(ctx, tx, id) })
+// PauseSource stops scheduling for a source; queued jobs stay queued but are not picked.
+func (c *Controllers) PauseSource(ctx context.Context, id int64) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return pauseSource(ctx, tx, id) })
 }
 
-func pauseTx(ctx context.Context, tx *store.Tx, id int64) error {
+func pauseSource(ctx context.Context, tx *store.Tx, id int64) error {
 	return tx.SetSourceState(ctx, id, store.SourcePaused, store.SourceActive, store.SourceDoneBackfill, store.SourcePendingConfirm)
 }
 
-// Resume re-activates a paused source.
-func (c *Controllers) Resume(ctx context.Context, id int64) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return resumeTx(ctx, tx, id) })
+// ResumeSource re-activates a paused source.
+func (c *Controllers) ResumeSource(ctx context.Context, id int64) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return resumeSource(ctx, tx, id) })
 }
 
-func resumeTx(ctx context.Context, tx *store.Tx, id int64) error {
+func resumeSource(ctx context.Context, tx *store.Tx, id int64) error {
 	return tx.SetSourceState(ctx, id, store.SourceActive, store.SourcePaused)
 }
 
-// Cancel stops a source for good and drops its queued jobs. Mirrored works are kept. It
+// CancelSource stops a source for good and drops its queued jobs. Mirrored works are kept. It
 // returns how many queued jobs were dropped.
-func (c *Controllers) Cancel(ctx context.Context, id int64) (int64, error) {
+func (c *Controllers) CancelSource(ctx context.Context, id int64) (int64, error) {
 	var n int64
-	err := c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var err error
-		n, err = cancelTx(ctx, tx, id)
+		n, err = cancelSource(ctx, tx, id)
 		return err
 	})
 	return n, err
 }
 
-func cancelTx(ctx context.Context, tx *store.Tx, id int64) (int64, error) {
+func cancelSource(ctx context.Context, tx *store.Tx, id int64) (int64, error) {
 	if err := tx.SetSourceState(ctx, id, store.SourceCancelled,
 		store.SourcePendingConfirm, store.SourceActive, store.SourcePaused, store.SourceDoneBackfill); err != nil {
 		return 0, err
@@ -266,35 +259,35 @@ func cancelTx(ctx context.Context, tx *store.Tx, id int64) (int64, error) {
 	return tx.CancelSourceJobs(ctx, id)
 }
 
-// RefreshResult says what a refresh scheduled (content-free).
-type RefreshResult struct {
+// RefreshSourceResult says what a refresh scheduled (content-free).
+type RefreshSourceResult struct {
 	PollNow         bool
 	RequeuedWorks   int
 	RescanStarted   bool
 	UnblockedParser bool
 }
 
-// Refresh makes a source catch up now instead of waiting: its next update poll is due
+// RefreshSource makes a source catch up now instead of waiting: its next update poll is due
 // immediately and its failed work fetches are queued again. With full, the whole listing is
 // re-walked (a rescan, picking up anything missed) and a parse-failure block is cleared.
 // Only active and done_backfill sources can be refreshed.
-func (c *Controllers) Refresh(ctx context.Context, id int64, full bool) (RefreshResult, error) {
-	var res RefreshResult
-	err := c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+func (c *Controllers) RefreshSource(ctx context.Context, id int64, full bool) (RefreshSourceResult, error) {
+	var res RefreshSourceResult
+	err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var err error
-		res, err = c.refreshTx(ctx, tx, id, full)
+		res, err = c.refreshSource(ctx, tx, id, full)
 		return err
 	})
 	if err != nil {
-		return RefreshResult{}, err
+		return RefreshSourceResult{}, err
 	}
 	c.log.Info("source refresh", "component", "sources", "source_id", id, "full", full, "requeued_works", res.RequeuedWorks,
 		"rescan_started", res.RescanStarted, "unblocked_parser", res.UnblockedParser)
 	return res, nil
 }
 
-func (c *Controllers) refreshTx(ctx context.Context, tx *store.Tx, id int64, full bool) (RefreshResult, error) {
-	var res RefreshResult
+func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64, full bool) (RefreshSourceResult, error) {
+	var res RefreshSourceResult
 	r, err := tx.GetSource(ctx, id)
 	if err != nil {
 		return res, err
@@ -343,13 +336,13 @@ func (c *Controllers) refreshTx(ctx context.Context, tx *store.Tx, id int64, ful
 	return res, nil
 }
 
-// Set changes a source's poll interval and/or priority. Zero/nil values keep the current one.
+// SetSourceSettings changes a source's poll interval and/or priority. Zero/nil values keep the current one.
 // A shorter poll interval takes effect at once (the next poll is moved earlier if needed).
-func (c *Controllers) Set(ctx context.Context, id int64, poll time.Duration, priority *int) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return c.setTx(ctx, tx, id, poll, priority) })
+func (c *Controllers) SetSourceSettings(ctx context.Context, id int64, poll time.Duration, priority *int) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return c.setSourceSettings(ctx, tx, id, poll, priority) })
 }
 
-func (c *Controllers) setTx(ctx context.Context, tx *store.Tx, id int64, poll time.Duration, priority *int) error {
+func (c *Controllers) setSourceSettings(ctx context.Context, tx *store.Tx, id int64, poll time.Duration, priority *int) error {
 	if poll != 0 && poll < 10*time.Minute {
 		return fmt.Errorf("sources: poll interval %s must be >= 10m", poll)
 	}
@@ -374,9 +367,9 @@ func (c *Controllers) setTx(ctx context.Context, tx *store.Tx, id int64, poll ti
 	return nil
 }
 
-// Remove deletes a source (and its memberships). Mirrored works are kept.
-func (c *Controllers) Remove(ctx context.Context, id int64) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return removeTx(ctx, tx, id) })
+// RemoveSource deletes a source (and its memberships). Mirrored works are kept.
+func (c *Controllers) RemoveSource(ctx context.Context, id int64) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return removeSource(ctx, tx, id) })
 }
 
-func removeTx(ctx context.Context, tx *store.Tx, id int64) error { return tx.DeleteSource(ctx, id) }
+func removeSource(ctx context.Context, tx *store.Tx, id int64) error { return tx.DeleteSource(ctx, id) }

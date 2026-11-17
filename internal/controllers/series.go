@@ -25,7 +25,7 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 	// markFetched records an attempt that produced no metadata, so the next try waits for
 	// series.info_ttl instead of looping.
 	markFetched := func() error {
-		return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.MarkSeriesFetched(ctx, id) })
+		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.MarkSeriesFetched(ctx, id) })
 	}
 	detail := Detail{"series_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
 	switch resp.Class {
@@ -63,7 +63,7 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 		members = append(members, m)
 	}
 	refreshed := 0
-	if err := c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		if err := tx.UpsertSeries(ctx, ser.Series); err != nil {
 			return err
 		}

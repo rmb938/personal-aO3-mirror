@@ -18,7 +18,7 @@ import (
 // transaction (milliseconds; no requests). Queuing is deduplicated, so calling it every
 // scheduler round is cheap and idempotent.
 func (c *Controllers) ScheduleSources(ctx context.Context, now time.Time) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		rows, err := tx.ListSources(ctx)
 		if err != nil {
 			return err
@@ -166,7 +166,7 @@ const maxInfoJobs = 25
 // ScheduleInfo keeps small queues of series-page and tag-info fetches (most-used tags first),
 // when enabled. One transaction; no requests.
 func (c *Controllers) ScheduleInfo(ctx context.Context, now time.Time) error {
-	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		if err := c.scheduleSeriesInfo(ctx, tx, now); err != nil {
 			return err
 		}
