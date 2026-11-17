@@ -18,6 +18,17 @@ var ErrNoRawPage = errors.New("store: no raw page")
 // older versions beyond keep. The newest copy is never pruned.
 // It returns whether the page was new (not a duplicate of a stored version).
 func (s *Tx) PutRawPage(ctx context.Context, workID int64, path string, page []byte, keep int) (bool, error) {
+	return s.putRawPage(ctx, workID, path, page, keep, false)
+}
+
+// PutFailedRawPage stores a fetched page that did not parse, for `reparse` after a parser fix.
+// It never pushes out a good version: only the newest failed page is kept, and only while it
+// is newer than every good one. keep is the number of good versions to keep.
+func (s *Tx) PutFailedRawPage(ctx context.Context, workID int64, path string, page []byte, keep int) (bool, error) {
+	return s.putRawPage(ctx, workID, path, page, keep, true)
+}
+
+func (s *Tx) putRawPage(ctx context.Context, workID int64, path string, page []byte, keep int, failed bool) (bool, error) {
 	start := time.Now()
 	sum := sha256.Sum256(page)
 	hash := hex.EncodeToString(sum[:])
@@ -29,10 +40,10 @@ func (s *Tx) PutRawPage(ctx context.Context, workID int64, path string, page []b
 	isNew := errors.Is(err, sql.ErrNoRows)
 	switch {
 	case isNew:
-		_, err = tx.ExecContext(ctx, `INSERT INTO raw_pages (work_id, fetched_at, path, sha256, size, html_zstd)
-			VALUES (?,?,?,?,?,?)`, workID, s.unix(), path, hash, len(page), z)
+		_, err = tx.ExecContext(ctx, `INSERT INTO raw_pages (work_id, fetched_at, path, sha256, size, html_zstd, parse_failed)
+			VALUES (?,?,?,?,?,?,?)`, workID, s.unix(), path, hash, len(page), z, failed)
 	case err == nil:
-		_, err = tx.ExecContext(ctx, `UPDATE raw_pages SET fetched_at = ? WHERE id = ?`, s.unix(), existing)
+		_, err = tx.ExecContext(ctx, `UPDATE raw_pages SET fetched_at = ?, parse_failed = ? WHERE id = ?`, s.unix(), failed, existing)
 	}
 	if err != nil {
 		return false, err
@@ -44,14 +55,20 @@ func (s *Tx) PutRawPage(ctx context.Context, workID int64, path string, page []b
 	if keep < 1 {
 		keep = 1
 	}
-	pruned, err := tx.ExecContext(ctx, `DELETE FROM raw_pages WHERE work_id = ? AND id NOT IN (
-		SELECT id FROM raw_pages WHERE work_id = ? ORDER BY fetched_at DESC, id DESC LIMIT ?)`, workID, workID, keep)
+	// Keep the newest `keep` good pages, plus the newest failed page if nothing good came after it.
+	pruned, err := tx.ExecContext(ctx, `DELETE FROM raw_pages WHERE work_id = ?1
+		AND id NOT IN (SELECT id FROM raw_pages WHERE work_id = ?1 AND parse_failed = 0
+			ORDER BY fetched_at DESC, id DESC LIMIT ?2)
+		AND id NOT IN (SELECT f.id FROM raw_pages f WHERE f.work_id = ?1 AND f.parse_failed = 1
+			AND NOT EXISTS (SELECT 1 FROM raw_pages g WHERE g.work_id = ?1 AND g.parse_failed = 0
+				AND (g.fetched_at > f.fetched_at OR (g.fetched_at = f.fetched_at AND g.id > f.id)))
+			ORDER BY f.fetched_at DESC, f.id DESC LIMIT 1)`, workID, keep)
 	if err != nil {
 		return false, err
 	}
 	n, _ := pruned.RowsAffected()
 	s.log.Debug("raw page stored", "work_id", workID, "bytes", len(page), "zstd_bytes", len(z),
-		"duplicate", !isNew, "versions_before_prune", versions, "pruned", n)
+		"duplicate", !isNew, "parse_failed", failed, "versions_before_prune", versions, "pruned", n)
 	return isNew, nil
 }
 

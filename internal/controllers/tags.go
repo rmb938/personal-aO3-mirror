@@ -13,7 +13,8 @@ import (
 
 // FetchTagInfo fetches /tags/<tag> and records canonical/synonym/parent/meta relations.
 // Steps: read the tag, fetch its page, then one write transaction for whatever the page said.
-func (c *Controllers) FetchTagInfo(ctx context.Context, id int64) (Detail, error) {
+// final says this is the job's last attempt.
+func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (Detail, error) {
 	t, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.TagRef, error) {
 		return tx.TagByID(ctx, id)
 	})
@@ -23,37 +24,32 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64) (Detail, error
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.get(ctx, httpx.KindTag, "/tags/"+ao3url.TagParam(t.Name))
-	if err != nil {
-		return nil, err
-	}
 	update := func(u store.TagInfoUpdate) error {
 		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.UpdateTagInfo(ctx, id, u) })
+	}
+	// attempted marks a fetch that yielded nothing, so the tag waits for tags.info_ttl.
+	attempted := func() error { return update(store.TagInfoUpdate{AttemptOnly: true}) }
+	resp, err := c.get(ctx, httpx.KindTag, "/tags/"+ao3url.TagParam(t.Name))
+	if err != nil {
+		return nil, giveUpInfo(ctx, err, final, attempted)
 	}
 	skelID := strconv.FormatInt(id, 10)
 	detail := Detail{"tag_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
 	if resp.Class == httpx.ClassNotFound {
-		return detail, update(store.TagInfoUpdate{AttemptOnly: true})
+		return detail, attempted()
 	}
 	if err := outcome(resp); err != nil {
-		if _, retry := errors.AsType[RetryError](err); retry {
-			return detail, err // AO3 busy: the scheduler retries after its backoff
-		}
 		if resp.Class == httpx.ClassUnexpected {
 			c.saveSkeleton(ctx, "tag", skelID, resp.Body)
 		}
-		// Permanent (restricted, hidden, adult gate, unexpected): mark attempted so the next try
-		// waits for tags.info_ttl instead of being queued again every minute.
-		if uerr := update(store.TagInfoUpdate{AttemptOnly: true}); uerr != nil {
-			return detail, uerr
-		}
-		return detail, err
+		// Permanent (restricted, hidden, adult gate, unexpected) or out of retries.
+		return detail, giveUpInfo(ctx, err, final, attempted)
 	}
 	info, rep, err := parse.ParseTag(resp.Body)
 	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "tag_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		c.saveSkeleton(ctx, "tag", skelID, resp.Body)
-		if uerr := update(store.TagInfoUpdate{AttemptOnly: true}); uerr != nil {
+		if uerr := attempted(); uerr != nil {
 			return detail, uerr
 		}
 		return detail, parseUnexpected(rep.Missing)

@@ -80,6 +80,12 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 		log.Warn("adult interstitial despite view_adult cookie; work left unfetched", "work_id", id, "req_id", resp.ReqID)
 		return detail, PermanentError{Code: CodeAdultGate, Detail: resp.Reason}
 	case httpx.ClassUnexpected:
+		if !pageStructureProblem(resp) {
+			// An odd answer (an unusual 4xx, an unfollowed redirect), not a page we failed to
+			// parse: store nothing and leave the work unfetched for the next listing to queue.
+			log.Warn("unexpected AO3 response; work left unfetched", "work_id", id, "status", resp.Status, "reason", resp.Reason)
+			return detail, PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
+		}
 		return detail, c.workParseFailed(ctx, id, path, resp, PermanentError{Code: ErrorCode(resp.Class), Detail: resp.Reason})
 	}
 	if err := outcome(resp); err != nil {
@@ -171,7 +177,7 @@ func (c *Controllers) workParseFailed(ctx context.Context, id int64, path string
 	c.saveSkeleton(ctx, "work", strconv.FormatInt(id, 10), resp.Body)
 	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		if len(resp.Body) > 0 {
-			if _, err := tx.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions+1); err != nil {
+			if _, err := tx.PutFailedRawPage(ctx, id, path, resp.Body, c.options.KeepVersions); err != nil {
 				return err
 			}
 		}

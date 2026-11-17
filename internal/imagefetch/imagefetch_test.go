@@ -236,3 +236,91 @@ func TestRedirectChecksTargetHostRobots(t *testing.T) {
 	require.NotContains(t, b.seen, "/private/b.png", "redirect followed into a robots-disallowed path")
 	require.Positive(t, slept, "redirect hops did not wait for the host interval")
 }
+
+// fakeWorker builds a worker for urls on a fake clock whose Sleep advances it. It returns the
+// store and a driver that runs steps, advancing the clock by at most a minute whenever nothing
+// is due.
+func fakeWorker(t *testing.T, urls []string) (*store.Tx, func(steps int)) {
+	t.Helper()
+	ctx := context.Background()
+	var mu sync.Mutex
+	clk := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clk }
+	advance := func(_ context.Context, d time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		clk = clk.Add(d)
+		return nil
+	}
+	st := openStore(t, t.TempDir(), now)
+	db := st.AutoCommitForTestOnly()
+	_, err := db.QueueImages(ctx, 1, urls)
+	require.NoError(t, err)
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), PerHostInterval: 3 * time.Second,
+		MaxBytes: 1000, Now: now, Sleep: advance, AllowLoopback: true})
+	require.NoError(t, err)
+	run := func(steps int) {
+		for range steps {
+			ran, wait, err := w.Step(ctx)
+			require.NoError(t, err)
+			if !ran {
+				require.NoError(t, advance(ctx, min(max(wait, time.Second), time.Minute)))
+			}
+		}
+	}
+	return db, run
+}
+
+// A 429 holds back the whole host for its Retry-After, not just the one image.
+func TestHostBacksOffOn429(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/robots.txt":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}
+	}))
+	t.Cleanup(h.Close)
+	var urls []string
+	for _, p := range []string{"/1.png", "/2.png", "/3.png", "/4.png"} {
+		urls = append(urls, h.URL+p)
+	}
+	_, run := fakeWorker(t, urls)
+	run(30) // at most 30 minutes of fake time: well inside the hour-long Retry-After
+	mu.Lock()
+	defer mu.Unlock()
+	images := 0
+	for _, p := range seen {
+		if p != "/robots.txt" {
+			images++
+		}
+	}
+	require.Equal(t, 1, images, "host kept being requested during its Retry-After (%v)", seen)
+}
+
+// A robots.txt that redirects (http→https is common) is followed, and its rules apply.
+func TestRobotsRedirectFollowed(t *testing.T) {
+	b := newHost(t) // robots.txt disallows /private/
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			http.Redirect(w, r, b.URL+"/robots.txt", http.StatusMovedPermanently)
+		default:
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{1}, 50)...))
+		}
+	}))
+	t.Cleanup(a.Close)
+	db, run := fakeWorker(t, []string{a.URL + "/private/x.png", a.URL + "/ok.png"})
+	run(20)
+	counts, _, err := db.ImageCounts(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"ok": 1, "disallowed": 1}, counts, "redirected robots.txt not applied")
+}

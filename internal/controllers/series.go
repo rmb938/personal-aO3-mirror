@@ -12,20 +12,20 @@ import (
 
 // FetchSeriesInfo fetches page 1 of a non-source series: description, notes, stats and
 // creators. Blurbs refresh only works we already mirror (no new works are added). Everything
-// the page says is stored in one transaction.
-func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, error) {
+// the page says is stored in one transaction. final says this is the job's last attempt.
+func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool) (Detail, error) {
 	if id <= 0 {
 		return nil, PermanentError{Code: CodeBadSeriesID}
 	}
 	target := strconv.FormatInt(id, 10)
-	resp, err := c.get(ctx, httpx.KindSeries, "/series/"+target)
-	if err != nil {
-		return nil, err
-	}
 	// markFetched records an attempt that produced no metadata, so the next try waits for
-	// series.info_ttl instead of looping.
+	// series.info_ttl instead of being queued again every minute.
 	markFetched := func() error {
 		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.MarkSeriesFetched(ctx, id) })
+	}
+	resp, err := c.get(ctx, httpx.KindSeries, "/series/"+target)
+	if err != nil {
+		return nil, giveUpInfo(ctx, err, final, markFetched)
 	}
 	detail := Detail{"series_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
 	switch resp.Class {
@@ -35,11 +35,8 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 	if err := outcome(resp); err != nil {
 		if resp.Class == httpx.ClassUnexpected {
 			c.saveSkeleton(ctx, "series", target, resp.Body)
-			if uerr := markFetched(); uerr != nil {
-				return detail, uerr
-			}
 		}
-		return detail, err
+		return detail, giveUpInfo(ctx, err, final, markFetched)
 	}
 	ser, rep, err := parse.ParseSeries(id, resp.Body, c.options.Now())
 	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "series_id", id}, rep.Attrs()...)...)
@@ -83,7 +80,8 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 			}
 			refreshed++
 		}
-		return nil
+		// After the blurbs: the revision covered includes what this page just refreshed.
+		return tx.MarkSeriesFetched(ctx, id)
 	}); err != nil {
 		return detail, err
 	}

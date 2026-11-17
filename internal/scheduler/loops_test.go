@@ -121,3 +121,83 @@ func TestTooLargeWorkFailsOnce(t *testing.T) {
 	e.drain(50)
 	require.Equal(t, 1, countRequests(e, uri), "oversized page re-queued by the next poll")
 }
+
+// Tag and series info fetches that fail before any page (too large) or keep failing (AO3
+// unavailable through every retry) are marked attempted, not re-queued every minute.
+func TestInfoFetchFailuresDoNotLoop(t *testing.T) {
+	e := newEnvWith(t, 0, func(o *controllers.Options) { o.SeriesInfo = true; o.TagInfoTypes = []string{"Fandom"} },
+		func(o *httpx.Options) { o.MaxBody = 128 << 10 })
+	e.srv.Handle("/works/1001", fakeao3.Reply{Body: fixtureBody(t, "work_chaptered.html")}) // part 2 of series 3001
+	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fakeao3.Page(strings.Repeat("x", 256<<10))})
+	e.queueWork(1001)
+	e.drain(5)
+	for range 40 {
+		e.clk.Advance(2 * time.Minute) // info scheduling runs at most once a minute
+		e.drain(20)
+	}
+	require.Equal(t, 1, countRequests(e, "/series/3001"), "oversized series page re-fetched")
+
+	// A tag that is unavailable on every attempt is given up after its last retry.
+	e2 := newEnv(t, 3, func(o *controllers.Options) { o.TagInfoTypes = []string{"Fandom"} })
+	e2.srv.Handle("/tags/Fixture%20Tag", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
+	e2.add(e2.site.TagPath())
+	e2.drain(50)
+	for range 100 {
+		e2.clk.Advance(5 * time.Minute) // past each retry backoff
+		e2.drain(20)
+	}
+	n := countRequests(e2, "/tags/Fixture%20Tag")
+	require.LessOrEqual(t, n, 5, "unavailable tag re-queued after its last attempt (%d requests)", n)
+	tag, err := e2.db.TagByName(context.Background(), "Fixture Tag")
+	require.NoError(t, err)
+	require.False(t, tag.InfoFetchedAt.IsZero(), "attempt not recorded after the last retry")
+}
+
+// An odd AO3 answer for a work (an unusual 4xx) is not a parse failure: nothing is stored and
+// the work is not marked fetched.
+func TestOddWorkResponseNotStored(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	e.srv.Handle("/works/5001", fakeao3.Reply{Status: 410, Body: fakeao3.Page("<p>gone-ish</p>")})
+	e.add(e.site.TagPath())
+	e.drain(50)
+	_, _, err := e.db.LatestRawPage(ctx, 5001)
+	require.ErrorIs(t, err, store.ErrNoRawPage, "error page stored as a raw page")
+	require.True(t, e.diag(5001).LastFetched.IsZero(), "work marked fetched from an error page")
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupeKey: "work:5001", Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Contains(t, jobs[0].LastError, string(controllers.CodeOddResponse))
+}
+
+// An odd answer for a backfill page holds that page back for a poll interval; it neither
+// blocks the backfill until a parser change nor re-queues the page every round.
+func TestOddListingResponseHoldsBackfill(t *testing.T) {
+	e := newEnv(t, 45, nil)
+	id := e.add(e.site.TagPath()) // page 1 parsed fine; backfill page 2 gets the odd answer
+	e.srv.Handle(e.site.TagPath(), fakeao3.Reply{Status: 410, Body: fakeao3.Page("<p>odd</p>")})
+	e.drain(200)
+	listing := func() int {
+		n := 0
+		for _, r := range e.srv.Requests() {
+			if strings.HasPrefix(r.URI, e.site.TagPath()) {
+				n++
+			}
+		}
+		return n
+	}
+	after := listing()
+	cur, err := controllers.ParseCursor(e.source(id).BackfillCursor)
+	require.NoError(t, err)
+	require.Zero(t, cur.BlockedParser, "odd response blocked the backfill as a parse failure")
+	require.NotZero(t, cur.RetryAt, "page not held back")
+	e.clk.Advance(30 * time.Minute)
+	e.drain(50)
+	require.Equal(t, after, listing(), "held-back page re-fetched before its retry time")
+
+	// Once AO3 answers normally the backfill continues.
+	e.srv.Handle(e.site.TagPath()) // no replies: the synthetic site serves it again
+	e.clk.Advance(7 * time.Hour)
+	e.drain(500)
+	require.Equal(t, store.SourceDoneBackfill, e.source(id).State, "backfill did not resume")
+}

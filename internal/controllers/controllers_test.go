@@ -21,8 +21,11 @@ func TestPermanentErrorCodes(t *testing.T) {
 		{parseUnexpected([]string{"#main"}), true},
 		{PermanentError{Code: CodeParseError}, true},
 		{fmt.Errorf("wrapped: %w", PermanentError{Code: CodeParseError}), true},
-		// The httpx classifier's own "parse_unexpected" class counts too (blocks backfill).
-		{outcome(&httpx.Response{Class: httpx.ClassUnexpected}), true},
+		// The httpx classifier's own "parse_unexpected" class counts for a 200 page (blocks
+		// backfill), not for an odd answer such as an unusual 4xx or an unfollowed redirect.
+		{outcome(&httpx.Response{Class: httpx.ClassUnexpected, Status: 200}), true},
+		{outcome(&httpx.Response{Class: httpx.ClassUnexpected, Status: 410}), false},
+		{outcome(&httpx.Response{Class: httpx.ClassUnexpected, Status: 302}), false},
 		{outcome(&httpx.Response{Class: httpx.ClassNotFound}), false},
 		{outcome(&httpx.Response{Class: httpx.ClassUnavailable}), false},
 		{PermanentError{Code: CodeBadCursor}, false},

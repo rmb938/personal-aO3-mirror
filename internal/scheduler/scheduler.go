@@ -79,10 +79,10 @@ func New(opts Options) *Scheduler {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)
 		},
 		jobs.KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
-			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target))
+			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
 		jobs.KindSeries: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
-			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target))
+			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
 		jobs.KindSourceAdd: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.AddQueuedSource(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)

@@ -34,6 +34,10 @@ type Cursor struct {
 	// BlockedParser is set to parse.Version when the NextPage listing failed to parse. Backfill
 	// pauses until the binary ships a different parser version.
 	BlockedParser int `json:"blocked_parser,omitempty"`
+	// RetryAt (unix seconds) holds the NextPage listing back after a permanent failure that is
+	// not a parse failure (an odd AO3 answer, an oversized page): it is tried again then,
+	// instead of every scheduler round.
+	RetryAt int64 `json:"retry_at,omitempty"`
 }
 
 func (c Cursor) JSON() string {
@@ -270,6 +274,25 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 		log.Warn("backfill blocked on parse failure until parser update", "page", page, "parser_version", parse.Version)
 		return Detail{"page": page, "blocked_parser": parse.Version}, errors.Join(err, uerr)
 	}
+	if _, permanent := errors.AsType[PermanentError](err); permanent && ctx.Err() == nil {
+		// Not the page structure, but retrying now would get the same answer: hold this page
+		// back for a poll interval instead of re-queueing it every round.
+		retryAt := c.options.Now().Add(r.PollInterval)
+		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			fresh, err2 := tx.GetSource(ctx, sourceID)
+			if err2 != nil {
+				return err2
+			}
+			if fresh.BackfillCursor == r.BackfillCursor {
+				cur.RetryAt = retryAt.Unix()
+				fresh.BackfillCursor = cur.JSON()
+			}
+			fresh.LastError = "backfill page " + strconv.Itoa(page) + ": " + err.Error()
+			return tx.UpdateSourceProgress(ctx, fresh)
+		})
+		log.Warn("backfill page failed; held back", "page", page, "error", err.Error(), "retry_at", retryAt)
+		return Detail{"page": page, "retry_at": retryAt.Unix()}, errors.Join(err, uerr)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +343,7 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 // advanceCursor moves a backfill cursor past a successfully stored page: next page, a smaller
 // window when the current one is over AO3's result window, the previous date window, or done.
 func (c *Controllers) advanceCursor(cur *Cursor, page int, win *ao3url.Window, l parse.Listing, detail Detail, log *slog.Logger) {
-	cur.BlockedParser = 0
+	cur.BlockedParser, cur.RetryAt = 0, 0
 	maxPages := ao3url.Pages(c.options.MaxResults)
 	pg := l.Pagination
 	switch {

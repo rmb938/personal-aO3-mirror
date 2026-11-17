@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -147,6 +148,8 @@ const (
 	CodeHidden     ErrorCode = ErrorCode(httpx.ClassHidden)
 	CodeAdultGate  ErrorCode = ErrorCode(httpx.ClassAdultGate)
 	CodeTooLarge   ErrorCode = "too_large" // body over the httpx client's MaxBody
+	// CodeOddResponse: an unusual 4xx, an unfollowed redirect or similar. Not a parse failure.
+	CodeOddResponse ErrorCode = "unexpected_response"
 
 	// Bad input or state.
 	CodeBadSource   ErrorCode = "bad_source"
@@ -181,13 +184,39 @@ func outcome(resp *httpx.Response) error {
 		return RetryError{Code: string(resp.Class)}
 	case httpx.ClassOK:
 		return nil
+	case httpx.ClassUnexpected:
+		if !pageStructureProblem(resp) {
+			return PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
+		}
 	}
 	return PermanentError{Code: ErrorCode(resp.Class)}
+}
+
+// giveUpInfo handles a failed tag or series info fetch (scheduled every minute from what still
+// needs info): a permanent error, or a retryable one on the job's last attempt, records the
+// attempt via mark so the item waits for its info TTL instead of being queued again at once.
+// Shutdown leaves it alone. It returns err (joined with any mark error).
+func giveUpInfo(ctx context.Context, err error, final bool, mark func() error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	if _, permanent := errors.AsType[PermanentError](err); !permanent && !final {
+		return err
+	}
+	return errors.Join(err, mark())
 }
 
 // parseUnexpected is the error for a page missing required structure (rep.Missing lists it).
 func parseUnexpected(missing []string) PermanentError {
 	return PermanentError{Code: CodeParseUnexpected, Detail: strings.Join(missing, ",")}
+}
+
+// pageStructureProblem reports whether an unexpected response is an AO3 page whose structure we
+// did not recognise (HTTP 200), as opposed to an odd answer (unusual 4xx, unfollowed redirect,
+// 1xx/3xx). Only the former is a parse failure: it is kept for reparse and blocks a backfill
+// until the parser changes. An odd answer is neither stored nor treated as one.
+func pageStructureProblem(resp *httpx.Response) bool {
+	return resp.Class == httpx.ClassUnexpected && resp.Status == http.StatusOK
 }
 
 // IsParseFailure reports whether err is a page-structure problem (no retry will fix it).

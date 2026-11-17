@@ -108,6 +108,12 @@ func TestSeriesUpsertAndNeedingInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, needing(clk.t.Add(-30*24*time.Hour)), 1, "series with a newer member work should need info")
 
+	// Fetched again: the member's revised date (2026-12-01) is still ahead of the clock, as a
+	// blurb date a day ahead of UTC is. That must not keep the series due.
+	require.NoError(t, s.MarkSeriesFetched(ctx, 77))
+	require.True(t, clk.t.Before(time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)), "test needs a revised date ahead of the clock")
+	require.Empty(t, needing(clk.t.Add(-30*24*time.Hour)), "future-dated revision kept the series due after a fetch")
+
 	// Series that are sources are refreshed by their polls instead.
 	markSeriesSource(t, s)
 	require.Empty(t, needing(clk.t.Add(time.Hour)), "source series must be excluded")

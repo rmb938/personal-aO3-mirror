@@ -60,6 +60,9 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 	if cur.NextPage > 0 && cur.BlockedParser == parse.Version {
 		return nil // parse failure at this page; resumes when a new parser version ships
 	}
+	if cur.NextPage > 0 && now.Unix() < cur.RetryAt {
+		return nil // this page failed for another reason; held back until RetryAt
+	}
 	if cur.NextPage > 0 {
 		class := jobs.ClassBackfill
 		if cur.Rescan {

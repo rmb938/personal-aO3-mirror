@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -237,8 +238,43 @@ func (w *Worker) Step(ctx context.Context) (bool, time.Duration, error) {
 
 func (w *Worker) hostDone(host string) {
 	w.mu.Lock()
-	w.nextHost[host] = w.o.Now().Add(w.o.PerHostInterval)
+	if next := w.o.Now().Add(w.o.PerHostInterval); next.After(w.nextHost[host]) { // never shortens a backoff
+		w.nextHost[host] = next
+	}
 	w.mu.Unlock()
+}
+
+// maxHostBackoff caps how long one 429/5xx (or its Retry-After) holds a host back.
+const maxHostBackoff = 24 * time.Hour
+
+// hostBackoff holds host back for d (the first retry delay when d <= 0, at most 24h) after a
+// 429/5xx, and returns when it is free again.
+func (w *Worker) hostBackoff(host string, d time.Duration) time.Time {
+	if d <= 0 {
+		d = w.backoff(0)
+	}
+	d = min(max(d, w.o.PerHostInterval), maxHostBackoff)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if next := w.o.Now().Add(d); next.After(w.nextHost[host]) {
+		w.nextHost[host] = next
+	}
+	return w.nextHost[host]
+}
+
+// retryAfter parses a Retry-After header (seconds or an HTTP date); 0 when absent or invalid.
+func retryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if s, err := strconv.Atoi(v); err == nil && s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return t.Sub(now)
+	}
+	return 0
 }
 
 // safeFetch runs fetch and turns a panic into a failed image, so the worker goroutine (which
@@ -288,8 +324,17 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		log.Info("image gone", "status", resp.StatusCode)
 		return
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError:
-		log.Warn("image host unavailable; will retry", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"))
-		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), fmt.Sprintf("status=%d", resp.StatusCode), w.o.MaxAttempts)
+		// The whole host backs off (Retry-After, or the first retry delay), not just this image:
+		// its other queued images wait too.
+		host := strings.ToLower(resp.Request.URL.Hostname())
+		cool := w.hostBackoff(host, retryAfter(resp.Header.Get("Retry-After"), w.o.Now()))
+		log.Warn("image host unavailable; host backing off", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"),
+			"host_free_at", cool)
+		nb := w.o.Now().Add(w.backoff(r.Attempts))
+		if cool.After(nb) {
+			nb = cool
+		}
+		_ = st.ImageRetry(ctx, r.ID, nb, fmt.Sprintf("status=%d", resp.StatusCode), w.o.MaxAttempts)
 		return
 	case resp.StatusCode != http.StatusOK:
 		log.Info("image failed", "status", resp.StatusCode)
@@ -513,28 +558,69 @@ func (w *Worker) robotsAllowed(ctx context.Context, u *url.URL, log *slog.Logger
 	e := w.robots[key]
 	w.mu.Unlock()
 	if !e.Fresh(w.o.Now()) {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, key+"/robots.txt", nil)
-		resp, err := w.client.Do(req)
-		w.hostDone(strings.ToLower(u.Hostname()))
+		status, body, hops, err := w.fetchRobots(ctx, &url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/robots.txt"})
 		switch {
 		case err != nil && errors.Is(err, errBlockedAddr):
 			return false, false, false, errBlockedAddr
 		case err != nil:
 			return false, false, true, err
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
-		resp.Body.Close()
-		e, err = httpx.NewRobots(resp.StatusCode, body, w.o.Now(), false)
+		e, err = httpx.NewRobots(status, body, w.o.Now(), false)
 		if err != nil {
 			e, _ = httpx.NewRobots(http.StatusNotFound, nil, w.o.Now(), false) // unparseable: treat as no robots.txt
 		}
-		log.Debug("image host robots fetched", "status", resp.StatusCode)
+		log.Debug("image host robots fetched", "status", status, "redirects", hops)
 		w.mu.Lock()
 		w.robots[key] = e
 		w.mu.Unlock()
 		fetched = true
 	}
 	return e.Allowed(u), fetched, false, nil
+}
+
+// maxRobotsRedirects is how many robots.txt redirects are followed (RFC 9309 asks for at
+// least five).
+const maxRobotsRedirects = 5
+
+// fetchRobots fetches a robots.txt, following redirects (http→https is common) with the same
+// per-hop checks as images: never AO3, and each hop host's interval. A redirect chain that
+// cannot be resolved yields status 500, which disallows everything (as the AO3 client does
+// for 3xx), rather than a 3xx that robots parsing would treat as "no robots.txt".
+func (w *Worker) fetchRobots(ctx context.Context, u *url.URL) (status int, body []byte, hops int, err error) {
+	for hop := 0; ; hop++ {
+		host := strings.ToLower(u.Hostname())
+		if hop > 0 {
+			if err := w.waitHost(ctx, host); err != nil {
+				return 0, nil, hop, err
+			}
+		}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		resp, err := w.client.Do(req)
+		w.hostDone(host)
+		if err != nil {
+			return 0, nil, hop, err
+		}
+		if !isRedirect(resp.StatusCode) {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+			resp.Body.Close()
+			return resp.StatusCode, body, hop, nil
+		}
+		resp.Body.Close()
+		loc, ok := robotsRedirect(u, resp.Header.Get("Location"))
+		if !ok || hop >= maxRobotsRedirects {
+			return http.StatusInternalServerError, nil, hop, nil // unresolvable: disallow all
+		}
+		u = loc
+	}
+}
+
+// robotsRedirect resolves a robots.txt redirect target; ok=false for an unusable or AO3 one.
+func robotsRedirect(from *url.URL, location string) (*url.URL, bool) {
+	loc, err := from.Parse(location)
+	if err != nil || (loc.Scheme != "http" && loc.Scheme != "https") || loc.Host == "" || isAO3(loc.Hostname()) {
+		return nil, false
+	}
+	return loc, true
 }
 
 func short(err error) string {

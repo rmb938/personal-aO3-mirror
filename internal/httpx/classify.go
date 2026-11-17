@@ -96,7 +96,7 @@ func classify(kind Kind, status int, body []byte) Verdict {
 			return Verdict{ClassUnavailable, "status=404" + cfReason(cf)}
 		}
 		return Verdict{ClassNotFound, "status=404"}
-	case status == http.StatusForbidden || status == http.StatusServiceUnavailable:
+	case status == http.StatusForbidden: // Cloudflare blocks and challenges (5xx returned above)
 		return Verdict{ClassUnavailable, "status=" + strconv.Itoa(status) + cfReason(cf)}
 	case status >= 400:
 		return Verdict{ClassUnexpected, "status=" + strconv.Itoa(status)}

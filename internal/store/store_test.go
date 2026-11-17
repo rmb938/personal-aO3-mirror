@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -347,6 +348,63 @@ func TestStatusKeepsContentAndRevives(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, model.StatusRestricted, st)
+}
+
+// Repeated parse failures keep only the newest failed page and never push out a good one; a
+// later good page drops the failed one.
+func TestFailedRawPagesNeverEvictGood(t *testing.T) {
+	s, clk, _ := openTest(t)
+	ctx := context.Background()
+	page := func(n int) []byte { return []byte("<p>fixture page</p>" + strconv.Itoa(n)) }
+	count := func() (good, failed int) {
+		t.Helper()
+		require.NoError(t, s.content.QueryRow(`SELECT COUNT(*) FILTER (WHERE parse_failed = 0), COUNT(*) FILTER (WHERE parse_failed = 1)
+			FROM raw_pages WHERE work_id = 1`).Scan(&good, &failed))
+		return good, failed
+	}
+	_, err := s.PutRawPage(ctx, 1, "/works/1", page(0), 1)
+	require.NoError(t, err)
+	for i := 1; i <= 3; i++ {
+		clk.t = clk.t.Add(time.Minute)
+		_, err := s.PutFailedRawPage(ctx, 1, "/works/1", page(i), 1)
+		require.NoError(t, err)
+		good, failed := count()
+		require.Equal(t, 1, good, "good page evicted by failure %d", i)
+		require.Equal(t, 1, failed, "failed pages pile up")
+	}
+	latest, _, err := s.LatestRawPage(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, page(3), latest, "newest failed page is what reparse retries")
+
+	clk.t = clk.t.Add(time.Minute)
+	_, err = s.PutRawPage(ctx, 1, "/works/1", page(4), 1)
+	require.NoError(t, err)
+	good, failed := count()
+	require.Equal(t, 1, good)
+	require.Equal(t, 0, failed, "failed page outlived a newer good page")
+}
+
+// Request and job lookups for one work never pick up other works whose ids share a prefix.
+func TestWorkLookupsAreExact(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	for _, p := range []string{"/works/12?view_full_work=true", "/works/123?view_full_work=true", "/works/12/chapters/5", "/works/120"} {
+		require.NoError(t, s.InsertRequest(ctx, RequestRow{ReqID: p, Kind: "work", Path: p, Class: "ok"}))
+	}
+	rows, err := s.RecentRequests(ctx, false, 0, "/works/12", 10)
+	require.NoError(t, err)
+	var paths []string
+	for _, r := range rows {
+		paths = append(paths, r.Path)
+	}
+	require.ElementsMatch(t, []string{"/works/12?view_full_work=true", "/works/12/chapters/5"}, paths)
+
+	enqueue(t, s, Job{Kind: "work", Target: "12", Priority: 3, DedupeKey: "work:12"})
+	enqueue(t, s, Job{Kind: "work", Target: "123", Priority: 3, DedupeKey: "work:123"})
+	jobs, err := s.FindJobs(ctx, JobFilter{DedupeKey: "work:12", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, "12", jobs[0].Target)
 }
 
 func TestRawPagesDedupeAndPrune(t *testing.T) {

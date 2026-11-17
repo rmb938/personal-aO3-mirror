@@ -24,6 +24,9 @@ func (s *Tx) UpsertSeries(ctx context.Context, ser model.Series) error {
 		ser.Bookmarks, ser.Begun, ser.Updated, now, now); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE series SET fetched_revised = `+seriesMaxRevised("series")+` WHERE id = ?`, ser.ID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM series_creators WHERE series_id = ?`, ser.ID); err != nil {
 		return err
 	}
@@ -67,22 +70,33 @@ func (s *ReadTx) Series(ctx context.Context, id int64) (SeriesRow, error) {
 	return r, err
 }
 
-// MarkSeriesFetched records a fetch attempt that produced no metadata (404, restricted, hidden).
+// seriesMaxRevised is the newest revised_at (YYYY-MM-DD, ” if none) of a series' mirrored
+// works; seriesAlias names the series row.
+func seriesMaxRevised(seriesAlias string) string {
+	return `(SELECT COALESCE(MAX(w.revised_at), '') FROM series_works sw JOIN works w ON w.id = sw.work_id
+		WHERE sw.series_id = ` + seriesAlias + `.id AND w.revised_at != '')`
+}
+
+// MarkSeriesFetched records a fetch attempt of a series page: now, and the member revision it
+// covered, so the series waits for series.info_ttl or a newer member revision. A successful
+// fetch calls it after storing the page's blurbs; a failed one (404, restricted, unparseable)
+// too, so it is not re-queued every round.
 func (s *Tx) MarkSeriesFetched(ctx context.Context, id int64) error {
-	_, err := s.meta.ExecContext(ctx, `UPDATE series SET last_fetched = ? WHERE id = ?`, s.unix(), id)
+	_, err := s.meta.ExecContext(ctx, `UPDATE series SET last_fetched = ?, fetched_revised = `+seriesMaxRevised("series")+`
+		WHERE id = ?`, s.unix(), id)
 	return err
 }
 
 // SeriesNeedingInfo returns ids of series that are not themselves sources and were never
 // fetched, fetched before `before`, or fetched before one of their mirrored works was revised.
+// Revisions compare as dates (revised_at vs fetched_revised), never against the fetch time:
+// a blurb date can be a day ahead of UTC.
 func (s *ReadTx) SeriesNeedingInfo(ctx context.Context, before time.Time, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.meta, `SELECT se.id FROM series se
 		WHERE NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
 			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
 		  AND (se.last_fetched = 0 OR se.last_fetched < ?
-		       OR se.last_fetched < (SELECT COALESCE(MAX(CAST(strftime('%s', w.revised_at) AS INTEGER)), 0)
-		                             FROM series_works sw JOIN works w ON w.id = sw.work_id
-		                             WHERE sw.series_id = se.id AND w.revised_at != ''))
+		       OR se.fetched_revised < `+seriesMaxRevised("se")+`)
 		ORDER BY se.last_fetched, se.id LIMIT ?`, before.Unix(), limit)
 }
 

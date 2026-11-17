@@ -107,7 +107,11 @@ CREATE TABLE series (
     begun        TEXT NOT NULL DEFAULT '',
     updated      TEXT NOT NULL DEFAULT '',
     first_seen   INTEGER NOT NULL,
-    last_fetched INTEGER NOT NULL DEFAULT 0
+    last_fetched INTEGER NOT NULL DEFAULT 0,
+    -- Newest member revised_at (YYYY-MM-DD) known at the last fetch. The series is due again
+    -- when a member's revised_at moves past it (dates vs dates: a blurb date can be a day
+    -- ahead of UTC, so comparing it with the fetch time would keep the series due).
+    fetched_revised TEXT NOT NULL DEFAULT ''
 );
 
 -- Series membership. May list works we do not mirror (seen on a series page by series_info),

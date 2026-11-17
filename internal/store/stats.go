@@ -44,7 +44,7 @@ func (s *Tx) PruneRequests(ctx context.Context, age time.Duration) (int64, error
 }
 
 // RecentRequests returns request rows newest first, optionally only non-ok, or only for a job
-// or path prefix.
+// or path (pathPrefix matches whole path segments: "/works/12" never matches /works/123).
 func (s *ReadTx) RecentRequests(ctx context.Context, onlyErrors bool, jobID int64, pathPrefix string, limit int) ([]RequestRow, error) {
 	q := `SELECT ts, req_id, COALESCE(job_id, 0), kind, path, status, class, reason, bytes, duration_ms, waited_ms, hop FROM requests WHERE 1=1`
 	var args []any
@@ -56,8 +56,11 @@ func (s *ReadTx) RecentRequests(ctx context.Context, onlyErrors bool, jobID int6
 		args = append(args, jobID)
 	}
 	if pathPrefix != "" {
-		q += ` AND path LIKE ? ESCAPE '\'`
-		args = append(args, likeEscape(pathPrefix)+"%")
+		// Whole path segments only: "/works/12" matches /works/12, /works/12?... and
+		// /works/12/..., never /works/123.
+		q += ` AND (path = ? OR path LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\')`
+		p := likeEscape(pathPrefix)
+		args = append(args, pathPrefix, p+"?%", p+"/%")
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)

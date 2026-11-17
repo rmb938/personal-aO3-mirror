@@ -9,6 +9,10 @@ CREATE TABLE raw_pages (
     sha256         TEXT NOT NULL,          -- of uncompressed HTML
     size           INTEGER NOT NULL,       -- uncompressed bytes
     html_zstd      BLOB NOT NULL,
+    -- 1 = fetched but did not parse, kept for `reparse` after a parser fix. Pruning keeps the
+    -- newest keep_versions good pages plus only the newest failed page (while it is newer than
+    -- every good one), so repeated failures never push out a good page.
+    parse_failed   INTEGER NOT NULL DEFAULT 0,
     UNIQUE (work_id, sha256)
 );
 CREATE INDEX raw_pages_work ON raw_pages (work_id, fetched_at);

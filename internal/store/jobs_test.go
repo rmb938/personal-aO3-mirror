@@ -26,6 +26,26 @@ func enqueue(t *testing.T, s *testStore, j Job) int64 {
 	return id
 }
 
+// A work fetch queued by a paused source must not swallow an on-demand request for that work.
+func TestEnqueueTakesOverParkedJob(t *testing.T) {
+	s, clk, _ := openTest(t)
+	ctx := context.Background()
+	paused := addSource(t, s, "paused", SourcePaused, 0)
+	id := enqueue(t, s, Job{Kind: "work", SourceID: paused, Target: "42", Priority: 4, DedupeKey: "work:42"})
+	_, err := s.PickJob(ctx, []string{"work"}, clk.t)
+	require.ErrorIs(t, err, ErrNoJob, "paused source's job must not run")
+
+	got, created, err := s.EnqueueJob(ctx, Job{Kind: "work", Target: "42", Priority: 1, DedupeKey: "work:42"})
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, id, got)
+	j, err := s.PickJob(ctx, []string{"work"}, clk.t)
+	require.NoError(t, err, "taken-over job should run")
+	require.Equal(t, id, j.ID)
+	require.Zero(t, j.SourceID)
+	require.Equal(t, 1, j.Priority)
+}
+
 func TestEnqueueDedupeAndBump(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()

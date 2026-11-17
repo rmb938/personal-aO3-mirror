@@ -78,9 +78,24 @@ func (s *Tx) EnqueueJob(ctx context.Context, j Job) (int64, bool, error) {
 	}
 	var id int64
 	var prio int
-	if err := s.meta.QueryRowContext(ctx, `SELECT id, priority_class FROM jobs WHERE dedupe_key = ? AND state IN ('queued','running')`,
-		j.DedupeKey).Scan(&id, &prio); err != nil {
+	var state string
+	var parked bool // owned by a paused/pending/cancelled source: PickJob never runs it
+	if err := s.meta.QueryRowContext(ctx, `SELECT j.id, j.priority_class, j.state,
+		  j.source_id IS NOT NULL AND COALESCE(src.state, '') NOT IN ('active','done_backfill')
+		FROM jobs j LEFT JOIN sources src ON src.id = j.source_id
+		WHERE j.dedupe_key = ? AND j.state IN ('queued','running')`,
+		j.DedupeKey).Scan(&id, &prio, &state, &parked); err != nil {
 		return 0, false, err
+	}
+	if parked && state == JobQueued {
+		// Dedupe keys are global (one fetch per work), so a parked job would swallow every
+		// other source's or the user's request for the same target: hand it to this caller.
+		if _, err := s.meta.ExecContext(ctx, `UPDATE jobs SET source_id = ?, priority_class = MIN(priority_class, ?), updated_at = ?
+			WHERE id = ? AND state = 'queued'`, src, j.Priority, now, id); err != nil {
+			return id, false, err
+		}
+		s.log.Debug("parked job taken over", "job_id", id, "source_id", j.SourceID)
+		return id, false, nil
 	}
 	if j.Priority < prio {
 		if _, err := s.meta.ExecContext(ctx, `UPDATE jobs SET priority_class = ?, updated_at = ? WHERE id = ? AND state = 'queued'`,
@@ -196,6 +211,7 @@ type JobFilter struct {
 	State        string
 	Kind         string
 	SourceID     int64
+	DedupeKey    string // exact match
 	DedupePrefix string
 	NotQueued    bool // only jobs that left the queue (running, done, failed, cancelled)
 	Limit        int
@@ -226,6 +242,10 @@ func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	if f.SourceID > 0 {
 		q += ` AND source_id = ?`
 		args = append(args, f.SourceID)
+	}
+	if f.DedupeKey != "" {
+		q += ` AND dedupe_key = ?`
+		args = append(args, f.DedupeKey)
 	}
 	if f.DedupePrefix != "" {
 		q += ` AND dedupe_key LIKE ? ESCAPE '\'`

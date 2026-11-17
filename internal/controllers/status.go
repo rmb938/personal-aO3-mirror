@@ -109,7 +109,7 @@ func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error
 		if d.Diag, err = tx.WorkDiag(ctx, id); err != nil {
 			return err
 		}
-		if d.Jobs, err = tx.FindJobs(ctx, store.JobFilter{DedupePrefix: jobs.WorkKey(id), Limit: 20}); err != nil {
+		if d.Jobs, err = tx.FindJobs(ctx, store.JobFilter{DedupeKey: jobs.WorkKey(id), Limit: 20}); err != nil {
 			return err
 		}
 		d.Requests, err = tx.RecentRequests(ctx, false, 0, "/works/"+strconv.FormatInt(id, 10), 20)
