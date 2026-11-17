@@ -36,8 +36,8 @@ const (
 var SlowQuery = 200 * time.Millisecond
 
 type Store struct {
-	Meta    *sql.DB
-	Content *sql.DB
+	meta    *sql.DB
+	content *sql.DB
 	log     *slog.Logger
 	now     func() time.Time
 	enc     *zstd.Encoder
@@ -78,7 +78,7 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("store: zstd decoder: %w", err), enc.Close(), meta.Close(), content.Close())
 	}
-	s := &Store{Meta: meta, Content: content, log: log, now: o.Now, enc: enc, dec: dec}
+	s := &Store{meta: meta, content: content, log: log, now: o.Now, enc: enc, dec: dec}
 	if err := s.migrate(ctx, meta, "meta"); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
@@ -141,9 +141,9 @@ func initPageSize(ctx context.Context, path string, pageSize int) (err error) {
 
 // PageSize returns the page size of the named db ("meta" or "content").
 func (s *Store) PageSize(ctx context.Context, name string) (int, error) {
-	db := s.Meta
+	db := s.meta
 	if name == "content" {
-		db = s.Content
+		db = s.content
 	}
 	var n int
 	err := db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&n)
@@ -153,7 +153,7 @@ func (s *Store) PageSize(ctx context.Context, name string) (int, error) {
 // Close closes both databases and the zstd coders, returning every error that occurred.
 func (s *Store) Close() error {
 	var errs []error
-	for _, db := range []*sql.DB{s.Meta, s.Content} {
+	for _, db := range []*sql.DB{s.meta, s.content} {
 		if db != nil {
 			errs = append(errs, db.Close())
 		}
@@ -254,9 +254,9 @@ func checkApplied(ctx context.Context, db *sql.DB, name string, entries []fs.Dir
 
 // SchemaVersion returns the current migration version of the named db ("meta" or "content").
 func (s *Store) SchemaVersion(ctx context.Context, name string) (int, error) {
-	db := s.Meta
+	db := s.meta
 	if name == "content" {
-		db = s.Content
+		db = s.content
 	}
 	var v int
 	err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&v)
@@ -284,11 +284,70 @@ func (s *Store) decompress(b []byte) ([]byte, error) {
 	return s.dec.DecodeAll(b, nil)
 }
 
+// ---- SQL helpers ----
+
 func boolInt(b bool) int {
 	if b {
 		return 1
 	}
 	return 0
+}
+
+// unixTime converts a stored unix-seconds column (0 = never) to a time.
+func unixTime(s int64) time.Time {
+	if s == 0 {
+		return time.Time{}
+	}
+	return time.Unix(s, 0)
+}
+
+// zeroUnix converts a time to unix seconds for storage (zero time = 0).
+func zeroUnix(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
+}
+
+// placeholders returns n comma-separated bind markers ("?,?,?") for IN lists.
+func placeholders(n int) string {
+	b := make([]byte, 0, 2*n)
+	for i := range n {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, '?')
+	}
+	return string(b)
+}
+
+// likeEscape escapes LIKE wildcards in s, for use with `LIKE ? ESCAPE '\'`.
+func likeEscape(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' || s[i] == '_' || s[i] == '\\' {
+			b = append(b, '\\')
+		}
+		b = append(b, s[i])
+	}
+	return string(b)
+}
+
+// queryInt64s runs a single-integer-column query and returns its values in order.
+func queryInt64s(ctx context.Context, db *sql.DB, q string, args ...any) (out []int64, err error) {
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // withinOneDay reports whether two YYYY-MM-DD dates are equal or one day apart. Anything that

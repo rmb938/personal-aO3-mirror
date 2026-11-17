@@ -53,9 +53,7 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	latest, _, err := e.st.LatestRawPage(ctx, 5001)
 	require.NoError(t, err)
 	require.Equal(t, brokenWork, string(latest), "failed page must be stored for reparse")
-	var versions int
-	require.NoError(t, e.st.Content.QueryRow(`SELECT COUNT(*) FROM raw_pages WHERE work_id = 5001`).Scan(&versions))
-	require.Equal(t, 2, versions, "good raw version must survive")
+	require.Equal(t, 2, e.diag(5001).RawVersions, "good raw version must survive")
 	require.NotEmpty(t, good)
 	c, err := e.st.Counts(ctx)
 	require.NoError(t, err)

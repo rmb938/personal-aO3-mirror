@@ -74,26 +74,12 @@ func scanSource(row interface{ Scan(...any) error }) (SourceRow, error) {
 	return r, nil
 }
 
-func unixTime(s int64) time.Time {
-	if s == 0 {
-		return time.Time{}
-	}
-	return time.Unix(s, 0)
-}
-
-func zeroUnix(t time.Time) int64 {
-	if t.IsZero() {
-		return 0
-	}
-	return t.Unix()
-}
-
 // InsertSource creates a source. It fails with ErrSourceExists if (kind,target,filters) exists.
 var ErrSourceExists = errors.New("store: source already exists")
 
 func (s *Store) InsertSource(ctx context.Context, r SourceRow) (int64, error) {
 	now := s.unix()
-	res, err := s.Meta.ExecContext(ctx, `INSERT INTO sources (kind, target, filters_json, path, state,
+	res, err := s.meta.ExecContext(ctx, `INSERT INTO sources (kind, target, filters_json, path, state,
 		backfill_order, poll_interval_s, priority, total_works, est_requests, backfill_cursor, created_at,
 		updated_at, next_poll_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (kind, target, filters_json) DO NOTHING`,
@@ -113,7 +99,7 @@ func (s *Store) InsertSource(ctx context.Context, r SourceRow) (int64, error) {
 // FindSource returns the id of an existing (kind,target,filters) source, or 0.
 func (s *Store) FindSource(ctx context.Context, kind, target, filtersJSON string) (int64, error) {
 	var id int64
-	err := s.Meta.QueryRowContext(ctx, `SELECT id FROM sources WHERE kind = ? AND target = ? AND filters_json = ?`,
+	err := s.meta.QueryRowContext(ctx, `SELECT id FROM sources WHERE kind = ? AND target = ? AND filters_json = ?`,
 		kind, target, filtersJSON).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
@@ -122,7 +108,7 @@ func (s *Store) FindSource(ctx context.Context, kind, target, filtersJSON string
 }
 
 func (s *Store) GetSource(ctx context.Context, id int64) (SourceRow, error) {
-	r, err := scanSource(s.Meta.QueryRowContext(ctx, `SELECT `+sourceCols+` FROM sources WHERE id = ?`, id))
+	r, err := scanSource(s.meta.QueryRowContext(ctx, `SELECT `+sourceCols+` FROM sources WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNoSource
 	}
@@ -130,7 +116,7 @@ func (s *Store) GetSource(ctx context.Context, id int64) (SourceRow, error) {
 }
 
 func (s *Store) ListSources(ctx context.Context) ([]SourceRow, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT `+sourceCols+` FROM sources ORDER BY id`)
+	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceCols+` FROM sources ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +142,7 @@ func (s *Store) SetSourceState(ctx context.Context, id int64, to SourceState, fr
 			args = append(args, string(f))
 		}
 	}
-	res, err := s.Meta.ExecContext(ctx, q, args...)
+	res, err := s.meta.ExecContext(ctx, q, args...)
 	if err != nil {
 		return err
 	}
@@ -173,7 +159,7 @@ func (s *Store) SetSourceState(ctx context.Context, id int64, to SourceState, fr
 
 // UpdateSourceProgress records totals/cursor/error after listing work. Zero values are written.
 func (s *Store) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
-	_, err := s.Meta.ExecContext(ctx, `UPDATE sources SET total_works = ?, est_requests = ?, backfill_cursor = ?,
+	_, err := s.meta.ExecContext(ctx, `UPDATE sources SET total_works = ?, est_requests = ?, backfill_cursor = ?,
 		last_poll_at = ?, next_poll_at = ?, last_full_scan_at = ?, backfill_done_at = ?, last_error = ?, updated_at = ?
 		WHERE id = ?`, r.TotalWorks, r.EstRequests, r.BackfillCursor, zeroUnix(r.LastPollAt), zeroUnix(r.NextPollAt),
 		zeroUnix(r.LastFullScanAt), zeroUnix(r.BackfillDoneAt), r.LastError, s.unix(), r.ID)
@@ -182,7 +168,7 @@ func (s *Store) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
 
 // UpdateSourceSettings changes a source's poll interval and priority (user settings).
 func (s *Store) UpdateSourceSettings(ctx context.Context, id int64, poll time.Duration, priority int) error {
-	res, err := s.Meta.ExecContext(ctx, `UPDATE sources SET poll_interval_s = ?, priority = ?, updated_at = ? WHERE id = ?`,
+	res, err := s.meta.ExecContext(ctx, `UPDATE sources SET poll_interval_s = ?, priority = ?, updated_at = ? WHERE id = ?`,
 		int64(poll/time.Second), priority, s.unix(), id)
 	if err != nil {
 		return err
@@ -194,34 +180,12 @@ func (s *Store) UpdateSourceSettings(ctx context.Context, id int64, poll time.Du
 	return nil
 }
 
-// FailedWorkJobs returns the distinct work ids of a source's failed work jobs that are still
-// unresolved: no work job for that id is active, and none succeeded after the failure (work
-// fetches are global, so a later success from any source counts).
-func (s *Store) FailedWorkJobs(ctx context.Context, sourceID int64) ([]string, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT DISTINCT f.target FROM jobs f WHERE f.source_id = ? AND f.kind = 'work' AND f.state = 'failed'
-		AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'work' AND j.target = f.target
-			AND (j.state IN ('queued','running') OR (j.state = 'done' AND j.id > f.id)))`, sourceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
 // DeleteSource removes a source and its memberships (works are kept) after cancelling its jobs.
 func (s *Store) DeleteSource(ctx context.Context, id int64) error {
 	if _, err := s.CancelSourceJobs(ctx, id); err != nil {
 		return err
 	}
-	res, err := s.Meta.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, id)
+	res, err := s.meta.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -237,7 +201,7 @@ func (s *Store) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []i
 	if len(workIDs) == 0 {
 		return nil
 	}
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -250,31 +214,6 @@ func (s *Store) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []i
 		}
 	}
 	return tx.Commit()
-}
-
-// CancelSourceJobs cancels a source's queued jobs; running jobs finish on their own.
-func (s *Store) CancelSourceJobs(ctx context.Context, sourceID int64) (int64, error) {
-	res, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = 'cancelled', updated_at = ?, finished_at = ?
-		WHERE source_id = ? AND state = 'queued'`, s.unix(), s.unix(), sourceID)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	if n > 0 {
-		s.log.Info("source jobs cancelled", "source_id", sourceID, "jobs", n)
-	}
-	return n, nil
-}
-
-func placeholders(n int) string {
-	b := make([]byte, 0, 2*n)
-	for i := range n {
-		if i > 0 {
-			b = append(b, ',')
-		}
-		b = append(b, '?')
-	}
-	return string(b)
 }
 
 // Cursor is the backfill position stored in sources.backfill_cursor (JSON).
@@ -309,10 +248,32 @@ func ParseCursor(s string) (Cursor, error) {
 	return c, err
 }
 
+// SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or
+// changed since their last fetch (same rule as WorkNeedsFetch), oldest first.
+func (s *Store) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, limit int) ([]int64, error) {
+	rows, err := s.meta.QueryContext(ctx, `SELECT w.id FROM source_works sw JOIN works w ON w.id = sw.work_id
+		WHERE sw.source_id = ? AND w.status = 'ok' AND (w.last_fetched = 0 OR w.fetched_revised != w.revised_at
+			OR w.fetched_chapters != w.chapters_posted OR w.fetched_words != w.words)
+		ORDER BY w.id LIMIT ?`, sourceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // SourceWorksNotSeenSince returns ok works linked to a source whose last listing sighting in
 // that source is before since (candidates for deletion checks).
 func (s *Store) SourceWorksNotSeenSince(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
+	rows, err := s.meta.QueryContext(ctx, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.source_id = ? AND sw.last_seen < ? AND w.status = 'ok' ORDER BY sw.work_id`, sourceID, since.Unix())
 	if err != nil {
 		return nil, err

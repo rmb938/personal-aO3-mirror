@@ -30,7 +30,7 @@ func (s *Store) QueueImages(ctx context.Context, workID int64, urls []string) (i
 	if len(urls) == 0 {
 		return 0, nil
 	}
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -60,7 +60,7 @@ func (s *Store) QueueImages(ctx context.Context, workID int64, urls []string) (i
 
 // NextImages returns due queued images, oldest first.
 func (s *Store) NextImages(ctx context.Context, now time.Time, limit int) ([]ImageRow, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT id, url, host, attempts FROM images
+	rows, err := s.meta.QueryContext(ctx, `SELECT id, url, host, attempts FROM images
 		WHERE status = 'queued' AND not_before <= ? ORDER BY not_before, id LIMIT ?`, now.Unix(), limit)
 	if err != nil {
 		return nil, err
@@ -80,7 +80,7 @@ func (s *Store) NextImages(ctx context.Context, now time.Time, limit int) ([]Ima
 // NextImageDue returns when the earliest queued image becomes due (zero if none queued).
 func (s *Store) NextImageDue(ctx context.Context) (time.Time, error) {
 	var nb int64
-	err := s.Meta.QueryRowContext(ctx, `SELECT COALESCE(MIN(not_before), -1) FROM images WHERE status = 'queued'`).Scan(&nb)
+	err := s.meta.QueryRowContext(ctx, `SELECT COALESCE(MIN(not_before), -1) FROM images WHERE status = 'queued'`).Scan(&nb)
 	if err != nil || nb < 0 {
 		return time.Time{}, err
 	}
@@ -88,28 +88,28 @@ func (s *Store) NextImageDue(ctx context.Context) (time.Time, error) {
 }
 
 func (s *Store) ImageDone(ctx context.Context, id int64, sha, contentType string, bytes int) error {
-	_, err := s.Meta.ExecContext(ctx, `UPDATE images SET status = 'ok', sha256 = ?, content_type = ?, bytes = ?, fetched_at = ?,
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = 'ok', sha256 = ?, content_type = ?, bytes = ?, fetched_at = ?,
 		last_error = '', attempts = attempts + 1 WHERE id = ?`, sha, contentType, bytes, s.unix(), id)
 	return err
 }
 
 // ImageRetry re-queues after notBefore; after maxAttempts the image is marked failed.
 func (s *Store) ImageRetry(ctx context.Context, id int64, notBefore time.Time, lastError string, maxAttempts int) error {
-	_, err := s.Meta.ExecContext(ctx, `UPDATE images SET attempts = attempts + 1, last_error = ?, not_before = ?,
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET attempts = attempts + 1, last_error = ?, not_before = ?,
 		status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'queued' END WHERE id = ?`, lastError, notBefore.Unix(), maxAttempts, id)
 	return err
 }
 
 // ImageFinal marks an image permanently failed/skipped/too_large/disallowed.
 func (s *Store) ImageFinal(ctx context.Context, id int64, status, lastError string) error {
-	_, err := s.Meta.ExecContext(ctx, `UPDATE images SET status = ?, last_error = ?, attempts = attempts + 1, fetched_at = ?
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = ?, last_error = ?, attempts = attempts + 1, fetched_at = ?
 		WHERE id = ?`, status, lastError, s.unix(), id)
 	return err
 }
 
 // ImageCounts groups images by status.
 func (s *Store) ImageCounts(ctx context.Context) (map[string]int, int64, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT status, COUNT(*) FROM images GROUP BY status`)
+	rows, err := s.meta.QueryContext(ctx, `SELECT status, COUNT(*) FROM images GROUP BY status`)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -127,6 +127,6 @@ func (s *Store) ImageCounts(ctx context.Context) (map[string]int, int64, error) 
 		return nil, 0, err
 	}
 	var bytes int64
-	err = s.Meta.QueryRowContext(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM images WHERE status = 'ok'`).Scan(&bytes)
+	err = s.meta.QueryRowContext(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM images WHERE status = 'ok'`).Scan(&bytes)
 	return out, bytes, err
 }

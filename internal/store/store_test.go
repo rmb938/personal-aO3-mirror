@@ -79,7 +79,7 @@ func TestPageSizes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 4096, n, "open %d: meta page_size (default)", i)
 		var mode string
-		require.NoError(t, s.Content.QueryRow(`PRAGMA journal_mode`).Scan(&mode))
+		require.NoError(t, s.content.QueryRow(`PRAGMA journal_mode`).Scan(&mode))
 		require.Equal(t, "wal", mode)
 		require.NoError(t, s.Close())
 	}
@@ -91,7 +91,7 @@ func TestOpenRefusesUnknownMigrations(t *testing.T) {
 	s, err := Open(ctx, dir, Options{})
 	require.NoError(t, err)
 	// Simulate a store created by an older build that had a migration this build lacks.
-	_, err = s.Meta.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, '0003_tags_images.sql', 0)`)
+	_, err = s.meta.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, '0003_tags_images.sql', 0)`)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	_, err = Open(ctx, dir, Options{})
@@ -131,9 +131,9 @@ func TestUpsertBlurbThenPage(t *testing.T) {
 	require.False(t, r.Changed || r.NeedsFetch, "stats-only blurb should not need fetch: %+v", r)
 	var kudos, chapters, colls int
 	var published string
-	require.NoError(t, s.Meta.QueryRow(`SELECT kudos, published FROM works WHERE id = 1`).Scan(&kudos, &published))
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM chapters WHERE work_id = 1`).Scan(&chapters))
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM work_collections WHERE work_id = 1`).Scan(&colls))
+	require.NoError(t, s.meta.QueryRow(`SELECT kudos, published FROM works WHERE id = 1`).Scan(&kudos, &published))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM chapters WHERE work_id = 1`).Scan(&chapters))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM work_collections WHERE work_id = 1`).Scan(&colls))
 	require.Equal(t, 99, kudos)
 	require.Equal(t, "2026-10-01", published, "blurb must not clobber page data")
 	require.Equal(t, 2, chapters, "blurb must not clobber page data")
@@ -146,7 +146,7 @@ func TestUpsertBlurbThenPage(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, r.Changed || r.NeedsFetch, "approx date alone should not trigger fetch: %+v", r)
 	var revised string
-	require.NoError(t, s.Meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&revised))
+	require.NoError(t, s.meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&revised))
 	require.Equal(t, "2026-11-01", revised, "approx date must not overwrite the exact date")
 
 	// Single-chapter page (no Updated date) keeps the blurb's revised date: no refetch loop.
@@ -185,7 +185,7 @@ func TestBlurbDateOffByOneDay(t *testing.T) {
 
 	revised := func() string {
 		var r string
-		require.NoError(t, s.Meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&r))
+		require.NoError(t, s.meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&r))
 		return r
 	}
 	for _, d := range []string{"2026-09-22", "2026-09-24", "2026-09-23"} {
@@ -275,11 +275,11 @@ func TestTagsDedupeAndTypeUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	var n int
 	var typ string
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&n))
-	require.NoError(t, s.Meta.QueryRow(`SELECT type FROM tags WHERE name = 'fixture fandom'`).Scan(&typ))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM tags`).Scan(&n))
+	require.NoError(t, s.meta.QueryRow(`SELECT type FROM tags WHERE name = 'fixture fandom'`).Scan(&typ))
 	require.Equal(t, 5, n)
 	require.Equal(t, "Fandom", typ)
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM work_tags wt JOIN tags t ON t.id = wt.tag_id
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM work_tags wt JOIN tags t ON t.id = wt.tag_id
 		WHERE t.name = 'Fixture Fandom'`).Scan(&n))
 	require.Equal(t, 2, n, "both works should share the fandom tag")
 }
@@ -306,7 +306,7 @@ func TestFTS(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	var rows int
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM works_fts`).Scan(&rows))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM works_fts`).Scan(&rows))
 	require.Equal(t, 2, rows)
 }
 
@@ -357,7 +357,7 @@ func TestRawPagesDedupeAndPrune(t *testing.T) {
 		require.NoError(t, err)
 	}
 	var n int
-	require.NoError(t, s.Content.QueryRow(`SELECT COUNT(*) FROM raw_pages WHERE work_id = 1`).Scan(&n))
+	require.NoError(t, s.content.QueryRow(`SELECT COUNT(*) FROM raw_pages WHERE work_id = 1`).Scan(&n))
 	require.Equal(t, 2, n, "keep=2")
 	got, _, err := s.LatestRawPage(ctx, 1)
 	require.NoError(t, err)

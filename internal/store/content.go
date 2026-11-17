@@ -23,7 +23,7 @@ func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page 
 	hash := hex.EncodeToString(sum[:])
 	z := s.compress(page)
 	defer s.timed("put_raw_page", start, "work_id", workID, "bytes", len(page))
-	tx, err := s.Content.BeginTx(ctx, nil)
+	tx, err := s.content.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -66,7 +66,7 @@ func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page 
 func (s *Store) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.Time, error) {
 	var z []byte
 	var at int64
-	err := s.Content.QueryRowContext(ctx, `SELECT html_zstd, fetched_at FROM raw_pages WHERE work_id = ?
+	err := s.content.QueryRowContext(ctx, `SELECT html_zstd, fetched_at FROM raw_pages WHERE work_id = ?
 		ORDER BY fetched_at DESC, id DESC LIMIT 1`, workID).Scan(&z, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, time.Time{}, ErrNoRawPage
@@ -80,7 +80,7 @@ func (s *Store) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.T
 
 // RawPageWorkIDs pages through work ids that have raw pages (for reparse), ascending after afterID.
 func (s *Store) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
-	rows, err := s.Content.QueryContext(ctx, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
+	rows, err := s.content.QueryContext(ctx, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
 		ORDER BY work_id LIMIT ?`, afterID, limit)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 	if err != nil {
 		return "", err
 	}
-	tx, err := s.Content.BeginTx(ctx, nil)
+	tx, err := s.content.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +166,7 @@ func (s *Store) compareWorkContent(ctx context.Context, workID int64, chs []mode
 		return ContentNew, nil
 	}
 	var oldSkin string
-	if err := s.Content.QueryRowContext(ctx, `SELECT css FROM work_skins WHERE work_id = ?`, workID).Scan(&oldSkin); err != nil &&
+	if err := s.content.QueryRowContext(ctx, `SELECT css FROM work_skins WHERE work_id = ?`, workID).Scan(&oldSkin); err != nil &&
 		!errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
@@ -185,7 +185,7 @@ func (s *Store) compareWorkContent(ctx context.Context, workID int64, chs []mode
 
 // ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them).
 func (s *Store) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapter, error) {
-	rows, err := s.Content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd
+	rows, err := s.content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd
 		FROM chapter_bodies WHERE work_id = ? ORDER BY position`, workID)
 	if err != nil {
 		return nil, err

@@ -67,7 +67,7 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 	start := time.Now()
 	defer s.timed("upsert_work", start, "work_id", w.ID, "origin", int(origin))
 	now := s.unix()
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return UpsertResult{}, err
 	}
@@ -370,7 +370,7 @@ func updateFTS(ctx context.Context, tx *sql.Tx, w model.Work) error {
 
 // SearchWorkIDs runs an FTS5 MATCH query and returns work ids by rank.
 func (s *Store) SearchWorkIDs(ctx context.Context, match string, limit int) ([]int64, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT rowid FROM works_fts WHERE works_fts MATCH ? ORDER BY rank LIMIT ?`, match, limit)
+	rows, err := s.meta.QueryContext(ctx, `SELECT rowid FROM works_fts WHERE works_fts MATCH ? ORDER BY rank LIMIT ?`, match, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +389,7 @@ func (s *Store) SearchWorkIDs(ctx context.Context, match string, limit int) ([]i
 // SetWorkStatus records a verification result (deleted/hidden/restricted/...). Content is kept.
 func (s *Store) SetWorkStatus(ctx context.Context, workID int64, status model.WorkStatus) error {
 	now := s.unix()
-	res, err := s.Meta.ExecContext(ctx, `UPDATE works SET
+	res, err := s.meta.ExecContext(ctx, `UPDATE works SET
 		status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,
 		status = ?, last_checked = ? WHERE id = ?`, string(status), now, string(status), now, workID)
 	if err != nil {
@@ -397,7 +397,7 @@ func (s *Store) SetWorkStatus(ctx context.Context, workID int64, status model.Wo
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		// Unknown work (e.g. on-demand fetch of a deleted id): record it so we don't retry blindly.
-		_, err = s.Meta.ExecContext(ctx, `INSERT INTO works (id, status, status_changed_at, first_seen, last_checked)
+		_, err = s.meta.ExecContext(ctx, `INSERT INTO works (id, status, status_changed_at, first_seen, last_checked)
 			VALUES (?,?,?,?,?)`, workID, string(status), now, now, now)
 	}
 	s.log.Debug("work status set", "work_id", workID, "status", string(status))
@@ -407,40 +407,108 @@ func (s *Store) SetWorkStatus(ctx context.Context, workID int64, status model.Wo
 // WorkStatus returns a work's status and whether it exists.
 func (s *Store) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus, bool, error) {
 	var st model.WorkStatus
-	err := s.Meta.QueryRowContext(ctx, `SELECT status FROM works WHERE id = ?`, workID).Scan(&st)
+	err := s.meta.QueryRowContext(ctx, `SELECT status FROM works WHERE id = ?`, workID).Scan(&st)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return st, err == nil, err
 }
 
-// SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or
-// changed since their last fetch (same rule as WorkNeedsFetch), oldest first.
-func (s *Store) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, limit int) ([]int64, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT w.id FROM source_works sw JOIN works w ON w.id = sw.work_id
-		WHERE sw.source_id = ? AND w.status = 'ok' AND (w.last_fetched = 0 OR w.fetched_revised != w.revised_at
-			OR w.fetched_chapters != w.chapters_posted OR w.fetched_words != w.words)
-		ORDER BY w.id LIMIT ?`, sourceID, limit)
+// ErrNoWork means no works row has the requested id.
+var ErrNoWork = errors.New("store: no such work")
+
+// Work returns a work's own metadata and stats (the works row). Related rows (creators, tags,
+// series, collections, chapters) are not loaded. The result holds fanwork content: never log it.
+func (s *Store) Work(ctx context.Context, id int64) (model.Work, error) {
+	w := model.Work{ID: id}
+	var complete, restricted, anonymous int
+	err := s.meta.QueryRowContext(ctx, `SELECT title, summary_html, notes_html, endnotes_html, language, words,
+		chapters_posted, chapters_expected, complete, published, revised_at, kudos, hits, comments, bookmarks,
+		restricted, anonymous FROM works WHERE id = ?`, id).Scan(&w.Title, &w.SummaryHTML, &w.NotesHTML,
+		&w.EndNotesHTML, &w.Language, &w.Words, &w.ChaptersPosted, &w.ChaptersExpected, &complete, &w.Published,
+		&w.Revised, &w.Stats.Kudos, &w.Stats.Hits, &w.Stats.Comments, &w.Stats.Bookmarks, &restricted, &anonymous)
+	if errors.Is(err, sql.ErrNoRows) {
+		return w, ErrNoWork
+	}
+	w.Complete, w.Restricted, w.Anonymous = complete == 1, restricted == 1, anonymous == 1
+	return w, err
+}
+
+// WorkDiag is the content-free state of one work (for `debug work` and tests): status, dates,
+// numbers, bookkeeping and row counts. It never holds titles, summaries, notes, names or tags.
+type WorkDiag struct {
+	Status           model.WorkStatus
+	Published        string // YYYY-MM-DD
+	Revised          string // YYYY-MM-DD
+	FetchedRevised   string // revised date at the last full fetch
+	Words            int
+	ChaptersPosted   int
+	ChaptersExpected int // 0 = unknown
+	Stats            model.Stats
+	Restricted       bool
+	Anonymous        bool
+	ParserVersion    int
+	FirstSeen        time.Time
+	LastListed       time.Time
+	LastFetched      time.Time
+	LastChecked      time.Time
+	// Related row counts.
+	Tags          int
+	Creators      int
+	ChapterRows   int
+	Sources       int
+	Images        int
+	RawVersions   int   // content.db raw_pages rows
+	RawBytes      int64 // uncompressed size of those pages
+	ChapterBodies int   // content.db chapter_bodies rows
+}
+
+// WorkDiag returns the content-free diagnostic view of a work, or ErrNoWork.
+func (s *Store) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
+	var d WorkDiag
+	var restricted, anonymous int
+	var firstSeen, lastListed, lastFetched, lastChecked int64
+	err := s.meta.QueryRowContext(ctx, `SELECT status, published, revised_at, fetched_revised, words, chapters_posted,
+		chapters_expected, kudos, hits, comments, bookmarks, restricted, anonymous, parser_version, first_seen, last_listed,
+		last_fetched, last_checked,
+		(SELECT COUNT(*) FROM work_tags WHERE work_id = works.id),
+		(SELECT COUNT(*) FROM work_creators WHERE work_id = works.id),
+		(SELECT COUNT(*) FROM chapters WHERE work_id = works.id),
+		(SELECT COUNT(*) FROM source_works WHERE work_id = works.id),
+		(SELECT COUNT(*) FROM work_images WHERE work_id = works.id)
+		FROM works WHERE id = ?`, id).Scan(&d.Status, &d.Published, &d.Revised, &d.FetchedRevised, &d.Words,
+		&d.ChaptersPosted, &d.ChaptersExpected, &d.Stats.Kudos, &d.Stats.Hits, &d.Stats.Comments, &d.Stats.Bookmarks,
+		&restricted, &anonymous, &d.ParserVersion, &firstSeen, &lastListed, &lastFetched, &lastChecked,
+		&d.Tags, &d.Creators, &d.ChapterRows, &d.Sources, &d.Images)
+	if errors.Is(err, sql.ErrNoRows) {
+		return d, ErrNoWork
+	}
 	if err != nil {
-		return nil, err
+		return d, err
 	}
-	defer rows.Close()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+	d.Restricted, d.Anonymous = restricted == 1, anonymous == 1
+	d.FirstSeen, d.LastListed = unixTime(firstSeen), unixTime(lastListed)
+	d.LastFetched, d.LastChecked = unixTime(lastFetched), unixTime(lastChecked)
+	err = s.content.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM raw_pages WHERE work_id = ?),
+		(SELECT COALESCE(SUM(size), 0) FROM raw_pages WHERE work_id = ?),
+		(SELECT COUNT(*) FROM chapter_bodies WHERE work_id = ?)`, id, id, id).
+		Scan(&d.RawVersions, &d.RawBytes, &d.ChapterBodies)
+	return d, err
+}
+
+// WorkExists reports whether a work row exists.
+func (s *Store) WorkExists(ctx context.Context, id int64) (bool, error) {
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM works WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
 }
 
 // WorkNeedsFetch reports whether a work is ok and was never fetched or changed since its last
 // fetch (by revised date, chapters or words).
 func (s *Store) WorkNeedsFetch(ctx context.Context, workID int64) (bool, error) {
 	var need bool
-	err := s.Meta.QueryRowContext(ctx, `SELECT status = 'ok' AND (last_fetched = 0 OR fetched_revised != revised_at
+	err := s.meta.QueryRowContext(ctx, `SELECT status = 'ok' AND (last_fetched = 0 OR fetched_revised != revised_at
 		OR fetched_chapters != chapters_posted OR fetched_words != words) FROM works WHERE id = ?`, workID).Scan(&need)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
@@ -451,7 +519,7 @@ func (s *Store) WorkNeedsFetch(ctx context.Context, workID int64) (bool, error) 
 // WorkParserVersion returns the parser version a work was last parsed with (0 if unknown).
 func (s *Store) WorkParserVersion(ctx context.Context, workID int64) (int, error) {
 	var v int
-	err := s.Meta.QueryRowContext(ctx, `SELECT parser_version FROM works WHERE id = ?`, workID).Scan(&v)
+	err := s.meta.QueryRowContext(ctx, `SELECT parser_version FROM works WHERE id = ?`, workID).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -464,11 +532,11 @@ func (s *Store) WorkParserVersion(ctx context.Context, workID int64) (int, error
 // Existing content and metadata are kept.
 func (s *Store) MarkWorkParseFailed(ctx context.Context, workID int64) error {
 	now := s.unix()
-	if _, err := s.Meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
+	if _, err := s.meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
 		ON CONFLICT (id) DO NOTHING`, workID, now, now); err != nil {
 		return err
 	}
-	_, err := s.Meta.ExecContext(ctx, `UPDATE works SET last_fetched = ?, last_checked = ?, fetched_revised = revised_at,
+	_, err := s.meta.ExecContext(ctx, `UPDATE works SET last_fetched = ?, last_checked = ?, fetched_revised = revised_at,
 		fetched_chapters = chapters_posted, fetched_words = words, parser_version = 0 WHERE id = ?`, now, now, workID)
 	s.log.Debug("work parse failure recorded", "work_id", workID)
 	return err

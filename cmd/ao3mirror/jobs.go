@@ -29,8 +29,11 @@ func runJobs(ctx context.Context, st *store.Store, args []string, out, errOut io
 	if *limit <= 0 {
 		*limit = 50
 	}
-	js, err := st.FindJobs(ctx, store.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit,
-		Oldest: *state == store.JobQueued})
+	order := store.JobsNewest
+	if *state == store.JobQueued {
+		order = store.JobsOldest
+	}
+	js, err := st.FindJobs(ctx, store.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})
 	if err != nil {
 		fmt.Fprintf(errOut, "jobs: %v\n", err)
 		return 1

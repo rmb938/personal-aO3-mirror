@@ -37,7 +37,7 @@ func TestSourcesLifecycle(t *testing.T) {
 	// Jobs: queued ones get cancelled, running ones are left alone.
 	now := time.Now().Unix()
 	for _, st := range []string{"queued", "queued", "running"} {
-		_, err := s.Meta.Exec(`INSERT INTO jobs (kind, source_id, target, priority_class, state, dedupe_key, created_at, updated_at)
+		_, err := s.meta.Exec(`INSERT INTO jobs (kind, source_id, target, priority_class, state, dedupe_key, created_at, updated_at)
 			VALUES ('listing_page', ?, '/x', 4, ?, ?, ?, ?)`, id, st, st+time.Now().String(), now, now)
 		require.NoError(t, err)
 	}
@@ -53,8 +53,8 @@ func TestSourcesLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoSource)
 
 	var works, members int
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM works`).Scan(&works))
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM source_works`).Scan(&members))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM works`).Scan(&works))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM source_works`).Scan(&members))
 	require.Equal(t, 2, works, "works must be kept")
 	require.Equal(t, 0, members, "memberships removed")
 }

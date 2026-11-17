@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -86,7 +87,7 @@ func openStore(t *testing.T, dir string, now func() time.Time) *store.Store {
 	st, err := store.Open(context.Background(), dir, store.Options{Now: now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	_, err = st.Meta.Exec(`INSERT INTO works (id, first_seen) VALUES (1, 0)`)
+	_, err = st.UpsertWork(context.Background(), model.Work{ID: 1}, model.FromBlurb, 0)
 	require.NoError(t, err)
 	return st
 }

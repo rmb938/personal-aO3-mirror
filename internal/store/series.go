@@ -12,7 +12,7 @@ import (
 // UpsertSeries stores a series page's metadata (description, notes, dates, stats, creators)
 // and marks the series fetched.
 func (s *Store) UpsertSeries(ctx context.Context, ser model.Series) error {
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -48,16 +48,42 @@ func (s *Store) UpsertSeries(ctx context.Context, ser model.Series) error {
 	return nil
 }
 
+// ErrNoSeries means no series row has the requested id.
+var ErrNoSeries = errors.New("store: no such series")
+
+// SeriesRow is a stored series: its page metadata plus when it was last fetched. Creators are
+// not loaded. It holds fanwork content: never log its text fields.
+type SeriesRow struct {
+	model.Series
+	LastFetched time.Time // zero if the series page was never fetched
+}
+
+// Series returns a stored series, or ErrNoSeries.
+func (s *Store) Series(ctx context.Context, id int64) (SeriesRow, error) {
+	var r SeriesRow
+	r.ID = id
+	var complete int
+	var fetched int64
+	err := s.meta.QueryRowContext(ctx, `SELECT title, summary_html, notes_html, complete, words, works_count,
+		bookmarks, begun, updated, last_fetched FROM series WHERE id = ?`, id).Scan(&r.Title, &r.SummaryHTML,
+		&r.NotesHTML, &complete, &r.Words, &r.WorksCount, &r.Bookmarks, &r.Begun, &r.Updated, &fetched)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, ErrNoSeries
+	}
+	r.Complete, r.LastFetched = complete == 1, unixTime(fetched)
+	return r, err
+}
+
 // MarkSeriesFetched records a fetch attempt that produced no metadata (404, restricted, hidden).
 func (s *Store) MarkSeriesFetched(ctx context.Context, id int64) error {
-	_, err := s.Meta.ExecContext(ctx, `UPDATE series SET last_fetched = ? WHERE id = ?`, s.unix(), id)
+	_, err := s.meta.ExecContext(ctx, `UPDATE series SET last_fetched = ? WHERE id = ?`, s.unix(), id)
 	return err
 }
 
 // SeriesNeedingInfo returns ids of series that are not themselves sources and were never
 // fetched, fetched before `before`, or fetched before one of their mirrored works was revised.
 func (s *Store) SeriesNeedingInfo(ctx context.Context, before time.Time, limit int) ([]int64, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT se.id FROM series se
+	rows, err := s.meta.QueryContext(ctx, `SELECT se.id FROM series se
 		WHERE NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
 			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
 		  AND (se.last_fetched = 0 OR se.last_fetched < ?
@@ -91,7 +117,7 @@ type SeriesMember struct {
 // authority for their position. Only page 1 is fetched for non-source series, so for series
 // longer than one page this covers the first page only.
 func (s *Store) SetSeriesMembers(ctx context.Context, seriesID int64, members []SeriesMember) error {
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -135,7 +161,7 @@ func (s *Store) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeri
 }
 
 func (s *Store) partialSeriesRows(ctx context.Context, limit int) (out []PartialSeries, err error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT se.id, se.works_count,
+	rows, err := s.meta.QueryContext(ctx, `SELECT se.id, se.works_count,
 			(SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
 			 WHERE sw.series_id = se.id AND w.last_fetched > 0) AS mirrored
 		FROM series se
@@ -160,7 +186,7 @@ func (s *Store) partialSeriesRows(ctx context.Context, limit int) (out []Partial
 }
 
 func (s *Store) fillMissing(ctx context.Context, p *PartialSeries) error {
-	positions, err := queryInt64s(ctx, s.Meta, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
+	positions, err := queryInt64s(ctx, s.meta, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.series_id = ? AND w.last_fetched > 0`, p.ID)
 	if err != nil {
 		return err
@@ -174,32 +200,8 @@ func (s *Store) fillMissing(ctx context.Context, p *PartialSeries) error {
 			p.MissingPositions = append(p.MissingPositions, pos)
 		}
 	}
-	p.MissingWorkIDs, err = queryInt64s(ctx, s.Meta, `SELECT sw.work_id FROM series_works sw
+	p.MissingWorkIDs, err = queryInt64s(ctx, s.meta, `SELECT sw.work_id FROM series_works sw
 		WHERE sw.series_id = ? AND NOT EXISTS (SELECT 1 FROM works w WHERE w.id = sw.work_id AND w.last_fetched > 0)
 		ORDER BY sw.position, sw.work_id`, p.ID)
 	return err
-}
-
-// queryInt64s runs a single-integer-column query and returns its values in order.
-func queryInt64s(ctx context.Context, db *sql.DB, q string, args ...any) (out []int64, err error) {
-	rows, err := db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
-	for rows.Next() {
-		var v int64
-		if err := rows.Scan(&v); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-// WorkExists reports whether a work row exists.
-func (s *Store) WorkExists(ctx context.Context, id int64) (bool, error) {
-	var n int
-	err := s.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM works WHERE id = ?`, id).Scan(&n)
-	return n > 0, err
 }

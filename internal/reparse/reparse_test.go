@@ -55,8 +55,19 @@ func TestReparse(t *testing.T) {
 	putPage(9, "/works/9", []byte(`<html><body><div id="outer"><div id="main">x</div></div></body></html>`))
 	upsert(model.Work{ID: 9}, model.FromPage, 0)
 
-	var lastFetchedBefore int64
-	require.NoError(t, st.Meta.QueryRow(`SELECT last_fetched FROM works WHERE id = 1001`).Scan(&lastFetchedBefore))
+	diag := func(id int64) store.WorkDiag {
+		t.Helper()
+		d, err := st.WorkDiag(ctx, id)
+		require.NoError(t, err)
+		return d
+	}
+	work := func(id int64) model.Work {
+		t.Helper()
+		w, err := st.Work(ctx, id)
+		require.NoError(t, err)
+		return w
+	}
+	lastFetchedBefore := diag(1001).LastFetched
 	clk = clk.Add(time.Hour)
 
 	res, err := Run(ctx, st, Options{DataDir: dir, QueueImages: true, Logger: log})
@@ -66,20 +77,14 @@ func TestReparse(t *testing.T) {
 	require.Equal(t, 1, res.Skipped)
 	require.Equal(t, 1, res.Failed)
 	// work_chaptered.html embeds one absolute image in a chapter body.
-	var queued int
-	require.NoError(t, st.Meta.QueryRow(`SELECT COUNT(*) FROM work_images WHERE work_id = 1001`).Scan(&queued))
+	d := diag(1001)
 	require.Equal(t, 1, res.ImagesQueued, "reparse should queue the embedded image")
-	require.Equal(t, 1, queued)
+	require.Equal(t, 1, d.Images)
 
-	var title, status string
-	var pv int
-	var lastFetched int64
-	require.NoError(t, st.Meta.QueryRow(`SELECT title, status, parser_version, last_fetched FROM works WHERE id = 1001`).
-		Scan(&title, &status, &pv, &lastFetched))
-	require.Equal(t, "Fixture Title One", title)
-	require.Equal(t, "deleted", status, "reparse must not change the work status")
-	require.Equal(t, parse.Version, pv)
-	require.Equal(t, lastFetchedBefore, lastFetched, "reparse is not a fetch")
+	require.Equal(t, "Fixture Title One", work(1001).Title)
+	require.Equal(t, model.StatusDeleted, d.Status, "reparse must not change the work status")
+	require.Equal(t, parse.Version, d.ParserVersion)
+	require.Equal(t, lastFetchedBefore, d.LastFetched, "reparse is not a fetch")
 	chs, err := st.ChapterBodies(ctx, 1001)
 	require.NoError(t, err)
 	require.Len(t, chs, 3)
@@ -93,9 +98,8 @@ func TestReparse(t *testing.T) {
 	res, err = Run(ctx, st, Options{All: true, QueueImages: true, Logger: log})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.ImagesQueued, "already-queued images must not be counted again")
-	var kudos int
-	require.NoError(t, st.Meta.QueryRow(`SELECT title, kudos FROM works WHERE id = 1001`).Scan(&title, &kudos))
-	require.Equal(t, "Newer Blurb Title", title, "reparse must not roll back newer listing data")
-	require.Equal(t, 5000, kudos)
+	w := work(1001)
+	require.Equal(t, "Newer Blurb Title", w.Title, "reparse must not roll back newer listing data")
+	require.Equal(t, 5000, w.Stats.Kudos)
 	require.NotContains(t, strings.ToLower(logs.String()), "fixture title", "reparse logs leaked content")
 }

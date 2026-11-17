@@ -35,11 +35,11 @@ func TestTagInfo(t *testing.T) {
 
 	var canonical, parents, metas int
 	var fc int64
-	require.NoError(t, s.Meta.QueryRow(`SELECT canonical FROM tags WHERE id = ?`, char.ID).Scan(&canonical))
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM tag_parents tp JOIN tags p ON p.id = tp.parent_id
+	require.NoError(t, s.meta.QueryRow(`SELECT canonical FROM tags WHERE id = ?`, char.ID).Scan(&canonical))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM tag_parents tp JOIN tags p ON p.id = tp.parent_id
 		WHERE tp.child_id = ? AND p.name = 'Fixture Fandom'`, char.ID).Scan(&parents))
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM tag_meta WHERE sub_id = ?`, char.ID).Scan(&metas))
-	require.NoError(t, s.Meta.QueryRow(`SELECT merger_id FROM tags WHERE name = 'FC'`).Scan(&fc))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM tag_meta WHERE sub_id = ?`, char.ID).Scan(&metas))
+	require.NoError(t, s.meta.QueryRow(`SELECT merger_id FROM tags WHERE name = 'FC'`).Scan(&fc))
 	require.Equal(t, 1, canonical)
 	require.Equal(t, 1, parents)
 	require.Equal(t, 1, metas)
@@ -58,17 +58,17 @@ func TestTagInfo(t *testing.T) {
 
 	// Synonym page: merger recorded, existing fandom type unchanged by Unknown.
 	var fandomID int64
-	require.NoError(t, s.Meta.QueryRow(`SELECT id FROM tags WHERE name = 'Fixture Fandom'`).Scan(&fandomID))
+	require.NoError(t, s.meta.QueryRow(`SELECT id FROM tags WHERE name = 'Fixture Fandom'`).Scan(&fandomID))
 	require.NoError(t, s.UpdateTagInfo(ctx, fandomID, TagInfoUpdate{Type: model.TagUnknown, MergerOf: "Canonical Fandom"}))
 	var typ string
-	require.NoError(t, s.Meta.QueryRow(`SELECT type FROM tags WHERE id = ?`, fandomID).Scan(&typ))
+	require.NoError(t, s.meta.QueryRow(`SELECT type FROM tags WHERE id = ?`, fandomID).Scan(&typ))
 	require.Equal(t, "Fandom", typ)
 
 	// Same-type relations inherit the tag's type; parents (mixed types) stay Unknown unless known.
 	got := map[string]string{}
 	for _, n := range []string{"FC", "Fixture Meta", "Canonical Fandom"} {
 		var ty string
-		require.NoError(t, s.Meta.QueryRow(`SELECT type FROM tags WHERE name = ?`, n).Scan(&ty))
+		require.NoError(t, s.meta.QueryRow(`SELECT type FROM tags WHERE name = ?`, n).Scan(&ty))
 		got[n] = ty
 	}
 	require.Equal(t, map[string]string{"FC": "Character", "Fixture Meta": "Character", "Canonical Fandom": "Fandom"}, got)

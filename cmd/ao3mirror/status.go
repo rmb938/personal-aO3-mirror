@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"sort"
@@ -189,60 +188,31 @@ func printRequests(ctx context.Context, a *app, out io.Writer, jobID int64, pref
 
 // printWork shows numeric/status fields only: no title, summary, names or tags.
 func printWork(ctx context.Context, a *app, out io.Writer, id int64) error {
-	var status, published, revised, fetchedRevised string
-	var words, chPosted, chExpected, kudos, hits, comments, bookmarks, restricted, anonymous, parserVersion int
-	var firstSeen, lastListed, lastFetched, lastChecked int64
-	err := a.store.Meta.QueryRowContext(ctx, `SELECT status, published, revised_at, fetched_revised, words, chapters_posted,
-		chapters_expected, kudos, hits, comments, bookmarks, restricted, anonymous, parser_version, first_seen, last_listed,
-		last_fetched, last_checked FROM works WHERE id = ?`, id).Scan(&status, &published, &revised, &fetchedRevised, &words,
-		&chPosted, &chExpected, &kudos, &hits, &comments, &bookmarks, &restricted, &anonymous, &parserVersion,
-		&firstSeen, &lastListed, &lastFetched, &lastChecked)
+	d, err := a.store.WorkDiag(ctx, id)
 	if err != nil {
 		return err
 	}
-	var tags, creators, chapters, sources, rawVersions, rawBytes, bodies int
-	for _, c := range []struct {
-		db  *sql.DB
-		q   string
-		dst []any
-	}{
-		{a.store.Meta, `SELECT COUNT(*) FROM work_tags WHERE work_id = ?`, []any{&tags}},
-		{a.store.Meta, `SELECT COUNT(*) FROM work_creators WHERE work_id = ?`, []any{&creators}},
-		{a.store.Meta, `SELECT COUNT(*) FROM chapters WHERE work_id = ?`, []any{&chapters}},
-		{a.store.Meta, `SELECT COUNT(*) FROM source_works WHERE work_id = ?`, []any{&sources}},
-		{a.store.Content, `SELECT COUNT(*), COALESCE(SUM(size),0) FROM raw_pages WHERE work_id = ?`, []any{&rawVersions, &rawBytes}},
-		{a.store.Content, `SELECT COUNT(*) FROM chapter_bodies WHERE work_id = ?`, []any{&bodies}},
-	} {
-		if err := c.db.QueryRowContext(ctx, c.q, id).Scan(c.dst...); err != nil {
-			return fmt.Errorf("counts: %w", err)
-		}
-	}
 	exp := "?"
-	if chExpected > 0 {
-		exp = strconv.Itoa(chExpected)
+	if d.ChaptersExpected > 0 {
+		exp = strconv.Itoa(d.ChaptersExpected)
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	for _, kv := range [][2]string{
-		{"work", strconv.FormatInt(id, 10)}, {"status", status}, {"published", dash(published)}, {"revised", dash(revised)},
-		{"revised at last fetch", dash(fetchedRevised)}, {"words", comma(words)}, {"chapters", fmt.Sprintf("%d/%s", chPosted, exp)},
-		{"kudos/hits/comments/bookmarks", fmt.Sprintf("%d/%d/%d/%d", kudos, hits, comments, bookmarks)},
-		{"restricted/anonymous", fmt.Sprintf("%t/%t", restricted == 1, anonymous == 1)},
-		{"tags/creators/chapter rows/sources", fmt.Sprintf("%d/%d/%d/%d", tags, creators, chapters, sources)},
-		{"raw versions", fmt.Sprintf("%d (%s)", rawVersions, mb(int64(rawBytes)))}, {"chapter bodies", strconv.Itoa(bodies)},
-		{"parser version", strconv.Itoa(parserVersion)},
-		{"first seen", when(unix(firstSeen))}, {"last listed", when(unix(lastListed))},
-		{"last fetched", when(unix(lastFetched))}, {"last checked", when(unix(lastChecked))},
+		{"work", strconv.FormatInt(id, 10)}, {"status", string(d.Status)}, {"published", dash(d.Published)},
+		{"revised", dash(d.Revised)}, {"revised at last fetch", dash(d.FetchedRevised)}, {"words", comma(d.Words)},
+		{"chapters", fmt.Sprintf("%d/%s", d.ChaptersPosted, exp)},
+		{"kudos/hits/comments/bookmarks", fmt.Sprintf("%d/%d/%d/%d", d.Stats.Kudos, d.Stats.Hits, d.Stats.Comments, d.Stats.Bookmarks)},
+		{"restricted/anonymous", fmt.Sprintf("%t/%t", d.Restricted, d.Anonymous)},
+		{"tags/creators/chapter rows/sources", fmt.Sprintf("%d/%d/%d/%d", d.Tags, d.Creators, d.ChapterRows, d.Sources)},
+		{"images", strconv.Itoa(d.Images)},
+		{"raw versions", fmt.Sprintf("%d (%s)", d.RawVersions, mb(d.RawBytes))}, {"chapter bodies", strconv.Itoa(d.ChapterBodies)},
+		{"parser version", strconv.Itoa(d.ParserVersion)},
+		{"first seen", when(d.FirstSeen)}, {"last listed", when(d.LastListed)},
+		{"last fetched", when(d.LastFetched)}, {"last checked", when(d.LastChecked)},
 	} {
 		fmt.Fprintf(tw, "%s:\t%s\n", kv[0], kv[1])
 	}
 	return tw.Flush()
-}
-
-func unix(s int64) time.Time {
-	if s == 0 {
-		return time.Time{}
-	}
-	return time.Unix(s, 0)
 }
 
 func localRFC(s string) string {

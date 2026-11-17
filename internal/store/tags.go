@@ -27,7 +27,7 @@ func (s *Store) TagInfoProgress(ctx context.Context, types []string, before time
 	for _, t := range types {
 		args = append(args, t)
 	}
-	err = s.Meta.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(t.info_fetched_at > 0), 0), COALESCE(SUM(t.info_fetched_at < ?), 0)
+	err = s.meta.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(t.info_fetched_at > 0), 0), COALESCE(SUM(t.info_fetched_at < ?), 0)
 		FROM tags t WHERE t.type IN (`+placeholders(len(types))+`)
 		  AND EXISTS (SELECT 1 FROM work_tags wt WHERE wt.tag_id = t.id)`, args...).Scan(&total, &fetched, &due)
 	return total, fetched, due, err
@@ -46,7 +46,7 @@ func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time
 	}
 	args = append(args, before.Unix(), limit)
 	//nolint:gosec // G202: only placeholders(n) ("?,?,...") is concatenated; values are bound args
-	rows, err := s.Meta.QueryContext(ctx, `SELECT t.id, t.name, t.type FROM tags t
+	rows, err := s.meta.QueryContext(ctx, `SELECT t.id, t.name, t.type FROM tags t
 		WHERE t.type IN (`+placeholders(len(types))+`) AND t.info_fetched_at < ?
 		  AND EXISTS (SELECT 1 FROM work_tags wt WHERE wt.tag_id = t.id)
 		ORDER BY (SELECT COUNT(*) FROM work_tags wt WHERE wt.tag_id = t.id) DESC, t.id
@@ -66,13 +66,38 @@ func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time
 	return out, rows.Err()
 }
 
+// ErrNoTag means no tag row matches.
+var ErrNoTag = errors.New("store: no such tag")
+
 func (s *Store) TagByID(ctx context.Context, id int64) (TagRef, error) {
 	var r TagRef
-	err := s.Meta.QueryRowContext(ctx, `SELECT id, name, type FROM tags WHERE id = ?`, id).Scan(&r.ID, &r.Name, &r.Type)
+	err := s.meta.QueryRowContext(ctx, `SELECT id, name, type FROM tags WHERE id = ?`, id).Scan(&r.ID, &r.Name, &r.Type)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, errors.New("store: no such tag")
+		return r, ErrNoTag
 	}
 	return r, err
+}
+
+// TagInfo is a tag's wrangling state as recorded from its tag page.
+type TagInfo struct {
+	TagRef
+	Canonical     bool
+	MergerID      int64     // 0 = not a synonym
+	InfoFetchedAt time.Time // zero if the tag page was never fetched
+}
+
+// TagByName returns a tag and its wrangling state by name (case-insensitive), or ErrNoTag.
+func (s *Store) TagByName(ctx context.Context, name string) (TagInfo, error) {
+	var t TagInfo
+	var canonical, merger sql.NullInt64
+	var fetched int64
+	err := s.meta.QueryRowContext(ctx, `SELECT id, name, type, canonical, merger_id, info_fetched_at FROM tags
+		WHERE name = ?`, name).Scan(&t.ID, &t.Name, &t.Type, &canonical, &merger, &fetched)
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, ErrNoTag
+	}
+	t.Canonical, t.MergerID, t.InfoFetchedAt = canonical.Int64 == 1, merger.Int64, unixTime(fetched)
+	return t, err
 }
 
 // TagInfoUpdate is what a tag page says about a tag.
@@ -93,7 +118,7 @@ type TagInfoUpdate struct {
 // types (a relationship's parents mix fandoms and characters), so they are created as Unknown
 // and get a type when they appear on a work.
 func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) error {
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

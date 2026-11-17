@@ -28,7 +28,7 @@ func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
 	if r.JobID > 0 {
 		job = r.JobID
 	}
-	_, err := s.Meta.ExecContext(ctx, `INSERT INTO requests (ts, req_id, job_id, kind, path, status, class, reason,
+	_, err := s.meta.ExecContext(ctx, `INSERT INTO requests (ts, req_id, job_id, kind, path, status, class, reason,
 		bytes, duration_ms, waited_ms, hop) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.Time.Unix(), r.ReqID, job, r.Kind, r.Path, r.Status, r.Class, r.Reason, r.Bytes,
 		r.Duration.Milliseconds(), r.Waited.Milliseconds(), r.Hop)
@@ -37,11 +37,47 @@ func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
 
 // PruneRequests deletes request rows older than age.
 func (s *Store) PruneRequests(ctx context.Context, age time.Duration) (int64, error) {
-	res, err := s.Meta.ExecContext(ctx, `DELETE FROM requests WHERE ts < ?`, s.now().Add(-age).Unix())
+	res, err := s.meta.ExecContext(ctx, `DELETE FROM requests WHERE ts < ?`, s.now().Add(-age).Unix())
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// RecentRequests returns request rows newest first, optionally only non-ok, or only for a job
+// or path prefix.
+func (s *Store) RecentRequests(ctx context.Context, onlyErrors bool, jobID int64, pathPrefix string, limit int) ([]RequestRow, error) {
+	q := `SELECT ts, req_id, COALESCE(job_id, 0), kind, path, status, class, reason, bytes, duration_ms, waited_ms, hop FROM requests WHERE 1=1`
+	var args []any
+	if onlyErrors {
+		q += ` AND class != 'ok'`
+	}
+	if jobID > 0 {
+		q += ` AND job_id = ?`
+		args = append(args, jobID)
+	}
+	if pathPrefix != "" {
+		q += ` AND path LIKE ? ESCAPE '\'`
+		args = append(args, likeEscape(pathPrefix)+"%")
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.meta.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RequestRow
+	for rows.Next() {
+		var r RequestRow
+		var ts, dur, waited int64
+		if err := rows.Scan(&ts, &r.ReqID, &r.JobID, &r.Kind, &r.Path, &r.Status, &r.Class, &r.Reason, &r.Bytes, &dur, &waited, &r.Hop); err != nil {
+			return nil, err
+		}
+		r.Time, r.Duration, r.Waited = time.Unix(ts, 0), time.Duration(dur)*time.Millisecond, time.Duration(waited)*time.Millisecond
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // Counts is a content-free snapshot for `ao3mirror status`.
@@ -93,10 +129,10 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		dst map[string]int
 		arg []any
 	}{
-		{s.Meta, `SELECT status, COUNT(*) FROM works GROUP BY status`, c.WorksByStatus, nil},
-		{s.Meta, `SELECT state, COUNT(*) FROM sources GROUP BY state`, c.SourcesByState, nil},
-		{s.Meta, `SELECT state, COUNT(*) FROM jobs GROUP BY state`, c.JobsByState, nil},
-		{s.Meta, `SELECT class, COUNT(*) FROM requests WHERE ts >= ? GROUP BY class`, c.RequestsByClass, []any{now.Add(-24 * time.Hour).Unix()}},
+		{s.meta, `SELECT status, COUNT(*) FROM works GROUP BY status`, c.WorksByStatus, nil},
+		{s.meta, `SELECT state, COUNT(*) FROM sources GROUP BY state`, c.SourcesByState, nil},
+		{s.meta, `SELECT state, COUNT(*) FROM jobs GROUP BY state`, c.JobsByState, nil},
+		{s.meta, `SELECT class, COUNT(*) FROM requests WHERE ts >= ? GROUP BY class`, c.RequestsByClass, []any{now.Add(-24 * time.Hour).Unix()}},
 	}
 	for _, g := range grouped {
 		if err := countGroups(ctx, g.db, g.q, g.dst, g.arg...); err != nil {
@@ -109,19 +145,19 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		dst any
 		arg []any
 	}{
-		{s.Meta, `SELECT COUNT(*) FROM works WHERE last_fetched > 0`, &c.WorksFetched, nil},
-		{s.Meta, `SELECT COUNT(*) FROM works WHERE last_fetched > 0 AND parser_version = 0`, &c.ParseFailures, nil},
-		{s.Meta, `SELECT COUNT(*) FROM works WHERE last_fetched = 0 AND status = 'ok'`, &c.WorksNeverFetch, nil},
-		{s.Meta, `SELECT COUNT(*) FROM tags`, &c.Tags, nil},
-		{s.Meta, `SELECT COUNT(*) FROM creators`, &c.Creators, nil},
-		{s.Meta, `SELECT COUNT(*) FROM series`, &c.Series, nil},
-		{s.Meta, `SELECT COUNT(*) FROM requests WHERE ts >= ?`, &c.Requests1h, []any{now.Add(-time.Hour).Unix()}},
-		{s.Meta, `SELECT COUNT(*) FROM requests WHERE ts >= ?`, &c.Requests24h, []any{now.Add(-24 * time.Hour).Unix()}},
-		{s.Content, `SELECT COUNT(*) FROM raw_pages`, &c.RawPages, nil},
-		{s.Content, `SELECT COALESCE(SUM(size),0) FROM raw_pages`, &c.RawBytes, nil},
-		{s.Content, `SELECT COALESCE(SUM(LENGTH(html_zstd)),0) FROM raw_pages`, &c.RawZstdBytes, nil},
-		{s.Meta, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`, &c.MetaSchema, nil},
-		{s.Content, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`, &c.ContentSchema, nil},
+		{s.meta, `SELECT COUNT(*) FROM works WHERE last_fetched > 0`, &c.WorksFetched, nil},
+		{s.meta, `SELECT COUNT(*) FROM works WHERE last_fetched > 0 AND parser_version = 0`, &c.ParseFailures, nil},
+		{s.meta, `SELECT COUNT(*) FROM works WHERE last_fetched = 0 AND status = 'ok'`, &c.WorksNeverFetch, nil},
+		{s.meta, `SELECT COUNT(*) FROM tags`, &c.Tags, nil},
+		{s.meta, `SELECT COUNT(*) FROM creators`, &c.Creators, nil},
+		{s.meta, `SELECT COUNT(*) FROM series`, &c.Series, nil},
+		{s.meta, `SELECT COUNT(*) FROM requests WHERE ts >= ?`, &c.Requests1h, []any{now.Add(-time.Hour).Unix()}},
+		{s.meta, `SELECT COUNT(*) FROM requests WHERE ts >= ?`, &c.Requests24h, []any{now.Add(-24 * time.Hour).Unix()}},
+		{s.content, `SELECT COUNT(*) FROM raw_pages`, &c.RawPages, nil},
+		{s.content, `SELECT COALESCE(SUM(size),0) FROM raw_pages`, &c.RawBytes, nil},
+		{s.content, `SELECT COALESCE(SUM(LENGTH(html_zstd)),0) FROM raw_pages`, &c.RawZstdBytes, nil},
+		{s.meta, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`, &c.MetaSchema, nil},
+		{s.content, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`, &c.ContentSchema, nil},
 	}
 	for _, q := range singles {
 		if err := q.db.QueryRowContext(ctx, q.q, q.arg...).Scan(q.dst); err != nil {

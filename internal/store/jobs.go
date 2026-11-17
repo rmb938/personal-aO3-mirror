@@ -65,7 +65,7 @@ func (s *Store) EnqueueJob(ctx context.Context, j Job) (int64, bool, error) {
 	if j.SourceID > 0 {
 		src = j.SourceID
 	}
-	res, err := s.Meta.ExecContext(ctx, `INSERT INTO jobs (kind, source_id, target, priority_class, state, not_before,
+	res, err := s.meta.ExecContext(ctx, `INSERT INTO jobs (kind, source_id, target, priority_class, state, not_before,
 		max_attempts, dedupe_key, created_at, updated_at) VALUES (?,?,?,?, 'queued', ?,?,?,?,?)
 		ON CONFLICT (dedupe_key) WHERE state IN ('queued','running') DO NOTHING`,
 		j.Kind, src, j.Target, j.Priority, zeroUnix(j.NotBefore), j.MaxAttempts, j.DedupeKey, now, now)
@@ -78,12 +78,12 @@ func (s *Store) EnqueueJob(ctx context.Context, j Job) (int64, bool, error) {
 	}
 	var id int64
 	var prio int
-	if err := s.Meta.QueryRowContext(ctx, `SELECT id, priority_class FROM jobs WHERE dedupe_key = ? AND state IN ('queued','running')`,
+	if err := s.meta.QueryRowContext(ctx, `SELECT id, priority_class FROM jobs WHERE dedupe_key = ? AND state IN ('queued','running')`,
 		j.DedupeKey).Scan(&id, &prio); err != nil {
 		return 0, false, err
 	}
 	if j.Priority < prio {
-		if _, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET priority_class = ?, updated_at = ? WHERE id = ? AND state = 'queued'`,
+		if _, err := s.meta.ExecContext(ctx, `UPDATE jobs SET priority_class = ?, updated_at = ? WHERE id = ? AND state = 'queued'`,
 			j.Priority, now, id); err != nil {
 			return id, false, err
 		}
@@ -98,7 +98,7 @@ func (s *Store) PickJob(ctx context.Context, kinds []string, now time.Time) (Job
 	if len(kinds) == 0 {
 		return Job{}, ErrNoJob
 	}
-	tx, err := s.Meta.BeginTx(ctx, nil)
+	tx, err := s.meta.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, err
 	}
@@ -138,7 +138,7 @@ func (s *Store) PickJob(ctx context.Context, kinds []string, now time.Time) (Job
 // FinishJob marks a running job done or failed.
 func (s *Store) FinishJob(ctx context.Context, id int64, state, lastError string) error {
 	now := s.unix()
-	_, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = ?, last_error = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
+	_, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = ?, last_error = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
 		state, lastError, now, now, id)
 	return err
 }
@@ -148,27 +148,27 @@ func (s *Store) FinishJob(ctx context.Context, id int64, state, lastError string
 func (s *Store) RetryJob(ctx context.Context, id int64, notBefore time.Time, lastError string) (string, error) {
 	now := s.unix()
 	var attempts, max int
-	if err := s.Meta.QueryRowContext(ctx, `SELECT attempts, max_attempts FROM jobs WHERE id = ?`, id).Scan(&attempts, &max); err != nil {
+	if err := s.meta.QueryRowContext(ctx, `SELECT attempts, max_attempts FROM jobs WHERE id = ?`, id).Scan(&attempts, &max); err != nil {
 		return "", err
 	}
 	if attempts >= max {
 		return JobFailed, s.FinishJob(ctx, id, JobFailed, lastError)
 	}
-	_, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', not_before = ?, last_error = ?, updated_at = ? WHERE id = ?`,
+	_, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', not_before = ?, last_error = ?, updated_at = ? WHERE id = ?`,
 		notBefore.Unix(), lastError, now, id)
 	return JobQueued, err
 }
 
 // RequeueJob puts a running job back without counting the attempt (e.g. shutdown, breaker).
 func (s *Store) RequeueJob(ctx context.Context, id int64, notBefore time.Time) error {
-	_, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), not_before = ?, updated_at = ?
+	_, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), not_before = ?, updated_at = ?
 		WHERE id = ? AND state = 'running'`, notBefore.Unix(), s.unix(), id)
 	return err
 }
 
 // RecoverRunning re-queues jobs left running by a crashed or killed daemon.
 func (s *Store) RecoverRunning(ctx context.Context) (int64, error) {
-	res, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), updated_at = ?
+	res, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), updated_at = ?
 		WHERE state = 'running'`, s.unix())
 	if err != nil {
 		return 0, err
@@ -177,7 +177,7 @@ func (s *Store) RecoverRunning(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) GetJob(ctx context.Context, id int64) (Job, error) {
-	j, err := scanJob(s.Meta.QueryRowContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE id = ?`, id))
+	j, err := scanJob(s.meta.QueryRowContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return j, ErrNoJob
 	}
@@ -187,7 +187,7 @@ func (s *Store) GetJob(ctx context.Context, id int64) (Job, error) {
 // HasActiveJob reports whether a queued/running job with this dedupe key exists.
 func (s *Store) HasActiveJob(ctx context.Context, dedupeKey string) (bool, error) {
 	var n int
-	err := s.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE dedupe_key = ? AND state IN ('queued','running')`, dedupeKey).Scan(&n)
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE dedupe_key = ? AND state IN ('queued','running')`, dedupeKey).Scan(&n)
 	return n > 0, err
 }
 
@@ -202,10 +202,19 @@ type JobFilter struct {
 	Kind         string
 	SourceID     int64
 	DedupePrefix string
+	NotQueued    bool // only jobs that left the queue (running, done, failed, cancelled)
 	Limit        int
-	// Oldest orders by id ascending (queue order for queued jobs) instead of newest first.
-	Oldest bool
+	Order        JobOrder
 }
+
+// JobOrder sorts FindJobs results.
+type JobOrder int
+
+const (
+	JobsNewest      JobOrder = iota // id descending (default)
+	JobsOldest                      // id ascending: queue order for queued jobs
+	JobsLastStarted                 // most recently started first
+)
 
 // FindJobs returns jobs matching f.
 func (s *Store) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
@@ -227,13 +236,19 @@ func (s *Store) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 		q += ` AND dedupe_key LIKE ? ESCAPE '\'`
 		args = append(args, likeEscape(f.DedupePrefix)+"%")
 	}
-	if f.Oldest {
+	if f.NotQueued {
+		q += ` AND state != 'queued'`
+	}
+	switch f.Order {
+	case JobsOldest:
 		q += ` ORDER BY id ASC LIMIT ?`
-	} else {
+	case JobsLastStarted:
+		q += ` ORDER BY started_at DESC, id DESC LIMIT ?`
+	default:
 		q += ` ORDER BY id DESC LIMIT ?`
 	}
 	args = append(args, f.Limit)
-	rows, err := s.Meta.QueryContext(ctx, q, args...)
+	rows, err := s.meta.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,24 +264,13 @@ func (s *Store) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 	return out, rows.Err()
 }
 
-func likeEscape(s string) string {
-	b := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '%' || s[i] == '_' || s[i] == '\\' {
-			b = append(b, '\\')
-		}
-		b = append(b, s[i])
-	}
-	return string(b)
-}
-
 // JobEvent appends a content-free trace event (detail is marshalled to JSON).
 func (s *Store) JobEvent(ctx context.Context, jobID int64, event string, detail map[string]any) error {
 	b, err := json.Marshal(detail)
 	if err != nil {
 		return err
 	}
-	_, err = s.Meta.ExecContext(ctx, `INSERT INTO job_events (job_id, ts, event, detail) VALUES (?,?,?,?)`, jobID, s.unix(), event, string(b))
+	_, err = s.meta.ExecContext(ctx, `INSERT INTO job_events (job_id, ts, event, detail) VALUES (?,?,?,?)`, jobID, s.unix(), event, string(b))
 	return err
 }
 
@@ -277,7 +281,7 @@ type JobEventRow struct {
 }
 
 func (s *Store) JobEvents(ctx context.Context, jobID int64) ([]JobEventRow, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT ts, event, detail FROM job_events WHERE job_id = ? ORDER BY id`, jobID)
+	rows, err := s.meta.QueryContext(ctx, `SELECT ts, event, detail FROM job_events WHERE job_id = ? ORDER BY id`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +302,7 @@ func (s *Store) JobEvents(ctx context.Context, jobID int64) ([]JobEventRow, erro
 // PruneJobs deletes finished jobs (and their events) older than the given ages.
 func (s *Store) PruneJobs(ctx context.Context, doneAge, failedAge time.Duration) (int64, error) {
 	now := s.now()
-	res, err := s.Meta.ExecContext(ctx, `DELETE FROM jobs WHERE (state IN ('done','cancelled') AND finished_at < ?)
+	res, err := s.meta.ExecContext(ctx, `DELETE FROM jobs WHERE (state IN ('done','cancelled') AND finished_at < ?)
 		OR (state = 'failed' AND finished_at < ?)`, now.Add(-doneAge).Unix(), now.Add(-failedAge).Unix())
 	if err != nil {
 		return 0, err
@@ -308,7 +312,7 @@ func (s *Store) PruneJobs(ctx context.Context, doneAge, failedAge time.Duration)
 
 // JobCounts groups jobs by kind and state.
 func (s *Store) JobCounts(ctx context.Context) (map[string]map[string]int, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT kind, state, COUNT(*) FROM jobs GROUP BY kind, state`)
+	rows, err := s.meta.QueryContext(ctx, `SELECT kind, state, COUNT(*) FROM jobs GROUP BY kind, state`)
 	if err != nil {
 		return nil, err
 	}
@@ -328,87 +332,45 @@ func (s *Store) JobCounts(ctx context.Context) (map[string]map[string]int, error
 	return out, rows.Err()
 }
 
-// ---- daemon state ----
-
-func (s *Store) SetDaemonState(ctx context.Context, kv map[string]string) error {
-	tx, err := s.Meta.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
-	now := s.unix()
-	for k, v := range kv {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?,?,?)
-			ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, k, v, now); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *Store) DaemonState(ctx context.Context) (map[string]string, time.Time, error) {
-	rows, err := s.Meta.QueryContext(ctx, `SELECT key, value, updated_at FROM daemon_state`)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	var latest int64
-	for rows.Next() {
-		var k, v string
-		var at int64
-		if err := rows.Scan(&k, &v, &at); err != nil {
-			return nil, time.Time{}, err
-		}
-		out[k] = v
-		if at > latest {
-			latest = at
-		}
-	}
-	return out, unixTime(latest), rows.Err()
-}
-
-// ---- request log reads ----
-
-// RecentRequests returns request rows newest first, optionally only non-ok, or only for a job
-// or path prefix.
-func (s *Store) RecentRequests(ctx context.Context, onlyErrors bool, jobID int64, pathPrefix string, limit int) ([]RequestRow, error) {
-	q := `SELECT ts, req_id, COALESCE(job_id, 0), kind, path, status, class, reason, bytes, duration_ms, waited_ms, hop FROM requests WHERE 1=1`
-	var args []any
-	if onlyErrors {
-		q += ` AND class != 'ok'`
-	}
-	if jobID > 0 {
-		q += ` AND job_id = ?`
-		args = append(args, jobID)
-	}
-	if pathPrefix != "" {
-		q += ` AND path LIKE ? ESCAPE '\'`
-		args = append(args, likeEscape(pathPrefix)+"%")
-	}
-	q += ` ORDER BY id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.Meta.QueryContext(ctx, q, args...)
+// FailedWorkJobs returns the distinct work ids of a source's failed work jobs that are still
+// unresolved: no work job for that id is active, and none succeeded after the failure (work
+// fetches are global, so a later success from any source counts).
+func (s *Store) FailedWorkJobs(ctx context.Context, sourceID int64) ([]string, error) {
+	rows, err := s.meta.QueryContext(ctx, `SELECT DISTINCT f.target FROM jobs f WHERE f.source_id = ? AND f.kind = 'work' AND f.state = 'failed'
+		AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'work' AND j.target = f.target
+			AND (j.state IN ('queued','running') OR (j.state = 'done' AND j.id > f.id)))`, sourceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []RequestRow
+	var out []string
 	for rows.Next() {
-		var r RequestRow
-		var ts, dur, waited int64
-		if err := rows.Scan(&ts, &r.ReqID, &r.JobID, &r.Kind, &r.Path, &r.Status, &r.Class, &r.Reason, &r.Bytes, &dur, &waited, &r.Hop); err != nil {
+		var t string
+		if err := rows.Scan(&t); err != nil {
 			return nil, err
 		}
-		r.Time, r.Duration, r.Waited = time.Unix(ts, 0), time.Duration(dur)*time.Millisecond, time.Duration(waited)*time.Millisecond
-		out = append(out, r)
+		out = append(out, t)
 	}
 	return out, rows.Err()
 }
 
+// CancelSourceJobs cancels a source's queued jobs; running jobs finish on their own.
+func (s *Store) CancelSourceJobs(ctx context.Context, sourceID int64) (int64, error) {
+	res, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'cancelled', updated_at = ?, finished_at = ?
+		WHERE source_id = ? AND state = 'queued'`, s.unix(), s.unix(), sourceID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		s.log.Info("source jobs cancelled", "source_id", sourceID, "jobs", n)
+	}
+	return n, nil
+}
+
 // ClaimJob marks one specific queued job running (for `fetch-work --now`).
 func (s *Store) ClaimJob(ctx context.Context, id int64, now time.Time) (Job, error) {
-	res, err := s.Meta.ExecContext(ctx, `UPDATE jobs SET state = 'running', attempts = attempts + 1, started_at = ?, updated_at = ?
+	res, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'running', attempts = attempts + 1, started_at = ?, updated_at = ?
 		WHERE id = ? AND state = 'queued'`, now.Unix(), now.Unix(), id)
 	if err != nil {
 		return Job{}, err
@@ -422,6 +384,6 @@ func (s *Store) ClaimJob(ctx context.Context, id int64, now time.Time) (Job, err
 // CountActiveJobs counts queued/running jobs of a kind.
 func (s *Store) CountActiveJobs(ctx context.Context, kind string) (int, error) {
 	var n int
-	err := s.Meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE kind = ? AND state IN ('queued','running')`, kind).Scan(&n)
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE kind = ? AND state IN ('queued','running')`, kind).Scan(&n)
 	return n, err
 }

@@ -49,9 +49,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 	st, _, err := e.st.WorkStatus(ctx, 5002)
 	require.NoError(t, err)
 	require.Equal(t, "ok", string(st))
-	var fetched int64
-	require.NoError(t, e.st.Meta.QueryRow(`SELECT last_fetched FROM works WHERE id = 5002`).Scan(&fetched))
-	require.NotZero(t, fetched, "re-queued work was not fetched")
+	require.False(t, e.diag(5002).LastFetched.IsZero(), "re-queued work was not fetched")
 	// The old failed jobs are now resolved by the later success: refreshing again must not
 	// re-fetch the work.
 	res, err = e.srcs.Refresh(ctx, id, false)

@@ -14,7 +14,7 @@ import (
 func markSeriesSource(t *testing.T, s *Store) {
 	t.Helper()
 	addSource(t, s, "77", SourceActive, 0)
-	_, err := s.Meta.Exec(`UPDATE sources SET kind = 'series' WHERE target = '77'`)
+	_, err := s.meta.Exec(`UPDATE sources SET kind = 'series' WHERE target = '77'`)
 	require.NoError(t, err)
 }
 
@@ -61,7 +61,7 @@ func TestPartialSeries(t *testing.T) {
 	// Unfetched members never count as mirrored, and other series_works users ignore them
 	// (joins to works drop rows with no works row).
 	var n int
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.series_id = 77`).Scan(&n))
 	require.Equal(t, 2, n)
 
@@ -93,8 +93,8 @@ func TestSeriesUpsertAndNeedingInfo(t *testing.T) {
 	require.NoError(t, s.UpsertSeries(ctx, ser))
 	var desc string
 	var words, count, creators int
-	require.NoError(t, s.Meta.QueryRow(`SELECT summary_html, words, works_count FROM series WHERE id = 77`).Scan(&desc, &words, &count))
-	require.NoError(t, s.Meta.QueryRow(`SELECT COUNT(*) FROM series_creators WHERE series_id = 77`).Scan(&creators))
+	require.NoError(t, s.meta.QueryRow(`SELECT summary_html, words, works_count FROM series WHERE id = 77`).Scan(&desc, &words, &count))
+	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM series_creators WHERE series_id = 77`).Scan(&creators))
 	require.Equal(t, ser.SummaryHTML, desc)
 	require.Equal(t, 1234, words)
 	require.Equal(t, 2, count)

@@ -3,7 +3,6 @@ package scheduler
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -108,16 +107,26 @@ func (e *env) enqueue(j store.Job) {
 	require.NoError(e.t, err)
 }
 
-// scan runs a single-row query against meta.
-func (e *env) scan(q string, dst ...any) {
+// diag returns a work's content-free stored state.
+func (e *env) diag(id int64) store.WorkDiag {
 	e.t.Helper()
-	require.NoError(e.t, e.st.Meta.QueryRow(q).Scan(dst...))
+	d, err := e.st.WorkDiag(context.Background(), id)
+	require.NoError(e.t, err)
+	return d
+}
+
+func (e *env) series(id int64) store.SeriesRow {
+	e.t.Helper()
+	r, err := e.st.Series(context.Background(), id)
+	require.NoError(e.t, err)
+	return r
 }
 
 func (e *env) fetchedCount() int {
-	var n int
-	e.scan(`SELECT COUNT(*) FROM works WHERE last_fetched > 0`, &n)
-	return n
+	e.t.Helper()
+	c, err := e.st.Counts(context.Background())
+	require.NoError(e.t, err)
+	return c.WorksFetched
 }
 
 func (e *env) workRequests() map[string]int {
@@ -155,9 +164,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 	// A plain poll (pages 1-2 unchanged) must still reach page 3 and re-queue the unfetched work.
 	e.clk.Advance(7 * time.Hour)
 	e.drain(200)
-	var fetched int64
-	e.scan(`SELECT last_fetched FROM works WHERE id = 5000`, &fetched)
-	require.NotZero(t, fetched, "poll should re-queue a work whose earlier fetches failed, not wait for the rescan")
+	require.False(t, e.diag(5000).LastFetched.IsZero(), "poll should re-queue a work whose earlier fetches failed, not wait for the rescan")
 }
 
 func TestHandlerPanicFailsJob(t *testing.T) {
@@ -257,9 +264,7 @@ func TestBackfillThenPoll(t *testing.T) {
 	require.Equal(t, 2, works, "poll requests: %v", newReqs)
 	require.LessOrEqual(t, len(newReqs), 4, "poll page 1 (+ maybe page 2 stop), 2 works: %v", newReqs)
 	require.Contains(t, newReqs[0], "sort_column%5D=revised_at", "poll must sort by revised")
-	var ch int
-	e.scan(`SELECT chapters_posted FROM works WHERE id = 5010`, &ch)
-	require.GreaterOrEqual(t, ch, 2, "updated work not refreshed")
+	require.GreaterOrEqual(t, e.diag(5010).ChaptersPosted, 2, "updated work not refreshed")
 
 	// Content-free change details: why the listing triggered the fetch, and what the page changed.
 	logs := e.logs.String()
@@ -280,9 +285,10 @@ func TestFairnessAlternates(t *testing.T) {
 		ran, err := e.sch.Step(ctx)
 		require.NoError(t, err)
 		require.True(t, ran)
-		var src int64
-		e.scan(`SELECT COALESCE(source_id,0) FROM jobs WHERE state != 'queued' ORDER BY started_at DESC, id DESC LIMIT 1`, &src)
-		order = append(order, src)
+		last, err := e.st.FindJobs(ctx, store.JobFilter{NotQueued: true, Order: store.JobsLastStarted, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, last, 1)
+		order = append(order, last[0].SourceID)
 	}
 	seenA, seenB := 0, 0
 	for _, s := range order {
@@ -410,11 +416,10 @@ func TestTagInfoFetched(t *testing.T) {
 	e.drain(50)
 	e.clk.Advance(2 * time.Minute) // tag scheduling is throttled to once a minute
 	e.drain(50)
-	var fetchedAt int64
-	var merger sql.NullInt64
-	e.scan(`SELECT info_fetched_at, merger_id FROM tags WHERE name = 'Fixture Tag'`, &fetchedAt, &merger)
-	require.NotZero(t, fetchedAt, "tag info not stored")
-	require.True(t, merger.Valid, "tag merger not stored")
+	tag, err := e.st.TagByName(context.Background(), "Fixture Tag")
+	require.NoError(t, err)
+	require.False(t, tag.InfoFetchedAt.IsZero(), "tag info not stored")
+	require.NotZero(t, tag.MergerID, "tag merger not stored")
 	tagReqs := 0
 	for _, r := range e.srv.Requests() {
 		if r.URI == "/tags/Fixture%20Tag" {
@@ -442,9 +447,7 @@ func TestRescanVerifiesMissingWorks(t *testing.T) {
 	st, _, err := e.st.WorkStatus(ctx, 5003)
 	require.NoError(t, err)
 	require.Equal(t, model.StatusDeleted, st, "missing work verified as deleted")
-	var kudos int
-	e.scan(`SELECT kudos FROM works WHERE id = 5001`, &kudos)
-	require.Equal(t, 9999, kudos, "rescan refreshes stats")
+	require.Equal(t, 9999, e.diag(5001).Stats.Kudos, "rescan refreshes stats")
 	var works []string
 	for _, r := range e.srv.Requests()[before:] {
 		if strings.HasPrefix(r.URI, "/works/") {
@@ -474,19 +477,17 @@ func TestSeriesSourceStoresMetadata(t *testing.T) {
 	e := newEnv(t, 0, nil)
 	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fixtureBody(t, "series.html")})
 	e.add("/series/3001", sources.AddOptions{})
-	var desc string
-	var count, words int
-	e.scan(`SELECT summary_html, works_count, words FROM series WHERE id = 3001`, &desc, &count, &words)
-	require.Contains(t, desc, "series description", "series metadata from add")
-	require.Equal(t, 2, count)
-	require.Equal(t, 13145, words)
+	ser := e.series(3001)
+	require.Contains(t, ser.SummaryHTML, "series description", "series metadata from add")
+	require.Equal(t, 2, ser.WorksCount)
+	require.Equal(t, 13145, ser.Words)
 	// Poll refreshes it.
-	_, err := e.st.Meta.Exec(`UPDATE series SET words = 0 WHERE id = 3001`)
-	require.NoError(t, err)
+	ser.Words = 0
+	require.NoError(t, e.st.UpsertSeries(context.Background(), ser.Series))
+	require.Equal(t, 0, e.series(3001).Words)
 	e.clk.Advance(7 * time.Hour)
 	e.drain(20)
-	e.scan(`SELECT words FROM series WHERE id = 3001`, &words)
-	require.Equal(t, 13145, words, "poll refreshes series words")
+	require.Equal(t, 13145, e.series(3001).Words, "poll refreshes series words")
 }
 
 func TestSeriesInfoForNonSourceSeries(t *testing.T) {
@@ -498,11 +499,9 @@ func TestSeriesInfoForNonSourceSeries(t *testing.T) {
 	e.drain(5)
 	e.clk.Advance(2 * time.Minute)
 	e.drain(5)
-	var desc string
-	var fetched int64
-	e.scan(`SELECT summary_html, last_fetched FROM series WHERE id = 3001`, &desc, &fetched)
-	require.Contains(t, desc, "series description", "series info stored")
-	require.NotZero(t, fetched)
+	ser := e.series(3001)
+	require.Contains(t, ser.SummaryHTML, "series description", "series info stored")
+	require.False(t, ser.LastFetched.IsZero())
 	ok, err := e.st.WorkExists(ctx, 999)
 	require.NoError(t, err)
 	require.False(t, ok, "series info must not add works we do not mirror")
