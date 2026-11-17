@@ -177,11 +177,6 @@ func (s *ReadTx) GetJob(ctx context.Context, id int64) (Job, error) {
 	return j, err
 }
 
-// ListJobs returns jobs matching optional filters, newest first.
-func (s *ReadTx) ListJobs(ctx context.Context, state string, sourceID int64, dedupePrefix string, limit int) ([]Job, error) {
-	return s.FindJobs(ctx, JobFilter{State: state, SourceID: sourceID, DedupePrefix: dedupePrefix, Limit: limit})
-}
-
 // JobFilter selects jobs; zero fields match everything.
 type JobFilter struct {
 	State        string

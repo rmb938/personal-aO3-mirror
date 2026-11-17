@@ -167,7 +167,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 		e.drain(200)
 		e.clk.Advance(3 * time.Hour)
 	}
-	failed, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5000", 5)
+	failed, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5000", Limit: 5})
 	require.NoError(t, err)
 	require.NotEmpty(t, failed, "expected failed jobs for 5000")
 	e.srv.Handle("/works/5000") // AO3 recovered
@@ -185,7 +185,7 @@ func TestHandlerPanicFailsJob(t *testing.T) {
 	}
 	e.queueWork(5000)
 	e.drain(5) // must not panic out of Step
-	js, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5000", 1)
+	js, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5000", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, "panic", js[0].LastError, "panicking job should fail with code panic")
@@ -202,7 +202,7 @@ func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	e.queueWork(5000)
 	_, err := e.sch.Step(ctx)
 	require.NoError(t, err)
-	js, err := e.db.ListJobs(context.Background(), "", 0, "work:5000", 1)
+	js, err := e.db.FindJobs(context.Background(), store.JobFilter{DedupePrefix: "work:5000", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, store.JobDone, js[0].State, "job that succeeded during shutdown should be done")
@@ -345,7 +345,7 @@ func TestUnavailableRetriesWithBackoff(t *testing.T) {
 	e.add(e.site.TagPath())
 	e.srv.Handle("/works/5000", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
 	e.drain(20)
-	jobs, err := e.db.ListJobs(ctx, "", 0, "work:5000", 5)
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupePrefix: "work:5000", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, store.JobQueued, jobs[0].State)

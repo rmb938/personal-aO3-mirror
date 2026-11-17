@@ -41,7 +41,7 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e.drain(50)
 
 	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "initial + one failed update, no retries")
-	jobs, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5001", 5)
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5001", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, "parse_")
