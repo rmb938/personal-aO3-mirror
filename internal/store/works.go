@@ -346,8 +346,8 @@ func replaceCollections(ctx context.Context, tx *sql.Tx, workID int64, cs []mode
 
 var tagRe = regexp.MustCompile(`<[^>]*>`)
 
-// PlainText strips HTML for indexing.
-func PlainText(h string) string {
+// plainText strips HTML for indexing.
+func plainText(h string) string {
 	return strings.Join(strings.Fields(html.UnescapeString(tagRe.ReplaceAllString(h, " "))), " ")
 }
 
@@ -364,26 +364,13 @@ func updateFTS(ctx context.Context, tx *sql.Tx, w model.Work) error {
 		tags = append(tags, t.Name)
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO works_fts (rowid, title, summary, creators, tags) VALUES (?,?,?,?,?)`,
-		w.ID, w.Title, PlainText(w.SummaryHTML), strings.Join(creators, " "), strings.Join(tags, " • "))
+		w.ID, w.Title, plainText(w.SummaryHTML), strings.Join(creators, " "), strings.Join(tags, " • "))
 	return err
 }
 
 // SearchWorkIDs runs an FTS5 MATCH query and returns work ids by rank.
 func (s *Store) SearchWorkIDs(ctx context.Context, match string, limit int) ([]int64, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT rowid FROM works_fts WHERE works_fts MATCH ? ORDER BY rank LIMIT ?`, match, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return queryInt64s(ctx, s.meta, `SELECT rowid FROM works_fts WHERE works_fts MATCH ? ORDER BY rank LIMIT ?`, match, limit)
 }
 
 // SetWorkStatus records a verification result (deleted/hidden/restricted/...). Content is kept.
@@ -502,18 +489,6 @@ func (s *Store) WorkExists(ctx context.Context, id int64) (bool, error) {
 	var n int
 	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM works WHERE id = ?`, id).Scan(&n)
 	return n > 0, err
-}
-
-// WorkNeedsFetch reports whether a work is ok and was never fetched or changed since its last
-// fetch (by revised date, chapters or words).
-func (s *Store) WorkNeedsFetch(ctx context.Context, workID int64) (bool, error) {
-	var need bool
-	err := s.meta.QueryRowContext(ctx, `SELECT status = 'ok' AND (last_fetched = 0 OR fetched_revised != revised_at
-		OR fetched_chapters != chapters_posted OR fetched_words != words) FROM works WHERE id = ?`, workID).Scan(&need)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
-	}
-	return need, err
 }
 
 // WorkParserVersion returns the parser version a work was last parsed with (0 if unknown).

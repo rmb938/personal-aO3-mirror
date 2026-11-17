@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -216,76 +215,18 @@ func (s *Store) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []i
 	return tx.Commit()
 }
 
-// Cursor is the backfill position stored in sources.backfill_cursor (JSON).
-type Cursor struct {
-	NextPage int    `json:"next_page"` // 0 = listing backfill done
-	Order    string `json:"order"`
-	// Date windows on revised_at, used when a source exceeds AO3's 100k result window.
-	// Backfill walks windows backwards in time: [WindowFrom, WindowTo].
-	WindowFrom string `json:"window_from,omitempty"` // YYYY-MM-DD
-	WindowTo   string `json:"window_to,omitempty"`
-	SpanDays   int    `json:"span_days,omitempty"`
-	// Rescan marks a periodic full re-walk (stats refresh + deletion detection) started at
-	// RescanStarted (unix seconds). Works not seen since then get a verification fetch.
-	Rescan        bool  `json:"rescan,omitempty"`
-	RescanStarted int64 `json:"rescan_started,omitempty"`
-	// BlockedParser is set to parse.Version when the NextPage listing failed to parse. Backfill
-	// pauses until the binary ships a different parser version.
-	BlockedParser int `json:"blocked_parser,omitempty"`
-}
-
-func (c Cursor) JSON() string {
-	b, _ := json.Marshal(c)
-	return string(b)
-}
-
-func ParseCursor(s string) (Cursor, error) {
-	var c Cursor
-	if s == "" || s == "{}" {
-		return c, nil
-	}
-	err := json.Unmarshal([]byte(s), &c)
-	return c, err
-}
-
 // SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or
-// changed since their last fetch (same rule as WorkNeedsFetch), oldest first.
+// changed since their last fetch (by revised date, chapters or words), oldest first.
 func (s *Store) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, limit int) ([]int64, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT w.id FROM source_works sw JOIN works w ON w.id = sw.work_id
+	return queryInt64s(ctx, s.meta, `SELECT w.id FROM source_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.source_id = ? AND w.status = 'ok' AND (w.last_fetched = 0 OR w.fetched_revised != w.revised_at
 			OR w.fetched_chapters != w.chapters_posted OR w.fetched_words != w.words)
 		ORDER BY w.id LIMIT ?`, sourceID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }
 
 // SourceWorksNotSeenSince returns ok works linked to a source whose last listing sighting in
 // that source is before since (candidates for deletion checks).
 func (s *Store) SourceWorksNotSeenSince(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
+	return queryInt64s(ctx, s.meta, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.source_id = ? AND sw.last_seen < ? AND w.status = 'ok' ORDER BY sw.work_id`, sourceID, since.Unix())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }

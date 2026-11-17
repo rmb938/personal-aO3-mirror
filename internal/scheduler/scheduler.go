@@ -25,22 +25,6 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
-// Re-exported for readability inside the package.
-const (
-	ClassOnDemand    = jobs.ClassOnDemand
-	ClassPoll        = jobs.ClassPoll
-	ClassPollFetch   = jobs.ClassPollFetch
-	ClassBackfill    = jobs.ClassBackfill
-	ClassTagInfo     = jobs.ClassTagInfo
-	ClassMaintenance = jobs.ClassMaintenance
-
-	KindPoll     = jobs.KindPoll
-	KindBackfill = jobs.KindBackfill
-	KindWork     = jobs.KindWork
-	KindTagInfo  = jobs.KindTagInfo
-	KindSeries   = jobs.KindSeries
-)
-
 // Pacer reports the AO3 client's pacing state (httpx.Client implements it).
 type Pacer interface {
 	PacerState() httpx.PacerState
@@ -85,19 +69,19 @@ func New(opts Options) *Scheduler {
 	}
 	s := &Scheduler{options: opts, store: opts.Store, controllers: opts.Controllers, log: opts.Logger.With("component", "scheduler")}
 	s.handlers = map[string]handler{
-		KindPoll: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindPoll: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.PollPage(ctx, j.SourceID, atoi(j.Target))
 		},
-		KindBackfill: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindBackfill: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.BackfillPage(ctx, j.SourceID, atoi(j.Target))
 		},
-		KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)
 		},
-		KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target))
 		},
-		KindSeries: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindSeries: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target))
 		},
 	}

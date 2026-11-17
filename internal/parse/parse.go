@@ -17,6 +17,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
@@ -106,6 +107,17 @@ func atoi(s string) int {
 	return n
 }
 
+// parseStats reads kudos/hits/comments/bookmarks from a dl.stats (same markup on work pages
+// and blurbs).
+func parseStats(stats *goquery.Selection) model.Stats {
+	return model.Stats{
+		Kudos:     atoi(stats.Find("dd.kudos").Text()),
+		Hits:      atoi(stats.Find("dd.hits").Text()),
+		Comments:  atoi(stats.Find("dd.comments").Text()),
+		Bookmarks: atoi(stats.Find("dd.bookmarks").Text()),
+	}
+}
+
 // chaptersPair parses "3/5", "1,000/?" .
 func chaptersPair(s string) (posted, expected int) {
 	s = clean(s)
@@ -148,14 +160,7 @@ func tagNameFromHref(href string) string {
 	if len(segs) < 2 || segs[0] != "tags" {
 		return ""
 	}
-	r := strings.NewReplacer("*s*", "/", "*a*", "&", "*d*", ".", "*q*", "?", "*h*", "#")
-	return r.Replace(segs[1])
-}
-
-// TagParam encodes a tag name for /tags/<param> per Tag.to_param (then path-escaped).
-func TagParam(name string) string {
-	r := strings.NewReplacer("/", "*s*", "&", "*a*", ".", "*d*", "?", "*q*", "#", "*h*")
-	return url.PathEscape(r.Replace(name))
+	return ao3url.TagFromParam(segs[1])
 }
 
 // tagFromLink prefers the link text (display name == name), falling back to the href.

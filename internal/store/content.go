@@ -80,21 +80,8 @@ func (s *Store) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.T
 
 // RawPageWorkIDs pages through work ids that have raw pages (for reparse), ascending after afterID.
 func (s *Store) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
-	rows, err := s.content.QueryContext(ctx, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
+	return queryInt64s(ctx, s.content, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
 		ORDER BY work_id LIMIT ?`, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 // PutWorkContent replaces a work's chapter bodies and skin.

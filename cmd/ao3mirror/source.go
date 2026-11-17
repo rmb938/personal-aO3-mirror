@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -250,7 +251,7 @@ func parseWithPositional(fs *flag.FlagSet, args []string) (string, bool) {
 }
 
 func target(r store.SourceRow, names bool) string {
-	if names || r.Kind == "work" || r.Kind == "series" {
+	if names || r.Kind == string(ao3url.KindWork) || r.Kind == string(ao3url.KindSeries) {
 		return r.Target // ids are not names
 	}
 	return httpx.Hash(r.Target)

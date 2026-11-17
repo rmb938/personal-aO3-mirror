@@ -136,7 +136,7 @@ func TestWorker(t *testing.T) {
 		if ran {
 			continue
 		}
-		next, err := st.NextImageDue(ctx)
+		next, err := st.NextImageDueForTestOnly(ctx)
 		require.NoError(t, err)
 		if next.IsZero() {
 			break

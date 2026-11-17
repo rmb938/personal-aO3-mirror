@@ -77,8 +77,10 @@ func (s *Store) NextImages(ctx context.Context, now time.Time, limit int) ([]Ima
 	return out, rows.Err()
 }
 
-// NextImageDue returns when the earliest queued image becomes due (zero if none queued).
-func (s *Store) NextImageDue(ctx context.Context) (time.Time, error) {
+// NextImageDueForTestOnly returns when the earliest queued image becomes due (zero if none
+// queued). Only the imagefetch tests use it, to advance their fake clock; production code must
+// not call it (the image worker paces itself from NextImages).
+func (s *Store) NextImageDueForTestOnly(ctx context.Context) (time.Time, error) {
 	var nb int64
 	err := s.meta.QueryRowContext(ctx, `SELECT COALESCE(MIN(not_before), -1) FROM images WHERE status = 'queued'`).Scan(&nb)
 	if err != nil || nb < 0 {
@@ -109,24 +111,11 @@ func (s *Store) ImageFinal(ctx context.Context, id int64, status, lastError stri
 
 // ImageCounts groups images by status.
 func (s *Store) ImageCounts(ctx context.Context) (map[string]int, int64, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT status, COUNT(*) FROM images GROUP BY status`)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
 	out := map[string]int{}
-	for rows.Next() {
-		var st string
-		var n int
-		if err := rows.Scan(&st, &n); err != nil {
-			return nil, 0, err
-		}
-		out[st] = n
-	}
-	if err := rows.Err(); err != nil {
+	if err := countGroups(ctx, s.meta, `SELECT status, COUNT(*) FROM images GROUP BY status`, out); err != nil {
 		return nil, 0, err
 	}
 	var bytes int64
-	err = s.meta.QueryRowContext(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM images WHERE status = 'ok'`).Scan(&bytes)
+	err := s.meta.QueryRowContext(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM images WHERE status = 'ok'`).Scan(&bytes)
 	return out, bytes, err
 }

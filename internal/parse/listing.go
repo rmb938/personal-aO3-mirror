@@ -152,16 +152,11 @@ func parseBlurb(li *goquery.Selection, fetchedAt time.Time, r *Report) (model.Wo
 		}
 	})
 
-	stats := r.sel("blurb dl.stats", li.Find("dl.stats").First())
+	stats := li.Find("dl.stats").First() // hit count recorded in parseBlurbs
 	w.Language = clean(stats.Find("dd.language").Text())
 	w.Words = atoi(stats.Find("dd.words").Text())
 	w.ChaptersPosted, w.ChaptersExpected = chaptersPair(stats.Find("dd.chapters").Text())
-	w.Stats = model.Stats{
-		Kudos:     atoi(stats.Find("dd.kudos").Text()),
-		Hits:      atoi(stats.Find("dd.hits").Text()),
-		Comments:  atoi(stats.Find("dd.comments").Text()),
-		Bookmarks: atoi(stats.Find("dd.bookmarks").Text()),
-	}
+	w.Stats = parseStats(stats)
 	if w.ChaptersExpected > 0 && w.ChaptersPosted >= w.ChaptersExpected {
 		w.Complete = true
 	}

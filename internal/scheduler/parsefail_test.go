@@ -29,7 +29,7 @@ func countRequests(e *env, uri string) int {
 func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e := newEnv(t, 3, nil)
 	ctx := context.Background()
-	e.add(e.site.TagPath(), controllers.AddOptions{})
+	e.add(e.site.TagPath())
 	e.drain(50)
 
 	// Work 5001 was mirrored fine. Now AO3 serves a page we cannot parse after an update.
@@ -70,14 +70,14 @@ func TestBackfillBlocksOnParseFailure(t *testing.T) {
 	ctx := context.Background()
 	page2 := e.site.TagPath() + "?page=2&work_search%5Bsort_column%5D=kudos_count&work_search%5Bsort_direction%5D=desc"
 	e.srv.Handle(page2, fakeao3.Reply{Body: fakeao3.Page(`<h2 class="heading">x</h2><p>synthetic broken listing</p>`)})
-	id := e.add(e.site.TagPath(), controllers.AddOptions{})
+	id := e.add(e.site.TagPath())
 	e.drain(100)
 	e.clk.Advance(time.Minute)
 	e.drain(100)
 
 	require.Equal(t, 1, countRequests(e, page2), "broken listing page requested once")
 	src := e.source(id)
-	cur, err := store.ParseCursor(src.BackfillCursor)
+	cur, err := controllers.ParseCursor(src.BackfillCursor)
 	require.NoError(t, err)
 	require.Equal(t, 2, cur.NextPage)
 	require.Equal(t, parse.Version, cur.BlockedParser)

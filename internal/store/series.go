@@ -83,7 +83,7 @@ func (s *Store) MarkSeriesFetched(ctx context.Context, id int64) error {
 // SeriesNeedingInfo returns ids of series that are not themselves sources and were never
 // fetched, fetched before `before`, or fetched before one of their mirrored works was revised.
 func (s *Store) SeriesNeedingInfo(ctx context.Context, before time.Time, limit int) ([]int64, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT se.id FROM series se
+	return queryInt64s(ctx, s.meta, `SELECT se.id FROM series se
 		WHERE NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
 			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
 		  AND (se.last_fetched = 0 OR se.last_fetched < ?
@@ -91,19 +91,6 @@ func (s *Store) SeriesNeedingInfo(ctx context.Context, before time.Time, limit i
 		                             FROM series_works sw JOIN works w ON w.id = sw.work_id
 		                             WHERE sw.series_id = se.id AND w.revised_at != ''))
 		ORDER BY se.last_fetched, se.id LIMIT ?`, before.Unix(), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }
 
 // SeriesMember is one work listed on a series page.

@@ -139,8 +139,8 @@ func initPageSize(ctx context.Context, path string, pageSize int) (err error) {
 	return err
 }
 
-// PageSize returns the page size of the named db ("meta" or "content").
-func (s *Store) PageSize(ctx context.Context, name string) (int, error) {
+// pageSize returns the page size of the named db ("meta" or "content").
+func (s *Store) pageSize(ctx context.Context, name string) (int, error) {
 	db := s.meta
 	if name == "content" {
 		db = s.content
@@ -252,8 +252,8 @@ func checkApplied(ctx context.Context, db *sql.DB, name string, entries []fs.Dir
 	return rows.Err()
 }
 
-// SchemaVersion returns the current migration version of the named db ("meta" or "content").
-func (s *Store) SchemaVersion(ctx context.Context, name string) (int, error) {
+// schemaVersion returns the current migration version of the named db ("meta" or "content").
+func (s *Store) schemaVersion(ctx context.Context, name string) (int, error) {
 	db := s.meta
 	if name == "content" {
 		db = s.content

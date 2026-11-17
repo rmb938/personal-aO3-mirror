@@ -154,8 +154,11 @@ func decodeTag(seg string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrUnsupported, err)
 	}
-	return tagUnparam.Replace(dec), nil
+	return TagFromParam(dec), nil
 }
+
+// TagFromParam reverses Tag.to_param on an already path-unescaped /tags/<param> segment.
+func TagFromParam(param string) string { return tagUnparam.Replace(param) }
 
 // TagParam encodes a tag name for a /tags/<param> path segment (Tag.to_param + escaping).
 func TagParam(name string) string {
@@ -274,9 +277,6 @@ func (k Kind) Sortable() bool {
 	}
 	return false
 }
-
-// Listing reports whether the kind is paged through listing pages (vs a single work).
-func (k Kind) Listing() bool { return k != KindWork }
 
 // BasePath is the canonical robots-allowed path for a source (no query).
 func BasePath(s Source) (string, error) {

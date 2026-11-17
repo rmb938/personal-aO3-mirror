@@ -10,7 +10,7 @@ GOVULNCHECK_VERSION ?= v1.9.0
 PYTHON   ?= python3
 BIN      ?= ao3mirror
 
-.PHONY: all build fmt fmt-check vet tidy-check lint vulncheck test test-short guard-test check bench clean help
+.PHONY: all build fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench clean help
 
 all: check build
 
@@ -19,6 +19,7 @@ help:
 	@echo "make fmt         gofmt + goimports (grouping) on all Go files"
 	@echo "make lint        fmt check + go vet + go mod tidy check + golangci-lint"
 	@echo "make vulncheck   govulncheck $(GOVULNCHECK_VERSION) on the module and Go toolchain"
+	@echo "make deadcode    unreachable funcs (not part of check; run now and then, e.g. after refactors)"
 	@echo "make test        go test -race ./..."
 	@echo "make test-short  go test -short ./... (skips tests that use real pacing)"
 	@echo "make guard-test  test the Claude guard hook (.claude/hooks/guard.py)"
@@ -48,6 +49,16 @@ lint: fmt-check vet tidy-check
 # Pinned version run via `go run`, so it needs no install and stays out of go.mod.
 vulncheck:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# golangci-lint's `unused` only sees unexported code; deadcode also finds exported funcs nothing
+# calls. First list: unreachable from the binaries (test-only helpers and reads kept for Part 2
+# show up here). Second list: unreachable even from tests, which is almost always safe to delete.
+# Advisory, so it is not part of `check`. The tool is pinned in go.mod (go tool).
+deadcode:
+	@echo "== unreachable from cmd/ (production)"
+	@$(GO) tool deadcode ./...
+	@echo "== unreachable even from tests"
+	@$(GO) tool deadcode -test ./...
 
 test:
 	$(GO) test -race ./...

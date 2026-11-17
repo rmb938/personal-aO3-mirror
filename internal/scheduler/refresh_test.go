@@ -27,7 +27,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 	e := newEnv(t, 5, nil)
 	ctx := context.Background()
 	e.srv.Handle("/works/5002", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
-	id := e.add(e.site.TagPath(), controllers.AddOptions{})
+	id := e.add(e.site.TagPath())
 	// Let 5002 exhaust its attempts (backoff between them is skipped by advancing the clock).
 	for range 10 {
 		e.drain(50)
@@ -60,7 +60,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 func TestRefreshFullAndSet(t *testing.T) {
 	e := newEnv(t, 5, nil)
 	ctx := context.Background()
-	id := e.add(e.site.TagPath(), controllers.AddOptions{})
+	id := e.add(e.site.TagPath())
 	e.drain(50)
 	require.Equal(t, store.SourceDoneBackfill, e.source(id).State)
 	res, err := e.ctl.Refresh(ctx, id, true)
@@ -69,7 +69,7 @@ func TestRefreshFullAndSet(t *testing.T) {
 	require.Equal(t, store.SourceActive, e.source(id).State, "full refresh should reactivate")
 	e.drain(50)
 	src := e.source(id)
-	cur, err := store.ParseCursor(src.BackfillCursor)
+	cur, err := controllers.ParseCursor(src.BackfillCursor)
 	require.NoError(t, err)
 	require.Equal(t, store.SourceDoneBackfill, src.State, "after full refresh")
 	require.False(t, cur.Rescan, "after full refresh")

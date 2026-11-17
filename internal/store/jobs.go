@@ -184,13 +184,6 @@ func (s *Store) GetJob(ctx context.Context, id int64) (Job, error) {
 	return j, err
 }
 
-// HasActiveJob reports whether a queued/running job with this dedupe key exists.
-func (s *Store) HasActiveJob(ctx context.Context, dedupeKey string) (bool, error) {
-	var n int
-	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE dedupe_key = ? AND state IN ('queued','running')`, dedupeKey).Scan(&n)
-	return n > 0, err
-}
-
 // ListJobs returns jobs matching optional filters, newest first.
 func (s *Store) ListJobs(ctx context.Context, state string, sourceID int64, dedupePrefix string, limit int) ([]Job, error) {
 	return s.FindJobs(ctx, JobFilter{State: state, SourceID: sourceID, DedupePrefix: dedupePrefix, Limit: limit})

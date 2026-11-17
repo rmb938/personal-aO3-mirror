@@ -89,16 +89,12 @@ type Counts struct {
 	Tags            int
 	Creators        int
 	Series          int
-	SourcesByState  map[string]int
-	JobsByState     map[string]int
 	RawPages        int
 	RawBytes        int64
 	RawZstdBytes    int64
 	Requests1h      int
 	Requests24h     int
 	RequestsByClass map[string]int // last 24h
-	MetaSchema      int
-	ContentSchema   int
 }
 
 // countGroups runs a `SELECT key, COUNT(*) ... GROUP BY key` query into dst. Its own function so
@@ -121,7 +117,7 @@ func countGroups(ctx context.Context, db *sql.DB, q string, dst map[string]int, 
 }
 
 func (s *Store) Counts(ctx context.Context) (Counts, error) {
-	c := Counts{WorksByStatus: map[string]int{}, SourcesByState: map[string]int{}, JobsByState: map[string]int{}, RequestsByClass: map[string]int{}}
+	c := Counts{WorksByStatus: map[string]int{}, RequestsByClass: map[string]int{}}
 	now := s.now()
 	grouped := []struct {
 		db  *sql.DB
@@ -130,8 +126,6 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		arg []any
 	}{
 		{s.meta, `SELECT status, COUNT(*) FROM works GROUP BY status`, c.WorksByStatus, nil},
-		{s.meta, `SELECT state, COUNT(*) FROM sources GROUP BY state`, c.SourcesByState, nil},
-		{s.meta, `SELECT state, COUNT(*) FROM jobs GROUP BY state`, c.JobsByState, nil},
 		{s.meta, `SELECT class, COUNT(*) FROM requests WHERE ts >= ? GROUP BY class`, c.RequestsByClass, []any{now.Add(-24 * time.Hour).Unix()}},
 	}
 	for _, g := range grouped {
@@ -156,8 +150,6 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		{s.content, `SELECT COUNT(*) FROM raw_pages`, &c.RawPages, nil},
 		{s.content, `SELECT COALESCE(SUM(size),0) FROM raw_pages`, &c.RawBytes, nil},
 		{s.content, `SELECT COALESCE(SUM(LENGTH(html_zstd)),0) FROM raw_pages`, &c.RawZstdBytes, nil},
-		{s.meta, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`, &c.MetaSchema, nil},
-		{s.content, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`, &c.ContentSchema, nil},
 	}
 	for _, q := range singles {
 		if err := q.db.QueryRowContext(ctx, q.q, q.arg...).Scan(q.dst); err != nil {

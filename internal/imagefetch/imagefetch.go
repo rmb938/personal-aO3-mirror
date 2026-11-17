@@ -28,7 +28,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/temoto/robotstxt"
 	"golang.org/x/net/html"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
@@ -118,13 +117,7 @@ type Worker struct {
 	log      *slog.Logger
 	mu       sync.Mutex
 	nextHost map[string]time.Time
-	robots   map[string]*robotsEntry
-}
-
-type robotsEntry struct {
-	data    *robotstxt.RobotsData
-	fetched time.Time
-	ttl     time.Duration
+	robots   map[string]*httpx.Robots // by scheme://host
 }
 
 var errBlockedAddr = errors.New("imagefetch: refusing non-public address")
@@ -177,7 +170,7 @@ func New(o Options) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Worker{o: o, log: o.Logger.With("component", "imagefetch"), nextHost: map[string]time.Time{}, robots: map[string]*robotsEntry{},
+	return &Worker{o: o, log: o.Logger.With("component", "imagefetch"), nextHost: map[string]time.Time{}, robots: map[string]*httpx.Robots{},
 		client: &http.Client{Transport: rt, Timeout: 2 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {
 				return errors.New("too many redirects")
@@ -424,40 +417,29 @@ func (w *Worker) robotsAllowed(ctx context.Context, u *url.URL, log *slog.Logger
 	w.mu.Lock()
 	e := w.robots[key]
 	w.mu.Unlock()
-	if e == nil || w.o.Now().Sub(e.fetched) > e.ttl {
+	if !e.Fresh(w.o.Now()) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, key+"/robots.txt", nil)
 		resp, err := w.client.Do(req)
 		w.hostDone(strings.ToLower(u.Hostname()))
-		ttl := 24 * time.Hour
-		var data *robotstxt.RobotsData
 		switch {
 		case err != nil && errors.Is(err, errBlockedAddr):
 			return false, false, false, errBlockedAddr
 		case err != nil:
 			return false, false, true, err
-		default:
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
-			resp.Body.Close()
-			data, err = robotstxt.FromStatusAndBytes(resp.StatusCode, body)
-			if err != nil {
-				data, _ = robotstxt.FromStatusAndBytes(404, nil) // unparseable: treat as no robots.txt
-			}
-			if resp.StatusCode >= 500 {
-				ttl = 15 * time.Minute
-			}
-			log.Debug("image host robots fetched", "status", resp.StatusCode)
 		}
-		e = &robotsEntry{data: data, fetched: w.o.Now(), ttl: ttl}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+		resp.Body.Close()
+		e, err = httpx.NewRobots(resp.StatusCode, body, w.o.Now(), false)
+		if err != nil {
+			e, _ = httpx.NewRobots(http.StatusNotFound, nil, w.o.Now(), false) // unparseable: treat as no robots.txt
+		}
+		log.Debug("image host robots fetched", "status", resp.StatusCode)
 		w.mu.Lock()
 		w.robots[key] = e
 		w.mu.Unlock()
 		fetched = true
 	}
-	target := u.EscapedPath()
-	if u.RawQuery != "" {
-		target += "?" + u.RawQuery
-	}
-	return e.data.TestAgent(target, httpx.ProductToken), fetched, false, nil
+	return e.Allowed(u), fetched, false, nil
 }
 
 func short(err error) string {

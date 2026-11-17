@@ -13,7 +13,7 @@ import (
 type TagRef struct {
 	ID   int64
 	Name string
-	Type string
+	Type model.TagType
 }
 
 // TagInfoProgress counts tags that qualify for tag info (given types, used by a mirrored work):

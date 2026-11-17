@@ -83,15 +83,14 @@ func jobIDFrom(ctx context.Context) int64 {
 
 // Response is a fully read AO3 response.
 type Response struct {
-	ReqID     string
-	Kind      Kind
-	URL       *url.URL // final URL after followed redirects
-	Status    int
-	Header    http.Header
-	Body      []byte
-	Class     Class
-	Reason    string
-	Redirects []string // SafePath of each hop
+	ReqID  string
+	Kind   Kind
+	URL    *url.URL // final URL after followed redirects
+	Status int
+	Header http.Header
+	Body   []byte
+	Class  Class
+	Reason string
 }
 
 // Client talks to one AO3 host.
@@ -106,7 +105,7 @@ type Client struct {
 	onReq   func(RequestRecord)
 
 	mu     sync.Mutex // serializes requests (one in flight)
-	robots *robotsCache
+	robots *Robots
 	seq    atomic.Uint64
 	idPfx  string
 }
@@ -236,7 +235,6 @@ func (c *Client) Get(ctx context.Context, kind Kind, ref string) (*Response, err
 	}
 	reqID := fmt.Sprintf("%s-%06d", c.idPfx, c.seq.Add(1))
 	log := logx.From(ctx, c.log).With("req_id", reqID, "kind", string(kind))
-	var hops []string
 	for hop := 0; ; hop++ {
 		if err := c.checkRobots(ctx, log, u); err != nil {
 			return nil, err
@@ -245,32 +243,25 @@ func (c *Client) Get(ctx context.Context, kind Kind, ref string) (*Response, err
 		if err != nil {
 			return nil, err
 		}
-		if resp.Status >= 300 && resp.Status < 400 {
-			loc, lerr := u.Parse(resp.Header.Get("Location"))
-			if lerr != nil {
-				resp.Class, resp.Reason = ClassUnexpected, "redirect=bad_location"
-				return c.finish(log, resp, hops), nil
-			}
-			if v, ok := classifyRedirect(loc); ok {
-				resp.Class, resp.Reason = v.Class, v.Reason
-				return c.finish(log, resp, hops), nil
-			}
-			if loc.Host != c.base.Host || hop >= maxRedirects {
-				resp.Class, resp.Reason = ClassUnexpected, fmt.Sprintf("redirect=unfollowed foreign=%t hop=%d", loc.Host != c.base.Host, hop)
-				return c.finish(log, resp, hops), nil
-			}
-			hops = append(hops, SafePath(loc))
-			log.Debug("following redirect", "hop", hop+1, "from", SafePath(u), "to", SafePath(loc))
-			u = loc
-			continue
+		if resp.Status < 300 || resp.Status >= 400 {
+			return resp, nil
 		}
-		return c.finish(log, resp, hops), nil
+		loc, lerr := u.Parse(resp.Header.Get("Location"))
+		if lerr != nil {
+			resp.Class, resp.Reason = ClassUnexpected, "redirect=bad_location"
+			return resp, nil
+		}
+		if v, ok := classifyRedirect(loc); ok {
+			resp.Class, resp.Reason = v.Class, v.Reason
+			return resp, nil
+		}
+		if loc.Host != c.base.Host || hop >= maxRedirects {
+			resp.Class, resp.Reason = ClassUnexpected, fmt.Sprintf("redirect=unfollowed foreign=%t hop=%d", loc.Host != c.base.Host, hop)
+			return resp, nil
+		}
+		log.Debug("following redirect", "hop", hop+1, "from", SafePath(u), "to", SafePath(loc))
+		u = loc
 	}
-}
-
-func (c *Client) finish(log *slog.Logger, r *Response, hops []string) *Response {
-	r.Redirects = hops
-	return r
 }
 
 // do performs one paced request and classifies it.
@@ -315,7 +306,7 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 	case hr.StatusCode >= 300 && hr.StatusCode < 400:
 		v = Verdict{ClassOK, fmt.Sprintf("status=%d redirect", hr.StatusCode)} // resolved by caller
 	default:
-		v = classify(kind, hr.StatusCode, hr.Header, body)
+		v = classify(kind, hr.StatusCode, body)
 	}
 	retryAfter := parseRetryAfter(hr.Header.Get("Retry-After"), c.clock.Now())
 	st := c.pacer.Report(v.Class, retryAfter)
@@ -354,7 +345,7 @@ func (c *Client) record(r RequestRecord) {
 // checkRobots refreshes robots.txt when stale (one paced request) and tests u against it.
 func (c *Client) checkRobots(ctx context.Context, log *slog.Logger, u *url.URL) error {
 	now := c.clock.Now()
-	if !c.robots.fresh(now) {
+	if !c.robots.Fresh(now) {
 		ru := c.base.ResolveReference(&url.URL{Path: "/robots.txt"})
 		resp, err := c.do(ctx, log, fmt.Sprintf("%s-r%06d", c.idPfx, c.seq.Add(1)), KindRobots, ru, 0)
 		if err != nil {
@@ -364,19 +355,15 @@ func (c *Client) checkRobots(ctx context.Context, log *slog.Logger, u *url.URL) 
 		if status >= 300 && status < 400 {
 			status = 500 // redirected robots: be conservative
 		}
-		rc, perr := newRobots(status, resp.Body, c.clock.Now(), resp.Class == ClassUnavailable)
+		rc, perr := NewRobots(status, resp.Body, c.clock.Now(), resp.Class == ClassUnavailable)
 		if perr != nil {
 			log.Warn("robots parse failed; disallowing all", "err", perr.Error())
-			rc, _ = newRobots(500, nil, c.clock.Now(), true)
+			rc, _ = NewRobots(500, nil, c.clock.Now(), true)
 		}
 		c.robots = rc
 		log.Info("robots refreshed", "status", resp.Status, "effective_status", rc.status, "ttl", rc.ttl.String())
 	}
-	target := u.EscapedPath()
-	if u.RawQuery != "" {
-		target += "?" + u.RawQuery
-	}
-	if !c.robots.allowed(target) {
+	if !c.robots.Allowed(u) {
 		log.Warn("robots disallowed; not sending", "path", SafePath(u), "robots_status", c.robots.status)
 		return fmt.Errorf("%w: %s", ErrDisallowed, SafePath(u))
 	}

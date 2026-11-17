@@ -31,6 +31,7 @@ linters:
     - errname         # ErrX sentinels, XError types
     - testifylint     # idiomatic testify assertions (require for fatal checks)
     - gosec           # security checks
+    - unparam         # unused params and always-same results (exported dead code: `make deadcode`)
   settings:
     gosec:
       excludes:

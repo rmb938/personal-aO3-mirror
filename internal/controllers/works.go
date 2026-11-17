@@ -66,7 +66,7 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 	if _, err := c.store.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions); err != nil {
 		return detail, err
 	}
-	sw, err := c.storeWork(ctx, w, time.Time{})
+	sw, err := c.storeWork(ctx, w, false, time.Time{})
 	if err != nil {
 		return detail, err
 	}
@@ -94,23 +94,24 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 // storedWork is what storing a parsed work page changed.
 type storedWork struct {
 	content store.ContentChange
-	upsert  store.UpsertResult // zero for a reparse
+	upsert  store.UpsertResult // zero value for a reparse
 	images  int                // images newly queued
 }
 
 // storeWork writes a parsed work page: chapter bodies and skin, then metadata, then queues its
-// embedded images. reparseAt is zero for a fresh fetch (marks the work fetched); for a reparse
-// it is when the stored page was fetched (fetch bookkeeping and status are left alone).
-func (c *Controllers) storeWork(ctx context.Context, w model.Work, reparseAt time.Time) (storedWork, error) {
+// embedded images. A fresh fetch (reparse false) marks the work fetched. A reparse leaves fetch
+// bookkeeping and status alone; pageAt is when the stored page was fetched, so newer listing
+// metadata is not rolled back.
+func (c *Controllers) storeWork(ctx context.Context, w model.Work, reparse bool, pageAt time.Time) (storedWork, error) {
 	var sw storedWork
 	var err error
 	if sw.content, err = c.store.PutWorkContent(ctx, w.ID, w.Chapters, w.SkinCSS); err != nil {
 		return sw, err
 	}
-	if reparseAt.IsZero() {
-		sw.upsert, err = c.store.UpsertWork(ctx, w, model.FromPage, parse.Version)
+	if reparse {
+		err = c.store.ReparseWork(ctx, w, pageAt, parse.Version)
 	} else {
-		err = c.store.ReparseWork(ctx, w, reparseAt, parse.Version)
+		sw.upsert, err = c.store.UpsertWork(ctx, w, model.FromPage, parse.Version)
 	}
 	if err != nil {
 		return sw, err

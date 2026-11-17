@@ -3,7 +3,6 @@ package controllers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
@@ -39,7 +38,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, r store.SourceRow, now
 	}
 	if !r.NextPollAt.After(now) {
 		if _, created, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: "1",
-			Priority: jobs.ClassPoll, DedupeKey: fmt.Sprintf("poll:%d:1", r.ID)}); err != nil {
+			Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(r.ID, 1)}); err != nil {
 			return err
 		} else if created {
 			log.Info("poll scheduled", "next_poll_at", now.Add(r.PollInterval))
@@ -66,7 +65,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, r store.SourceRow, now
 			class = jobs.ClassMaintenance
 		}
 		if _, created, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindBackfill, SourceID: r.ID,
-			Target: strconv.Itoa(cur.NextPage), Priority: class, DedupeKey: backfillKey(r.ID, cur)}); err != nil {
+			Target: strconv.Itoa(cur.NextPage), Priority: class, DedupeKey: jobs.BackfillKey(r.ID, cur.WindowTo, cur.NextPage)}); err != nil {
 			return err
 		} else if created {
 			log.Debug("backfill page scheduled", "page", cur.NextPage, "window_to", cur.WindowTo, "rescan", cur.Rescan)
@@ -74,10 +73,6 @@ func (c *Controllers) scheduleSource(ctx context.Context, r store.SourceRow, now
 		return nil
 	}
 	return c.finishWalk(ctx, r, cur, now, log)
-}
-
-func backfillKey(sourceID int64, c Cursor) string {
-	return fmt.Sprintf("backfill:%d:%s:%d", sourceID, c.WindowTo, c.NextPage)
 }
 
 // finishWalk completes a backfill or rescan: verifies works not seen during a rescan, then

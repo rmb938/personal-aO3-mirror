@@ -167,9 +167,8 @@ func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (D
 		r.TotalWorks = res.listing.Total
 	}
 	if more {
-		next := strconv.Itoa(page + 1)
-		if _, _, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: next,
-			Priority: jobs.ClassPoll, DedupeKey: "poll:" + strconv.FormatInt(r.ID, 10) + ":" + next}); err != nil {
+		if _, _, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: strconv.Itoa(page + 1),
+			Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(r.ID, page+1)}); err != nil {
 			return nil, err
 		}
 	} else {

@@ -31,3 +31,14 @@ func WorkKey(id int64) string { return "work:" + strconv.FormatInt(id, 10) }
 
 // SeriesKey is the dedupe key for fetching a series page.
 func SeriesKey(id int64) string { return "series:" + strconv.FormatInt(id, 10) }
+
+// PollKey is the dedupe key for one page of a source's update poll.
+func PollKey(sourceID int64, page int) string {
+	return "poll:" + strconv.FormatInt(sourceID, 10) + ":" + strconv.Itoa(page)
+}
+
+// BackfillKey is the dedupe key for one backfill page of a source; windowTo ("" when not
+// windowed) keeps pages of different date windows apart.
+func BackfillKey(sourceID int64, windowTo string, page int) string {
+	return "backfill:" + strconv.FormatInt(sourceID, 10) + ":" + windowTo + ":" + strconv.Itoa(page)
+}

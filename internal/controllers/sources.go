@@ -255,7 +255,7 @@ func (c *Controllers) Refresh(ctx context.Context, id int64, full bool) (Refresh
 			cur.BlockedParser = 0
 			res.UnblockedParser = true
 		}
-		if r.State == store.SourceDoneBackfill && r.Kind != "work" {
+		if r.State == store.SourceDoneBackfill && r.Kind != string(ao3url.KindWork) {
 			cur = rescanCursor(r.BackfillOrder, now)
 			res.RescanStarted = true
 		}

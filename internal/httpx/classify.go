@@ -45,15 +45,9 @@ var cfMarkers = []string{
 // AO3 layout markers (app/views/layouts/application.html.erb).
 var ao3LayoutMarkers = []string{`id="outer"`, `id="main"`}
 
-// Per-kind content markers. Missing ones make the page parse_unexpected (or unavailable when the
-// AO3 layout itself is missing, which usually means a maintenance/edge page).
-var kindMarkers = map[Kind][]string{
-	KindWork:    {`id="workskin"`},
-	KindListing: {}, // an empty listing has no blurbs; the parser decides
-	KindTag:     {},
-	KindSeries:  {},
-	KindPage:    {},
-}
+// workMarker must be on a work page; without it the page is parse_unexpected. Other kinds have
+// no required marker (an empty listing has no blurbs, so the parser decides).
+const workMarker = `id="workskin"`
 
 // Verdict is the classifier output with a content-free reason for logs.
 type Verdict struct {
@@ -79,7 +73,7 @@ func classifyRedirect(loc *url.URL) (Verdict, bool) {
 }
 
 // classify decides the class of a final (non-redirect) response.
-func classify(kind Kind, status int, h http.Header, body []byte) Verdict {
+func classify(kind Kind, status int, body []byte) Verdict {
 	lower := bytes.ToLower(body)
 	var cfHits []string
 	for _, m := range cfMarkers {
@@ -136,17 +130,11 @@ func classify(kind Kind, status int, h http.Header, body []byte) Verdict {
 	if len(cfHits) > 0 {
 		okReason += " cf_injected=" + cf
 	}
-	if kind == KindWork && bytes.Contains(body, []byte(`class="caution notice"`)) &&
-		bytes.Contains(body, []byte("view_adult=true")) && !bytes.Contains(body, []byte(`id="workskin"`)) {
-		return Verdict{ClassAdultGate, okReason + " adult_interstitial"}
-	}
-	for _, m := range kindMarkers[kind] {
-		if !bytes.Contains(body, []byte(m)) {
-			missing = append(missing, m)
+	if kind == KindWork && !bytes.Contains(body, []byte(workMarker)) {
+		if bytes.Contains(body, []byte(`class="caution notice"`)) && bytes.Contains(body, []byte("view_adult=true")) {
+			return Verdict{ClassAdultGate, okReason + " adult_interstitial"}
 		}
-	}
-	if len(missing) > 0 {
-		return Verdict{ClassUnexpected, okReason + " missing=" + strings.Join(missing, ",")}
+		return Verdict{ClassUnexpected, okReason + " missing=" + workMarker}
 	}
 	return Verdict{ClassOK, okReason}
 }

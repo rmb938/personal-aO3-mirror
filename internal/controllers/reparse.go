@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"strconv"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/logx"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
-	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -93,14 +93,13 @@ func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64
 	log.Debug("parse report", append([]any{"work_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		res.Failed++
-		if c.options.DataDir != "" {
-			if rel, serr := skeleton.SaveDebug(c.options.DataDir, "work", strconv.FormatInt(id, 10), page, c.options.Now()); serr == nil {
-				log.Warn("reparse failed; saved debug skeleton", "work_id", id, "file", rel, "missing", rep.Missing)
-			}
-		}
+		// Counted, not returned: one bad page must not stop the run. The parse error names a CSS
+		// path only (content-free).
+		log.Warn("reparse failed", "work_id", id, "err", err.Error(), "missing", rep.Missing)
+		c.saveSkeleton(logx.With(ctx, log, "work_id", id), "work", strconv.FormatInt(id, 10), page)
 		return nil
 	}
-	sw, err := c.storeWork(ctx, w, at)
+	sw, err := c.storeWork(ctx, w, true, at)
 	if err != nil {
 		return err
 	}

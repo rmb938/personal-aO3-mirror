@@ -58,7 +58,7 @@ func TestMigrationsIdempotent(t *testing.T) {
 		s, err := Open(ctx, dir, Options{})
 		require.NoError(t, err, "open %d", i)
 		for _, db := range []string{"meta", "content"} {
-			v, err := s.SchemaVersion(ctx, db)
+			v, err := s.schemaVersion(ctx, db)
 			require.NoError(t, err)
 			require.Equal(t, 1, v, "%s schema", db)
 		}
@@ -72,10 +72,10 @@ func TestPageSizes(t *testing.T) {
 	for i := range 2 { // new files, then reopened existing files
 		s, err := Open(ctx, dir, Options{})
 		require.NoError(t, err)
-		n, err := s.PageSize(ctx, "content")
+		n, err := s.pageSize(ctx, "content")
 		require.NoError(t, err)
 		require.Equal(t, ContentPageSize, n, "open %d: content page_size", i)
-		n, err = s.PageSize(ctx, "meta")
+		n, err = s.pageSize(ctx, "meta")
 		require.NoError(t, err)
 		require.Equal(t, 4096, n, "open %d: meta page_size (default)", i)
 		var mode string
@@ -425,7 +425,6 @@ func TestCountsAndRequests(t *testing.T) {
 	require.Equal(t, 2, c.Requests24h)
 	require.Equal(t, 1, c.RawPages)
 	require.Equal(t, 4, c.Tags)
-	require.Equal(t, 1, c.MetaSchema)
 	n, err := s.PruneRequests(ctx, time.Hour)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, n, "pruned")

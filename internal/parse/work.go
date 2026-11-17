@@ -96,12 +96,7 @@ func ParseWork(workID int64, page []byte) (model.Work, *Report, error) {
 	w.Words = atoi(stats.Find("dd.words").Text())
 	w.ChaptersPosted, w.ChaptersExpected = chaptersPair(stats.Find("dd.chapters").Text())
 	w.Complete = (w.ChaptersExpected > 0 && w.ChaptersPosted >= w.ChaptersExpected) || strings.HasPrefix(statusLabel, "Completed")
-	w.Stats = model.Stats{
-		Kudos:     atoi(stats.Find("dd.kudos").Text()),
-		Hits:      atoi(stats.Find("dd.hits").Text()),
-		Comments:  atoi(stats.Find("dd.comments").Text()),
-		Bookmarks: atoi(stats.Find("dd.bookmarks").Text()),
-	}
+	w.Stats = parseStats(stats)
 
 	// Work skin: <style> rendered by skins/_skin_style_block inside #work-skin, before #workskin.
 	doc.Find("#work-skin > style").Each(func(_ int, s *goquery.Selection) { w.SkinCSS += s.Text() })

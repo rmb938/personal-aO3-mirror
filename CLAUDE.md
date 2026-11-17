@@ -82,4 +82,7 @@ user approval. Keep `data_dir` at the default `./data` so the guard covers it.
   `make lint` (gofmt/goimports check, `go vet`, `go mod tidy` check, golangci-lint with `.golangci.yml`),
   `make vulncheck` (govulncheck), `go test -race ./...` and the guard hook tests. Fix findings rather than silencing them; a
   `//nolint:<linter> // reason` is only for intentional cases and needs the reason.
+- Run `make deadcode` now and then (after refactors, before a part ships), not on every commit. It is
+  advisory: delete what is unreachable even from tests; the production-only list also holds test
+  helpers and store reads kept for Part 2, so triage that one.
 - Commit only when the user asks.
