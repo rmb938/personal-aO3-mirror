@@ -290,3 +290,15 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// withinOneDay reports whether two YYYY-MM-DD dates are equal or one day apart. Anything that
+// does not parse is not within a day.
+func withinOneDay(a, b string) bool {
+	ta, errA := time.Parse(time.DateOnly, a)
+	tb, errB := time.Parse(time.DateOnly, b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	d := ta.Sub(tb)
+	return d >= -24*time.Hour && d <= 24*time.Hour
+}

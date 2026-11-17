@@ -103,6 +103,9 @@ func (s *Scheduler) fetchListing(ctx context.Context, log *slog.Logger, r store.
 			} else if created {
 				res.enqueued++
 			}
+			if up.FetchReason != nil {
+				log.Info("work needs fetch", append([]any{"work_id", b.ID, "page", page}, up.FetchReason...)...)
+			}
 		}
 	}
 	if err := s.st.LinkSourceWorks(ctx, r.ID, ids); err != nil {
@@ -369,6 +372,9 @@ func (s *Scheduler) handleWork(ctx context.Context, job store.Job, log *slog.Log
 	detail["words"] = w.Words
 	detail["content"] = string(change) // new | changed | unchanged (raw page bytes differ on nearly every fetch)
 	detail["revived"] = up.Revived
+	if up.MetaChanged != nil {
+		detail["meta_changed"] = up.MetaChanged // field names and +added/-removed counts only
+	}
 	if mismatch, ok := rep.Fields["chapter_count_mismatch"]; ok {
 		detail["chapter_count_mismatch"] = mismatch
 	}

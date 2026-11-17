@@ -260,6 +260,12 @@ func TestBackfillThenPoll(t *testing.T) {
 	var ch int
 	e.scan(`SELECT chapters_posted FROM works WHERE id = 5010`, &ch)
 	require.GreaterOrEqual(t, ch, 2, "updated work not refreshed")
+
+	// Content-free change details: why the listing triggered the fetch, and what the page changed.
+	logs := e.logs.String()
+	require.Contains(t, logs, `"msg":"work needs fetch"`)
+	require.Contains(t, logs, `"work_id":5010,"page":1,"never_fetched":false,"revised_listed":"2026-11-14"`)
+	require.Contains(t, logs, `"meta_changed":[`, "re-fetch of 5010 should report meta_changed")
 }
 
 func TestFairnessAlternates(t *testing.T) {

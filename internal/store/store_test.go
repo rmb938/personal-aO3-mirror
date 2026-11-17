@@ -169,6 +169,100 @@ func TestUpsertBlurbThenPage(t *testing.T) {
 	require.True(t, r.Changed && r.NeedsFetch, "new chapter should need fetch: %+v", r)
 }
 
+// Listing blurbs can show the revised date a day off the page's UTC date (AO3 caches blurbs
+// without the time zone). That must not refetch on every poll or flip revised_at.
+func TestBlurbDateOffByOneDay(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	w := fixtureWork(1)
+	w.Revised = "2026-09-22"
+	_, err := s.UpsertWork(ctx, w, model.FromBlurb, 1)
+	require.NoError(t, err)
+	pw := w
+	pw.Revised = "2026-09-23"
+	_, err = s.UpsertWork(ctx, pw, model.FromPage, 1)
+	require.NoError(t, err)
+
+	revised := func() string {
+		var r string
+		require.NoError(t, s.Meta.QueryRow(`SELECT revised_at FROM works WHERE id = 1`).Scan(&r))
+		return r
+	}
+	for _, d := range []string{"2026-09-22", "2026-09-24", "2026-09-23"} {
+		b := w
+		b.Revised = d
+		r, err := s.UpsertWork(ctx, b, model.FromBlurb, 1)
+		require.NoError(t, err)
+		require.False(t, r.Changed || r.NeedsFetch, "blurb date %s, page date 2026-09-23: %+v", d, r)
+		require.Equal(t, "2026-09-23", revised(), "blurb date %s must not overwrite the page date", d)
+	}
+
+	// Two days off: a real date change.
+	b := w
+	b.Revised = "2026-09-25"
+	r, err := s.UpsertWork(ctx, b, model.FromBlurb, 1)
+	require.NoError(t, err)
+	require.True(t, r.Changed && r.NeedsFetch, "two days off must refetch: %+v", r)
+
+	// One day off but a new chapter: refetch.
+	b.Revised, b.ChaptersPosted, b.Words = "2026-09-22", w.ChaptersPosted+1, w.Words+100
+	r, err = s.UpsertWork(ctx, b, model.FromBlurb, 1)
+	require.NoError(t, err)
+	require.True(t, r.NeedsFetch, "new chapter must refetch whatever the date: %+v", r)
+}
+
+func TestChangeDetails(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	w := fixtureWork(1)
+	_, err := s.UpsertWork(ctx, w, model.FromBlurb, 1)
+	require.NoError(t, err)
+
+	pw := w
+	pw.Chapters = []model.Chapter{{ID: 501, Position: 1, Title: "One"}, {ID: 502, Position: 2, Title: "Two"}}
+	r, err := s.UpsertWork(ctx, pw, model.FromPage, 1)
+	require.NoError(t, err)
+	require.Nil(t, r.MetaChanged, "first page fetch of a new work is not diffed")
+
+	// Same page again: compared, nothing changed (empty, not nil).
+	r, err = s.UpsertWork(ctx, pw, model.FromPage, 1)
+	require.NoError(t, err)
+	require.NotNil(t, r.MetaChanged)
+	require.Empty(t, r.MetaChanged)
+
+	// Title, one tag added, one chapter retitled, stats changed (stats are not reported).
+	pw2 := pw
+	pw2.Title = "Fixture Title Beta"
+	pw2.Tags = append(append([]model.Tag{}, pw.Tags...), model.Tag{Type: model.TagFreeform, Name: "fixture new tag"})
+	pw2.Chapters = []model.Chapter{{ID: 501, Position: 1, Title: "One"}, {ID: 502, Position: 2, Title: "Two (edited)"}}
+	pw2.Stats.Kudos = 500
+	r, err = s.UpsertWork(ctx, pw2, model.FromPage, 1)
+	require.NoError(t, err)
+	require.Equal(t, []string{"title", "tags+1-0", "chapters+1-1"}, r.MetaChanged)
+
+	// Reparse is never diffed.
+	require.NoError(t, s.ReparseWork(ctx, pw, time.Now(), 1))
+
+	// Blurb with a different revised date: needs fetch, with the dates as the reason.
+	b := w
+	b.Revised = "2026-11-12"
+	r, err = s.UpsertWork(ctx, b, model.FromBlurb, 1)
+	require.NoError(t, err)
+	require.True(t, r.NeedsFetch)
+	reason := map[string]any{}
+	for i := 0; i+1 < len(r.FetchReason); i += 2 {
+		reason[r.FetchReason[i].(string)] = r.FetchReason[i+1]
+	}
+	require.Equal(t, map[string]any{"never_fetched": false, "revised_listed": "2026-11-12", "revised_stored": "2026-11-01",
+		"revised_fetched": "2026-11-01", "revised_comparable": true, "chapters_listed": 2, "chapters_fetched": 2,
+		"words_listed": 1000, "words_fetched": 1000}, reason)
+
+	// A blurb that needs no fetch has no reason.
+	r, err = s.UpsertWork(ctx, w, model.FromBlurb, 1)
+	require.NoError(t, err)
+	require.Nil(t, r.FetchReason)
+}
+
 func TestTagsDedupeAndTypeUpgrade(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()

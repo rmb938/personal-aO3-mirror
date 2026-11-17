@@ -20,6 +20,12 @@ type UpsertResult struct {
 	NeedsFetch bool             // full page fetch needed (never fetched, or changed since last fetch)
 	PrevStatus model.WorkStatus // status before this upsert ("" if new)
 	Revived    bool             // was deleted/hidden/... and is visible again
+	// FetchReason (blurbs of known works that need a fetch): the listed vs stored revised date,
+	// chapters and words, as slog key/value pairs. Dates and counts only, content-free.
+	FetchReason []any
+	// MetaChanged (re-fetches of pages fetched before): changed fields ("title") and related-row
+	// changes ("tags+2-1"). Names and counts only, content-free. Stats are not compared.
+	MetaChanged []string
 }
 
 type workState struct {
@@ -96,6 +102,15 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 	if origin == model.FromPage && w.RevisedIsPublished && st.revised != "" {
 		w.Revised = st.revised
 	}
+	// Listing blurbs are cached by AO3 without the time zone in the key, so their date is in the
+	// time zone of whoever rendered the blurb first and can be a day off the work page's UTC date.
+	// With chapters and words unchanged since the last fetch, a one-day difference is that, not
+	// an update: keep the page's date, so neither a refetch nor a flip of revised_at follows.
+	// (AO3's revised_at is the newest chapter's publish date; edits to text or tags don't move it.)
+	if origin == model.FromBlurb && revisedComparable && st.lastFetched != 0 &&
+		w.ChaptersPosted == st.fetchedChapters && w.Words == st.fetchedWords && withinOneDay(w.Revised, st.fetchedRevised) {
+		w.Revised = st.fetchedRevised
+	}
 	if !res.New {
 		res.Changed = (revisedComparable && st.revised != w.Revised) || st.chapters != w.ChaptersPosted || st.words != w.Words
 	}
@@ -105,6 +120,15 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 		res.Revived = true
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET status = 'ok', status_changed_at = ? WHERE id = ?`, now, w.ID); err != nil {
 			return res, err
+		}
+	}
+
+	// A re-fetch of a page fetched before: snapshot what it may rewrite, to report what changed.
+	var before metaSnapshot
+	diffPage := origin == model.FromPage && !opt.reparse && !res.New && st.lastFetched != 0
+	if diffPage {
+		if before, err = snapshotMeta(ctx, tx, w.ID); err != nil {
+			return res, fmt.Errorf("snapshot work meta: %w", err)
 		}
 	}
 
@@ -128,6 +152,13 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 		}
 		res.NeedsFetch = res.New || st.lastFetched == 0 || (revisedComparable && st.fetchedRevised != w.Revised) ||
 			st.fetchedChapters != w.ChaptersPosted || st.fetchedWords != w.Words
+		if res.NeedsFetch && !res.New {
+			res.FetchReason = []any{"never_fetched", st.lastFetched == 0,
+				"revised_listed", w.Revised, "revised_stored", st.revised, "revised_fetched", st.fetchedRevised,
+				"revised_comparable", revisedComparable,
+				"chapters_listed", w.ChaptersPosted, "chapters_fetched", st.fetchedChapters,
+				"words_listed", w.Words, "words_fetched", st.fetchedWords}
+		}
 	case model.FromPage:
 		if opt.reparse {
 			if _, err := tx.ExecContext(ctx, `UPDATE works SET notes_html = ?, endnotes_html = ?, published = ?,
@@ -171,6 +202,13 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 		if err := replaceCollections(ctx, tx, w.ID, w.Collections); err != nil {
 			return res, err
 		}
+	}
+	if diffPage {
+		after, err := snapshotMeta(ctx, tx, w.ID)
+		if err != nil {
+			return res, fmt.Errorf("snapshot work meta: %w", err)
+		}
+		res.MetaChanged = diffMeta(before, after)
 	}
 	if err := tx.Commit(); err != nil {
 		return res, err
