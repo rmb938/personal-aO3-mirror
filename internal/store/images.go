@@ -25,6 +25,13 @@ type ImageRow struct {
 	Attempts int
 }
 
+// ImageHost is the per-host key for image pacing: the hostname, lower-cased, without a
+// fully-qualified trailing dot ("Example.com." and "example.com" are one host). The image
+// worker keys its intervals, backoffs and robots cache by it too.
+func ImageHost(u *url.URL) string {
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+}
+
 // QueueImages records the images a work embeds and queues new ones for download.
 func (s *Tx) QueueImages(ctx context.Context, workID int64, urls []string) (int, error) {
 	if len(urls) == 0 {
@@ -39,7 +46,7 @@ func (s *Tx) QueueImages(ctx context.Context, workID int64, urls []string) (int,
 			continue
 		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO images (url, host, status, first_seen) VALUES (?,?, 'queued', ?)
-			ON CONFLICT (url) DO NOTHING`, raw, strings.ToLower(u.Hostname()), now)
+			ON CONFLICT (url) DO NOTHING`, raw, ImageHost(u), now)
 		if err != nil {
 			return added, err
 		}
@@ -104,6 +111,40 @@ func (s *Tx) ImageRetry(ctx context.Context, id int64, notBefore time.Time, last
 	_, err := s.meta.ExecContext(ctx, `UPDATE images SET attempts = attempts + 1, last_error = ?, not_before = ?,
 		status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'queued' END WHERE id = ?`, lastError, notBefore.Unix(), maxAttempts, id)
 	return err
+}
+
+// ImageDefer puts an image off until notBefore without counting an attempt: nothing was sent
+// for it (its host was held back, or its robots.txt could not be read).
+func (s *Tx) ImageDefer(ctx context.Context, id int64, notBefore time.Time, lastError string) error {
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET last_error = ?, not_before = ? WHERE id = ? AND status = 'queued'`,
+		lastError, notBefore.Unix(), id)
+	return err
+}
+
+// DueImageHosts returns which of hosts have queued images due at now.
+func (s *ReadTx) DueImageHosts(ctx context.Context, now time.Time, hosts []string) ([]string, error) {
+	if len(hosts) == 0 {
+		return nil, nil
+	}
+	args := []any{now.Unix()}
+	for _, h := range hosts {
+		args = append(args, h)
+	}
+	rows, err := s.meta.QueryContext(ctx, `SELECT DISTINCT host FROM images WHERE status = 'queued' AND not_before <= ?
+		AND host IN (`+placeholders(len(hosts))+`)`, args...) // only "?,?,..." is concatenated
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 // ImageFinal marks an image permanently failed/skipped/too_large/disallowed.

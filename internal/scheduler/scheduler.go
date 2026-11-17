@@ -204,6 +204,7 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 
 	var re controllers.RetryError
 	var pe controllers.PermanentError
+	var we controllers.WaitError
 	switch {
 	case err == nil:
 		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
@@ -213,6 +214,20 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 		book("requeue", func(ctx context.Context, tx *store.Tx) error { return tx.RequeueJob(ctx, job.ID, s.options.Now()) })
 		log.Info("job interrupted; requeued")
 		return
+	case errors.As(err, &we):
+		// Nothing was sent (e.g. robots.txt unreadable): wait, without using up an attempt.
+		nb := we.Until
+		if floor := s.options.Now().Add(time.Minute); nb.Before(floor) {
+			nb = floor
+		}
+		detail["error"], detail["not_before"] = string(we.Code), nb.UTC().Format(time.RFC3339)
+		book("wait", func(ctx context.Context, tx *store.Tx) error {
+			if err := tx.RequeueJob(ctx, job.ID, nb); err != nil {
+				return err
+			}
+			return tx.JobEvent(ctx, job.ID, "wait", detail)
+		})
+		log.Info("job waiting", "error", string(we.Code), "not_before", nb)
 	case errors.As(err, &re):
 		nb := s.options.Now().Add(time.Minute)
 		if st := s.options.Pacer.PacerState(); st.BackoffTill.After(nb) {

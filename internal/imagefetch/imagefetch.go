@@ -205,7 +205,7 @@ func (w *Worker) Step(ctx context.Context) (bool, time.Duration, error) {
 	now := w.o.Now()
 	// Hosts cooling down (interval or a 429/5xx backoff) are excluded in the query itself, so a
 	// backlog on one held-back host never hides due images on other hosts.
-	cooling, earliest := w.coolingHosts(now)
+	cooling := w.coolingHosts(now)
 	rows, err := w.images().NextImages(ctx, now, 1, cooling)
 	if err != nil {
 		return false, 0, err
@@ -214,30 +214,47 @@ func (w *Worker) Step(ctx context.Context) (bool, time.Duration, error) {
 		w.safeFetch(ctx, rows[0])
 		return true, 0, nil
 	}
+	// Nothing runnable: wake when a cooling host with due images frees up (hosts with nothing
+	// queued don't matter), else after Idle.
+	waiting, err := w.images().DueImageHosts(ctx, now, cooling)
+	if err != nil {
+		return false, 0, err
+	}
+	var earliest time.Time
+	w.mu.Lock()
+	for _, h := range waiting {
+		if free := w.nextHost[h]; earliest.IsZero() || free.Before(earliest) {
+			earliest = free
+		}
+	}
+	w.mu.Unlock()
 	if !earliest.IsZero() {
 		return false, earliest.Sub(now), nil // Run caps this at Idle
 	}
 	return false, w.o.Idle, nil
 }
 
-// coolingHosts lists the hosts not free at now and the earliest time one frees up. Entries
-// that have expired are dropped, so the map only holds hosts still cooling.
-func (w *Worker) coolingHosts(now time.Time) ([]string, time.Time) {
+// coolingHosts lists the hosts not free at now. Expired entries are dropped, so the map only
+// holds hosts still cooling.
+func (w *Worker) coolingHosts(now time.Time) []string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var hosts []string
-	var earliest time.Time
 	for h, free := range w.nextHost {
 		if !free.After(now) {
 			delete(w.nextHost, h)
 			continue
 		}
 		hosts = append(hosts, h)
-		if earliest.IsZero() || free.Before(earliest) {
-			earliest = free
-		}
 	}
-	return hosts, earliest
+	return hosts
+}
+
+// hostFree is when host may be requested again (zero or past: now).
+func (w *Worker) hostFree(host string) time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.nextHost[host]
 }
 
 func (w *Worker) hostDone(host string) {
@@ -315,7 +332,7 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError:
 		// The whole host backs off (Retry-After, or the first retry delay), not just this image:
 		// its other queued images wait too.
-		host := strings.ToLower(resp.Request.URL.Hostname())
+		host := store.ImageHost(resp.Request.URL)
 		cool := w.hostBackoff(host, httpx.ParseRetryAfter(resp.Header.Get("Retry-After"), w.o.Now()))
 		log.Warn("image host unavailable; host backing off", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"),
 			"host_free_at", cool)
@@ -376,7 +393,7 @@ func (w *Worker) follow(ctx context.Context, r store.ImageRow, u *url.URL, log *
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("Accept", "image/*")
 		resp, err := w.client.Do(req)
-		w.hostDone(strings.ToLower(u.Hostname()))
+		w.hostDone(store.ImageHost(u))
 		if err != nil {
 			if errors.Is(err, errBlockedAddr) {
 				log.Warn("image host resolves to a non-public address; skipped", "hop", hop)
@@ -404,13 +421,13 @@ func (w *Worker) follow(ctx context.Context, r store.ImageRow, u *url.URL, log *
 			log.Info("image redirects to an AO3 host; skipped", "hop", hop)
 			_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "ao3_redirect")
 		default:
-			host := strings.ToLower(loc.Hostname())
+			host := store.ImageHost(loc)
 			log.Debug("following image redirect", "hop", hop+1, "to_host", httpx.Hash(host))
-			if w.waitHost(ctx, host) != nil {
+			if !w.awaitHop(ctx, r, host, log) {
 				return nil, false
 			}
 			proceed, fetchedRobots := w.robotsGate(ctx, r, loc, log)
-			if !proceed || (fetchedRobots && w.waitHost(ctx, host) != nil) {
+			if !proceed || (fetchedRobots && !w.awaitHop(ctx, r, host, log)) {
 				return nil, false
 			}
 			u = loc
@@ -428,15 +445,36 @@ func isRedirect(status int) bool {
 	return false
 }
 
-// waitHost waits until host's per-host interval has passed (a redirect target, mid-image).
+// hostBusyError means a redirect hop's host is backing off (beyond its normal interval).
+type hostBusyError struct{ until time.Time }
+
+func (e hostBusyError) Error() string { return "imagefetch: redirect host backing off" }
+
+// waitHost waits out host's normal per-host interval in place (a redirect hop, mid-image). A
+// longer hold (a 429/5xx backoff) is not slept through, which would stall the single worker
+// for hours: it returns hostBusyError with the time the host is free.
 func (w *Worker) waitHost(ctx context.Context, host string) error {
-	w.mu.Lock()
-	free := w.nextHost[host]
-	w.mu.Unlock()
-	if d := free.Sub(w.o.Now()); d > 0 {
-		return w.o.Sleep(ctx, d)
+	free := w.hostFree(host)
+	d := free.Sub(w.o.Now())
+	switch {
+	case d <= 0:
+		return nil
+	case d > w.o.PerHostInterval:
+		return hostBusyError{until: free}
 	}
-	return nil
+	return w.o.Sleep(ctx, d)
+}
+
+// awaitHop waits for a redirect hop's host. If the host is backing off the image is deferred
+// to when it is free (no attempt used); false means stop (deferred, or shutting down).
+func (w *Worker) awaitHop(ctx context.Context, r store.ImageRow, host string, log *slog.Logger) bool {
+	err := w.waitHost(ctx, host)
+	if busy, ok := errors.AsType[hostBusyError](err); ok {
+		log.Info("redirect host backing off; image deferred", "to_host", httpx.Hash(host), "not_before", busy.until)
+		_ = w.images().ImageDefer(ctx, r.ID, busy.until, "redirect_host_busy")
+		return false
+	}
+	return err == nil
 }
 
 // robotsGate checks u's host robots.txt for image r. proceed=false means the image's outcome
@@ -445,23 +483,29 @@ func (w *Worker) waitHost(ctx context.Context, host string) error {
 func (w *Worker) robotsGate(ctx context.Context, r store.ImageRow, u *url.URL, log *slog.Logger) (proceed, fetched bool) {
 	st := w.images()
 	rb, fetched, retry, err := w.robotsFor(ctx, u, log)
+	busy, hostBusy := errors.AsType[hostBusyError](err)
 	switch {
 	case err != nil && errors.Is(err, errBlockedAddr):
 		log.Warn("image host resolves to a non-public address; skipped")
 		_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "non_public_address")
+	case hostBusy:
+		// A robots.txt redirect leads to a host that is backing off: try again when it is free.
+		log.Info("robots redirect host backing off; image deferred", "not_before", busy.until)
+		_ = st.ImageDefer(ctx, r.ID, busy.until, "robots_redirect_host_busy")
 	case err != nil && retry:
 		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "robots:"+short(err), w.o.MaxAttempts)
 	case err != nil:
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "robots:"+short(err))
 	case !rb.Allowed(u) && rb.Unavailable():
 		// robots.txt could not be read (5xx, 429, unresolvable redirect): everything is refused
-		// only until the next robots refresh, so retry the image instead of failing it for good.
-		nb := w.o.Now().Add(w.backoff(r.Attempts))
-		if exp := rb.ExpiresAt(); exp.After(nb) {
-			nb = exp // an earlier retry would only meet the same cached refusal
+		// only until it is read again. Nothing was sent for the image, so it is deferred to then
+		// without using an attempt (a long robots outage must not fail the host's images).
+		nb := rb.ExpiresAt()
+		if free := w.hostFree(store.ImageHost(u)); free.After(nb) {
+			nb = free // the host asked us to back off for longer
 		}
-		log.Info("image host robots.txt unavailable; will retry", "robots_status", rb.Status(), "not_before", nb)
-		_ = st.ImageRetry(ctx, r.ID, nb, "robots_unavailable", w.o.MaxAttempts)
+		log.Info("image host robots.txt unavailable; image deferred", "robots_status", rb.Status(), "not_before", nb)
+		_ = st.ImageDefer(ctx, r.ID, nb, "robots_unavailable")
 	case !rb.Allowed(u):
 		log.Info("image disallowed by host robots.txt")
 		_ = st.ImageFinal(ctx, r.ID, store.ImageDisallowed, "robots")
@@ -485,6 +529,16 @@ func (i imageStore) NextImages(ctx context.Context, now time.Time, limit int, sk
 	return store.ReadValue(ctx, i.s, func(ctx context.Context, tx *store.ReadTx) ([]store.ImageRow, error) {
 		return tx.NextImages(ctx, now, limit, skipHosts)
 	})
+}
+
+func (i imageStore) DueImageHosts(ctx context.Context, now time.Time, hosts []string) ([]string, error) {
+	return store.ReadValue(ctx, i.s, func(ctx context.Context, tx *store.ReadTx) ([]string, error) {
+		return tx.DueImageHosts(ctx, now, hosts)
+	})
+}
+
+func (i imageStore) ImageDefer(ctx context.Context, id int64, notBefore time.Time, lastError string) error {
+	return i.write(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.ImageDefer(ctx, id, notBefore, lastError) })
 }
 
 func (i imageStore) ImageFinal(ctx context.Context, id int64, status, lastError string) error {
@@ -552,7 +606,7 @@ func (w *Worker) backoff(attempts int) time.Duration {
 // when it could not be read). retry=true means the check could not be made now (network) and
 // should be retried; fetched=true means a robots.txt request was just made.
 func (w *Worker) robotsFor(ctx context.Context, u *url.URL, log *slog.Logger) (e *httpx.Robots, fetched, retry bool, err error) {
-	key := u.Scheme + "://" + u.Host
+	key := u.Scheme + "://" + store.ImageHost(u) + ":" + u.Port() // "Host." and "host" share one entry
 	w.mu.Lock()
 	e = w.robots[key]
 	w.mu.Unlock()
@@ -582,12 +636,14 @@ func (w *Worker) robotsFor(ctx context.Context, u *url.URL, log *slog.Logger) (e
 const maxRobotsRedirects = 5
 
 // fetchRobots fetches a robots.txt, following redirects (http→https is common) with the same
-// per-hop checks as images: never AO3, and each hop host's interval. A redirect chain that
-// cannot be resolved yields status 500, which disallows everything (as the AO3 client does
-// for 3xx), rather than a 3xx that robots parsing would treat as "no robots.txt".
+// per-hop checks as images: never AO3, and each hop host's interval (a hop host that is backing
+// off returns hostBusyError rather than being slept through). A 429/5xx backs off that host by its
+// Retry-After, as for images. A redirect chain that cannot be resolved yields status 500, which
+// disallows everything (as the AO3 client does for 3xx), rather than a 3xx that robots parsing
+// would treat as "no robots.txt".
 func (w *Worker) fetchRobots(ctx context.Context, u *url.URL) (status int, body []byte, hops int, err error) {
 	for hop := 0; ; hop++ {
-		host := strings.ToLower(u.Hostname())
+		host := store.ImageHost(u)
 		if hop > 0 {
 			if err := w.waitHost(ctx, host); err != nil {
 				return 0, nil, hop, err
@@ -598,6 +654,9 @@ func (w *Worker) fetchRobots(ctx context.Context, u *url.URL) (status int, body 
 		w.hostDone(host)
 		if err != nil {
 			return 0, nil, hop, err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
+			w.hostBackoff(host, httpx.ParseRetryAfter(resp.Header.Get("Retry-After"), w.o.Now()))
 		}
 		if !isRedirect(resp.StatusCode) {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))

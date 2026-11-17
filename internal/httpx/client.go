@@ -34,6 +34,15 @@ var (
 	errNoDialControl = errors.New("httpx: external client needs a DialControl")
 )
 
+// RobotsUnavailableError means AO3's robots.txt could not be read (5xx, 429, challenge), so no
+// request may be sent until it is read again at Until. It is temporary: callers should wait,
+// not count it as a failed attempt. It is distinct from ErrDisallowed (a real disallow).
+type RobotsUnavailableError struct{ Until time.Time }
+
+func (e RobotsUnavailableError) Error() string {
+	return "httpx: robots.txt unavailable until " + e.Until.UTC().Format(time.RFC3339)
+}
+
 const (
 	DefaultBaseURL = "https://archiveofourown.org"
 	maxRedirects   = 3
@@ -400,6 +409,13 @@ func (c *Client) checkRobots(ctx context.Context, log *slog.Logger, u *url.URL) 
 		log.Info("robots refreshed", "status", resp.Status, "effective_status", rc.status, "ttl", rc.ttl.String())
 	}
 	if !c.robots.Allowed(u) {
+		if c.robots.Unavailable() {
+			// robots.txt could not be read (5xx, 429, challenge): nothing is allowed until it is
+			// read again. Temporary, unlike a real disallow.
+			log.Warn("robots unavailable; not sending", "path", SafePath(u), "robots_status", c.robots.status,
+				"robots_retry_at", c.robots.ExpiresAt())
+			return RobotsUnavailableError{Until: c.robots.ExpiresAt()}
+		}
 		log.Warn("robots disallowed; not sending", "path", SafePath(u), "robots_status", c.robots.status)
 		return fmt.Errorf("%w: %s", ErrDisallowed, SafePath(u))
 	}

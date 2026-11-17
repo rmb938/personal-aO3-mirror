@@ -153,6 +153,32 @@ func TestInfoFetchFailuresDoNotLoop(t *testing.T) {
 	require.False(t, tag.InfoFetchedAt.IsZero(), "attempt not recorded after the last retry")
 }
 
+// While AO3's robots.txt is unreadable, jobs wait for it to be re-read without using up their
+// attempts, then run normally.
+func TestRobotsOutageWaitsWithoutAttempts(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	e.add(e.site.TagPath())
+	e.drain(50)
+	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Words += 10 })
+	// robots.txt is rate limited for its next three reads, then fine.
+	busy := fakeao3.Reply{Status: 429, Header: map[string]string{"Retry-After": "60"}}
+	e.srv.SetRobots(busy, busy, busy, fakeao3.Reply{Body: fakeao3.Robots})
+	e.clk.Advance(25 * time.Hour) // the cached robots.txt expires
+	e.queueWork(5001)
+	before := countRequests(e, "/works/5001?view_full_work=true")
+	for range 3 {
+		e.drain(20)
+		jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupeKey: "work:5001", State: store.JobQueued, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, jobs, 1, "job not waiting during the robots outage")
+		require.Zero(t, jobs[0].Attempts, "robots outage used up an attempt")
+		e.clk.Advance(16 * time.Minute) // past the robots error TTL
+	}
+	e.drain(20)
+	require.Equal(t, before+1, countRequests(e, "/works/5001?view_full_work=true"), "work not fetched after robots recovered")
+}
+
 // An odd AO3 answer for a work (an unusual 4xx) is not a parse failure: nothing is stored and
 // the work is not marked fetched.
 func TestOddWorkResponseNotStored(t *testing.T) {

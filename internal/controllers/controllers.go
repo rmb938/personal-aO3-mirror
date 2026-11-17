@@ -119,9 +119,16 @@ func (c *Controllers) get(ctx context.Context, kind httpx.Kind, path string) (*h
 		return nil, ErrOffline
 	}
 	resp, err := c.options.Client.Get(ctx, kind, path)
-	if errors.Is(err, httpx.ErrTooLarge) {
+	if ru, ok := errors.AsType[httpx.RobotsUnavailableError](err); ok {
+		// No request was sent: wait for robots.txt to be read again, without using an attempt.
+		return nil, WaitError{Code: CodeRobotsUnavailable, Until: ru.Until}
+	}
+	switch {
+	case errors.Is(err, httpx.ErrTooLarge):
 		// The size will not change on a retry: fail for good (no 5 more full downloads).
 		return nil, PermanentError{Code: CodeTooLarge}
+	case errors.Is(err, httpx.ErrDisallowed):
+		return nil, PermanentError{Code: CodeRobotsDisallowed} // no request sent; retrying won't change it
 	}
 	return resp, err
 }
@@ -132,6 +139,15 @@ func (c *Controllers) get(ctx context.Context, kind httpx.Kind, path string) (*h
 type RetryError struct{ Code string }
 
 func (e RetryError) Error() string { return e.Code }
+
+// WaitError means nothing was sent and the job should wait until Until (e.g. robots.txt being
+// unreadable). The scheduler requeues it then without counting the attempt.
+type WaitError struct {
+	Code  ErrorCode
+	Until time.Time
+}
+
+func (e WaitError) Error() string { return string(e.Code) }
 
 // ErrorCode classifies a PermanentError. Codes are content-free and stable: they end up in job
 // last_error and logs.
@@ -148,6 +164,10 @@ const (
 	CodeHidden     ErrorCode = ErrorCode(httpx.ClassHidden)
 	CodeAdultGate  ErrorCode = ErrorCode(httpx.ClassAdultGate)
 	CodeTooLarge   ErrorCode = "too_large" // body over the httpx client's MaxBody
+	// CodeRobotsDisallowed: robots.txt disallows the path (no request sent).
+	CodeRobotsDisallowed ErrorCode = "robots_disallowed"
+	// CodeRobotsUnavailable: robots.txt could not be read, so nothing is sent for now (WaitError).
+	CodeRobotsUnavailable ErrorCode = "robots_unavailable"
 	// CodeOddResponse: an unusual 4xx, an unfollowed redirect or similar. Not a parse failure.
 	CodeOddResponse ErrorCode = "unexpected_response"
 

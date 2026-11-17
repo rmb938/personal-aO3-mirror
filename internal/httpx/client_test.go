@@ -260,7 +260,10 @@ func TestRobotsUnavailableDisallowsAll(t *testing.T) {
 	h.srv.SetRobots(fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525}, fakeao3.Reply{Body: fakeao3.Robots})
 	h.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
 	_, err := h.c.Get(context.Background(), KindWork, "/works/1")
-	require.ErrorIs(t, err, ErrDisallowed, "while robots unavailable")
+	var ru RobotsUnavailableError
+	require.ErrorAs(t, err, &ru, "while robots unavailable")
+	require.NotErrorIs(t, err, ErrDisallowed, "a robots outage is temporary, not a disallow")
+	require.Equal(t, h.clock.Now().Add(robotsErrorTTL).Unix(), ru.Until.Unix(), "retry when robots is re-read")
 	for _, r := range h.srv.Requests() {
 		require.Equal(t, "/robots.txt", r.URI, "sent a request while robots unavailable")
 	}
@@ -275,7 +278,7 @@ func TestRobotsRateLimitedDisallowsAll(t *testing.T) {
 	h.srv.SetRobots(fakeao3.Reply{Status: 429, Header: map[string]string{"Retry-After": "60"}}, fakeao3.Reply{Body: fakeao3.Robots})
 	h.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
 	_, err := h.c.Get(context.Background(), KindWork, "/works/1")
-	require.ErrorIs(t, err, ErrDisallowed, "429 robots.txt treated as allow-all")
+	require.ErrorAs(t, err, &RobotsUnavailableError{}, "429 robots.txt treated as allow-all")
 	for _, r := range h.srv.Requests() {
 		require.Equal(t, "/robots.txt", r.URI, "sent a request while robots was rate limited")
 	}

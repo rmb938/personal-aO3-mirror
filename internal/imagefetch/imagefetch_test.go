@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -390,4 +391,101 @@ func TestRobotsRedirectFollowed(t *testing.T) {
 	counts, _, err := db.ImageCounts(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, map[string]int{"ok": 1, "disallowed": 1}, counts, "redirected robots.txt not applied")
+}
+
+// queuedAttempts returns the attempts of every still-queued image.
+func queuedAttempts(t *testing.T, db *store.Tx) []int {
+	t.Helper()
+	rows, err := db.NextImages(context.Background(), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC), 100, nil)
+	require.NoError(t, err)
+	var out []int
+	for _, r := range rows {
+		out = append(out, r.Attempts)
+	}
+	return out
+}
+
+// A redirect into a host that is backing off defers the image to when the host is free, instead
+// of sleeping the single worker through the backoff, and uses no attempt.
+func TestRedirectToBackedOffHostDefers(t *testing.T) {
+	busy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Retry-After", "21600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(busy.Close)
+	busyURL := strings.Replace(busy.URL, "127.0.0.1", "localhost", 1) // another host than the redirector
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		http.Redirect(w, r, busyURL+"/target.png", http.StatusFound)
+	}))
+	t.Cleanup(redir.Close)
+	db, run := fakeWorker(t, []string{busyURL + "/first.png", redir.URL + "/hop.png"})
+	run(10) // ten steps: minutes of fake time, far less than the 6h backoff
+	require.Equal(t, []int{1, 0}, queuedAttempts(t, db), "first: 429 retry; hop: deferred without an attempt")
+}
+
+// A host whose robots.txt stays unavailable never burns its images' attempts, and its
+// robots.txt Retry-After is honoured (not re-read every error TTL).
+func TestLongRobotsOutageKeepsImages(t *testing.T) {
+	var mu sync.Mutex
+	robotsReads := 0
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path == "/robots.txt" {
+			robotsReads++
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		t.Errorf("image requested while robots.txt was unavailable: %s", r.URL.Path)
+	}))
+	t.Cleanup(h.Close)
+	db, run := fakeWorker(t, []string{h.URL + "/a.png", h.URL + "/b.png"})
+	run(50) // under an hour of fake time
+	mu.Lock()
+	require.Equal(t, 1, robotsReads, "robots.txt re-read during its Retry-After")
+	mu.Unlock()
+	require.Equal(t, []int{0, 0}, queuedAttempts(t, db), "robots outage used up image attempts")
+	run(400) // hours of fake time: the outage continues
+	require.Equal(t, []int{0, 0}, queuedAttempts(t, db), "long robots outage failed the images")
+}
+
+func TestImageHostNormalised(t *testing.T) {
+	u, err := url.Parse("https://Img.Example.ORG./a.png")
+	require.NoError(t, err)
+	require.Equal(t, "img.example.org", store.ImageHost(u))
+}
+
+// After the last download the worker sleeps for Idle, not just until the finished host's
+// interval ends (that host has nothing left to fetch).
+func TestIdleAfterLastImage(t *testing.T) {
+	ctx := context.Background()
+	h := pngHost(t, http.StatusNotFound)
+	clk := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return clk }
+	st := openStore(t, t.TempDir(), now)
+	_, err := st.AutoCommitForTestOnly().QueueImages(ctx, 1, []string{h.URL + "/a.png"})
+	require.NoError(t, err)
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), PerHostInterval: 3 * time.Second,
+		MaxBytes: 1000, Now: now, AllowLoopback: true, Idle: time.Minute})
+	require.NoError(t, err)
+	for range 2 { // robots.txt, then the image
+		ran, _, err := w.Step(ctx)
+		require.NoError(t, err)
+		require.True(t, ran)
+		clk = clk.Add(5 * time.Second)
+	}
+	clk = clk.Add(-4 * time.Second) // the host is still inside its interval
+	ran, wait, err := w.Step(ctx)
+	require.NoError(t, err)
+	require.False(t, ran)
+	require.Equal(t, time.Minute, wait, "woke for a host with nothing queued")
 }
