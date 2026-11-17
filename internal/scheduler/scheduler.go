@@ -105,7 +105,9 @@ func atoi64(s string) int64 {
 
 // Run loops until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	n, err := s.store.RecoverRunning(context.WithoutCancel(ctx))
+	_, n, err := store.WriteValue(context.WithoutCancel(ctx), s.store, func(ctx context.Context, tx *store.Tx) (int64, error) {
+		return tx.RecoverRunning(ctx)
+	})
 	if err != nil {
 		return err
 	}
@@ -140,7 +142,9 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("schedule: %w", err)
 	}
 	s.maybePrune(ctx)
-	job, err := s.store.PickJob(ctx, s.kinds, s.options.Now())
+	_, job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
+		return tx.PickJob(ctx, s.kinds, s.options.Now())
+	})
 	if errors.Is(err, store.ErrNoJob) {
 		return false, nil
 	}
@@ -155,14 +159,17 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 	log := s.log.With("job_id", job.ID, "job_kind", job.Kind, "source_id", job.SourceID, "class", job.Priority, "attempt", job.Attempts)
 	jctx := httpx.WithJobID(logx.With(ctx, log), job.ID)
 	// Bookkeeping must land even when ctx is cancelled (shutdown) so a job never stays "running".
+	// Each outcome (state change + its job event) is one transaction.
 	bk := context.WithoutCancel(ctx)
-	note := func(what string, err error) {
-		if err != nil {
+	book := func(what string, fn func(ctx context.Context, tx *store.Tx) error) {
+		if _, err := s.store.InTx(bk, fn); err != nil {
 			log.Error("job bookkeeping failed", "step", what, "err", err.Error())
 		}
 	}
 	s.setPhase(ctx, job.ID, "running")
-	note("event_start", s.store.JobEvent(bk, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target}))
+	book("event_start", func(ctx context.Context, tx *store.Tx) error {
+		return tx.JobEvent(ctx, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target})
+	})
 	start := s.options.Now()
 	detail, err := s.runHandler(jctx, job, log)
 	if detail == nil {
@@ -170,16 +177,37 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 	}
 	detail["ms"] = s.options.Now().Sub(start).Milliseconds()
 
+	// retry re-queues the job (or fails it once attempts are exhausted) and records event.
+	retry := func(event, code string, notBefore time.Time) string {
+		var state string
+		book(event, func(ctx context.Context, tx *store.Tx) error {
+			var err error
+			if state, err = tx.RetryJob(ctx, job.ID, notBefore, code); err != nil {
+				return err
+			}
+			detail["error"], detail["next_state"] = code, state
+			return tx.JobEvent(ctx, job.ID, event, detail)
+		})
+		return state
+	}
+	finish := func(event, state, lastError string) {
+		book(event, func(ctx context.Context, tx *store.Tx) error {
+			if err := tx.FinishJob(ctx, job.ID, state, lastError); err != nil {
+				return err
+			}
+			return tx.JobEvent(ctx, job.ID, event, detail)
+		})
+	}
+
 	var re controllers.RetryError
 	var pe controllers.PermanentError
 	switch {
 	case err == nil:
 		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
-		note("finish", s.store.FinishJob(bk, job.ID, store.JobDone, ""))
+		finish("done", store.JobDone, "")
 		log.Info("job done", append([]any{"ms", detail["ms"]}, flatten(detail)...)...)
-		note("event_done", s.store.JobEvent(bk, job.ID, "done", detail))
 	case ctx.Err() != nil:
-		note("requeue", s.store.RequeueJob(bk, job.ID, s.options.Now()))
+		book("requeue", func(ctx context.Context, tx *store.Tx) error { return tx.RequeueJob(ctx, job.ID, s.options.Now()) })
 		log.Info("job interrupted; requeued")
 		return
 	case errors.As(err, &re):
@@ -187,24 +215,18 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 		if st := s.options.Pacer.PacerState(); st.BackoffTill.After(nb) {
 			nb = st.BackoffTill
 		}
-		state, rerr := s.store.RetryJob(bk, job.ID, nb, re.Code)
-		note("retry", rerr)
-		detail["error"], detail["next_state"], detail["not_before"] = re.Code, state, nb.UTC().Format(time.RFC3339)
+		detail["not_before"] = nb.UTC().Format(time.RFC3339)
+		state := retry("retry", re.Code, nb)
 		log.Warn("job retry", "error", re.Code, "next_state", state, "not_before", nb)
-		note("event_retry", s.store.JobEvent(bk, job.ID, "retry", detail))
 	case errors.As(err, &pe):
-		note("finish", s.store.FinishJob(bk, job.ID, store.JobFailed, pe.Error()))
 		detail["error"] = pe.Error()
+		finish("failed", store.JobFailed, pe.Error())
 		log.Warn("job failed", "error", pe.Error())
-		note("event_failed", s.store.JobEvent(bk, job.ID, "failed", detail))
 	default:
 		// Unexpected (store/transport) errors: retry; the store caps attempts.
 		code := "internal:" + errCode(err)
-		state, rerr := s.store.RetryJob(bk, job.ID, s.options.Now().Add(5*time.Minute), code)
-		note("retry", rerr)
-		detail["error"], detail["next_state"] = code, state
+		state := retry("error", code, s.options.Now().Add(5*time.Minute))
 		log.Error("job error", "error", err.Error(), "next_state", state)
-		note("event_error", s.store.JobEvent(bk, job.ID, "error", detail))
 	}
 	s.setPhase(ctx, 0, "between")
 }
@@ -272,9 +294,15 @@ func (s *Scheduler) maybePrune(ctx context.Context) {
 		return
 	}
 	s.lastPrune = now
-	jobs, err1 := s.store.PruneJobs(ctx, 7*24*time.Hour, 30*24*time.Hour)
-	reqs, err2 := s.store.PruneRequests(ctx, 30*24*time.Hour)
-	if err := errors.Join(err1, err2); err != nil {
+	var jobs, reqs int64
+	if _, err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		if jobs, err = tx.PruneJobs(ctx, 7*24*time.Hour, 30*24*time.Hour); err != nil {
+			return err
+		}
+		reqs, err = tx.PruneRequests(ctx, 30*24*time.Hour)
+		return err
+	}); err != nil {
 		s.log.Warn("prune failed", "err", err.Error())
 		return
 	}
@@ -345,7 +373,9 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 	if !st.WaitingUntil.IsZero() {
 		kv["waiting_until"] = st.WaitingUntil.UTC().Format(time.RFC3339)
 	}
-	if err := s.store.SetDaemonState(ctx, kv); err != nil && ctx.Err() == nil {
+	if _, err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return tx.SetDaemonState(ctx, kv)
+	}); err != nil && ctx.Err() == nil {
 		s.log.Warn("heartbeat failed", "err", err.Error())
 	}
 }
@@ -353,10 +383,15 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 // RunJob runs one specific queued job now (used by `fetch-work --now` when no daemon runs).
 // It returns the job's final state.
 func (s *Scheduler) RunJob(ctx context.Context, id int64) (store.Job, error) {
-	job, err := s.store.ClaimJob(ctx, id, s.options.Now())
+	_, job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
+		return tx.ClaimJob(ctx, id, s.options.Now())
+	})
 	if err != nil {
 		return store.Job{}, err
 	}
 	s.execute(ctx, job)
-	return s.store.GetJob(ctx, id)
+	_, job, err = store.ReadValue(ctx, s.store, func(ctx context.Context, tx *store.ReadTx) (store.Job, error) {
+		return tx.GetJob(ctx, id)
+	})
+	return job, err
 }

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 )
@@ -23,7 +22,7 @@ type RequestRow struct {
 	Hop      int
 }
 
-func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
+func (s *Tx) InsertRequest(ctx context.Context, r RequestRow) error {
 	var job any
 	if r.JobID > 0 {
 		job = r.JobID
@@ -36,7 +35,7 @@ func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
 }
 
 // PruneRequests deletes request rows older than age.
-func (s *Store) PruneRequests(ctx context.Context, age time.Duration) (int64, error) {
+func (s *Tx) PruneRequests(ctx context.Context, age time.Duration) (int64, error) {
 	res, err := s.meta.ExecContext(ctx, `DELETE FROM requests WHERE ts < ?`, s.now().Add(-age).Unix())
 	if err != nil {
 		return 0, err
@@ -46,7 +45,7 @@ func (s *Store) PruneRequests(ctx context.Context, age time.Duration) (int64, er
 
 // RecentRequests returns request rows newest first, optionally only non-ok, or only for a job
 // or path prefix.
-func (s *Store) RecentRequests(ctx context.Context, onlyErrors bool, jobID int64, pathPrefix string, limit int) ([]RequestRow, error) {
+func (s *ReadTx) RecentRequests(ctx context.Context, onlyErrors bool, jobID int64, pathPrefix string, limit int) ([]RequestRow, error) {
 	q := `SELECT ts, req_id, COALESCE(job_id, 0), kind, path, status, class, reason, bytes, duration_ms, waited_ms, hop FROM requests WHERE 1=1`
 	var args []any
 	if onlyErrors {
@@ -99,7 +98,7 @@ type Counts struct {
 
 // countGroups runs a `SELECT key, COUNT(*) ... GROUP BY key` query into dst. Its own function so
 // the rows can be closed with defer (Counts runs several of these in a loop).
-func countGroups(ctx context.Context, db *sql.DB, q string, dst map[string]int, args ...any) (err error) {
+func countGroups(ctx context.Context, db querier, q string, dst map[string]int, args ...any) (err error) {
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return err
@@ -116,11 +115,11 @@ func countGroups(ctx context.Context, db *sql.DB, q string, dst map[string]int, 
 	return rows.Err()
 }
 
-func (s *Store) Counts(ctx context.Context) (Counts, error) {
+func (s *ReadTx) Counts(ctx context.Context) (Counts, error) {
 	c := Counts{WorksByStatus: map[string]int{}, RequestsByClass: map[string]int{}}
 	now := s.now()
 	grouped := []struct {
-		db  *sql.DB
+		db  querier
 		q   string
 		dst map[string]int
 		arg []any
@@ -134,7 +133,7 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		}
 	}
 	singles := []struct {
-		db  *sql.DB
+		db  querier
 		q   string
 		dst any
 		arg []any

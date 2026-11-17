@@ -89,7 +89,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 		if err := fs.Parse(rest); err != nil {
 			return 2
 		}
-		rows, err := a.store.ListSources(ctx)
+		rows, err := a.ctl.ListSources(ctx)
 		if err != nil {
 			fmt.Fprintf(errOut, "list: %v\n", err)
 			return 1
@@ -116,7 +116,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprintf(errOut, "bad id %q\n", idStr)
 			return 2
 		}
-		r, err := a.store.GetSource(ctx, id)
+		r, err := a.ctl.GetSource(ctx, id)
 		if err != nil {
 			fmt.Fprintf(errOut, "show: %v\n", err)
 			return 1
@@ -197,7 +197,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprintf(errOut, "set %d: %v\n", id, err)
 			return 1
 		}
-		r, _ := a.store.GetSource(ctx, id)
+		r, _ := a.ctl.GetSource(ctx, id)
 		fmt.Fprintf(out, "source %d: poll every %s, priority %d, next poll %s\n", id, r.PollInterval, r.Priority, when(r.NextPollAt))
 		return 0
 	case "confirm", "pause", "resume", "cancel", "remove":

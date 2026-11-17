@@ -19,12 +19,26 @@ import (
 // already queued or running, its class is raised to class when that is more urgent. It returns
 // the job id and whether a new job was created. sourceID 0 means no source (on-demand).
 func (c *Controllers) EnqueueWorkFetch(ctx context.Context, workID, sourceID int64, class int) (int64, bool, error) {
-	return c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: sourceID,
+	var jobID int64
+	var created bool
+	_, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		jobID, created, err = enqueueWorkFetch(ctx, tx, workID, sourceID, class)
+		return err
+	})
+	return jobID, created, err
+}
+
+// enqueueWorkFetch is EnqueueWorkFetch inside the caller's transaction: the one place that
+// builds work-fetch jobs.
+func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64, class int) (int64, bool, error) {
+	return tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: sourceID,
 		Target: strconv.FormatInt(workID, 10), Priority: class, DedupeKey: jobs.WorkKey(workID)})
 }
 
-// FetchWork fetches one full work page and stores the raw page, chapter bodies and metadata.
-// A work that is gone, hidden or restricted on AO3 is marked so; the local copy is kept.
+// FetchWork fetches one full work page and stores the raw page, chapter bodies and metadata in
+// one transaction. A work that is gone, hidden or restricted on AO3 is marked so; the local copy
+// is kept.
 func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail, error) {
 	if id <= 0 {
 		return nil, PermanentError{Code: CodeBadWorkID}
@@ -40,7 +54,9 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 	case httpx.ClassNotFound, httpx.ClassHidden, httpx.ClassRestricted:
 		status := map[httpx.Class]model.WorkStatus{httpx.ClassNotFound: model.StatusDeleted,
 			httpx.ClassHidden: model.StatusHidden, httpx.ClassRestricted: model.StatusRestricted}[resp.Class]
-		if err := c.store.SetWorkStatus(ctx, id, status); err != nil {
+		if _, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			return tx.SetWorkStatus(ctx, id, status)
+		}); err != nil {
 			return detail, err
 		}
 		detail["status"] = string(status)
@@ -62,21 +78,26 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 		}
 		return detail, c.workParseFailed(ctx, id, path, resp, pe)
 	}
-	// Raw page first (source of truth for reparse), then bodies, then metadata (marks fetched).
-	if _, err := c.store.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions); err != nil {
-		return detail, err
-	}
-	sw, err := c.storeWork(ctx, w, false, time.Time{})
-	if err != nil {
+	var sw storedWork
+	if _, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		// Raw page (source of truth for reparse), bodies, then metadata (marks fetched). content.db
+		// commits before meta.db, so a work is never marked fetched without its page.
+		if _, err := tx.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions); err != nil {
+			return err
+		}
+		var err error
+		if sw, err = c.storeWork(ctx, tx, w, false, time.Time{}); err != nil {
+			return err
+		}
+		if sourceID > 0 {
+			return tx.LinkSourceWorks(ctx, sourceID, []int64{id})
+		}
+		return nil
+	}); err != nil {
 		return detail, err
 	}
 	if c.options.QueueImages {
 		detail["images_queued"] = sw.images
-	}
-	if sourceID > 0 {
-		if err := c.store.LinkSourceWorks(ctx, sourceID, []int64{id}); err != nil {
-			return detail, err
-		}
 	}
 	detail["chapters"] = len(w.Chapters)
 	detail["words"] = w.Words
@@ -98,26 +119,26 @@ type storedWork struct {
 	images  int                // images newly queued
 }
 
-// storeWork writes a parsed work page: chapter bodies and skin, then metadata, then queues its
-// embedded images. A fresh fetch (reparse false) marks the work fetched. A reparse leaves fetch
-// bookkeeping and status alone; pageAt is when the stored page was fetched, so newer listing
-// metadata is not rolled back.
-func (c *Controllers) storeWork(ctx context.Context, w model.Work, reparse bool, pageAt time.Time) (storedWork, error) {
+// storeWork writes a parsed work page in tx: chapter bodies and skin, then metadata, then queues
+// its embedded images. A fresh fetch (reparse false) marks the work fetched. A reparse leaves
+// fetch bookkeeping and status alone; pageAt is when the stored page was fetched, so newer
+// listing metadata is not rolled back.
+func (c *Controllers) storeWork(ctx context.Context, tx *store.Tx, w model.Work, reparse bool, pageAt time.Time) (storedWork, error) {
 	var sw storedWork
 	var err error
-	if sw.content, err = c.store.PutWorkContent(ctx, w.ID, w.Chapters, w.SkinCSS); err != nil {
+	if sw.content, err = tx.PutWorkContent(ctx, w.ID, w.Chapters, w.SkinCSS); err != nil {
 		return sw, err
 	}
 	if reparse {
-		err = c.store.ReparseWork(ctx, w, pageAt, parse.Version)
+		err = tx.ReparseWork(ctx, w, pageAt, parse.Version)
 	} else {
-		sw.upsert, err = c.store.UpsertWork(ctx, w, model.FromPage, parse.Version)
+		sw.upsert, err = tx.UpsertWork(ctx, w, model.FromPage, parse.Version)
 	}
 	if err != nil {
 		return sw, err
 	}
 	if c.options.QueueImages {
-		if sw.images, err = c.store.QueueImages(ctx, w.ID, imagefetch.WorkImages(w)); err != nil {
+		if sw.images, err = tx.QueueImages(ctx, w.ID, imagefetch.WorkImages(w)); err != nil {
 			return sw, err
 		}
 	}
@@ -130,13 +151,15 @@ func (c *Controllers) storeWork(ctx context.Context, w model.Work, reparse bool,
 // re-fetched until it changes on AO3, and fail without retry. Existing chapter bodies and
 // metadata are left untouched.
 func (c *Controllers) workParseFailed(ctx context.Context, id int64, path string, resp *httpx.Response, pe PermanentError) error {
-	if len(resp.Body) > 0 {
-		if _, err := c.store.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions+1); err != nil {
-			return err
-		}
-	}
 	c.saveSkeleton(ctx, "work", strconv.FormatInt(id, 10), resp.Body)
-	if err := c.store.MarkWorkParseFailed(ctx, id); err != nil {
+	if _, err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if len(resp.Body) > 0 {
+			if _, err := tx.PutRawPage(ctx, id, path, resp.Body, c.options.KeepVersions+1); err != nil {
+				return err
+			}
+		}
+		return tx.MarkWorkParseFailed(ctx, id)
+	}); err != nil {
 		return err
 	}
 	c.logger(ctx).Warn("work parse failed; raw page kept for reparse, not retrying", "work_id", id, "error", pe.Error())

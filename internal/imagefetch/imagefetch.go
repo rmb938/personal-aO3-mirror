@@ -216,7 +216,7 @@ func (w *Worker) Run(ctx context.Context) error {
 // returns how long to wait.
 func (w *Worker) Step(ctx context.Context) (bool, time.Duration, error) {
 	now := w.o.Now()
-	rows, err := w.o.Store.NextImages(ctx, now, 50)
+	rows, err := w.images().NextImages(ctx, now, 50)
 	if err != nil {
 		return false, 0, err
 	}
@@ -252,7 +252,7 @@ func (w *Worker) safeFetch(ctx context.Context, r store.ImageRow) {
 	defer func() {
 		if p := recover(); p != nil {
 			w.log.Error("image fetch panicked", "image_id", r.ID, "panic_type", fmt.Sprintf("%T", p))
-			_ = w.o.Store.ImageFinal(context.WithoutCancel(ctx), r.ID, store.ImageFailed, "panic")
+			_ = w.images().ImageFinal(context.WithoutCancel(ctx), r.ID, store.ImageFailed, "panic")
 		}
 	}()
 	w.fetch(ctx, r)
@@ -260,7 +260,7 @@ func (w *Worker) safeFetch(ctx context.Context, r store.ImageRow) {
 
 func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 	log := w.log.With("image_id", r.ID, "host", httpx.Hash(r.Host), "attempt", r.Attempts+1)
-	st := w.o.Store
+	st := w.images()
 	if isAO3(r.Host) {
 		// AO3 traffic only goes through the paced AO3 client, never the image worker.
 		log.Info("image on an AO3 host; skipped")
@@ -361,6 +361,38 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		return
 	}
 	log.Info("image stored", "bytes", len(body), "content_type", ct, "ms", time.Since(start).Milliseconds())
+}
+
+// imageStore is the worker's store access. Each image outcome is a single statement, so each
+// call runs in its own transaction; HTTP never happens inside one.
+type imageStore struct{ s *store.Store }
+
+func (w *Worker) images() imageStore { return imageStore{s: w.o.Store} }
+
+func (i imageStore) write(ctx context.Context, fn func(ctx context.Context, tx *store.Tx) error) error {
+	_, err := i.s.InTx(ctx, fn)
+	return err
+}
+
+func (i imageStore) NextImages(ctx context.Context, now time.Time, limit int) ([]store.ImageRow, error) {
+	_, rows, err := store.ReadValue(ctx, i.s, func(ctx context.Context, tx *store.ReadTx) ([]store.ImageRow, error) {
+		return tx.NextImages(ctx, now, limit)
+	})
+	return rows, err
+}
+
+func (i imageStore) ImageFinal(ctx context.Context, id int64, status, lastError string) error {
+	return i.write(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.ImageFinal(ctx, id, status, lastError) })
+}
+
+func (i imageStore) ImageRetry(ctx context.Context, id int64, notBefore time.Time, lastError string, maxAttempts int) error {
+	return i.write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return tx.ImageRetry(ctx, id, notBefore, lastError, maxAttempts)
+	})
+}
+
+func (i imageStore) ImageDone(ctx context.Context, id int64, sha, contentType string, bytes int) error {
+	return i.write(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.ImageDone(ctx, id, sha, contentType, bytes) })
 }
 
 // Path returns where an image with this hash and content type is stored.

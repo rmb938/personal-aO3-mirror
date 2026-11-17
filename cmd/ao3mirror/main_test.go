@@ -39,8 +39,8 @@ func TestRunStatusDebugEndToEnd(t *testing.T) {
 	done := make(chan int)
 	go func() { done <- runDaemon(ctx, a, io.Discard) }()
 	require.Eventually(t, func() bool {
-		cnt, err := a.store.Counts(context.Background())
-		return err == nil && cnt.WorksFetched == 2
+		rep, err := a.ctl.Status(context.Background())
+		return err == nil && rep.Counts.WorksFetched == 2
 	}, 60*time.Second, 200*time.Millisecond, "daemon should fetch both works")
 	// A second daemon on the same directory must refuse to start.
 	assert.Equal(t, 1, runDaemon(context.Background(), a, io.Discard), "second daemon should be refused by the lock")
@@ -147,7 +147,7 @@ func TestJobsCLI(t *testing.T) {
 		{Kind: "work", Target: "102", Priority: 3, DedupeKey: "work:102"},
 		{Kind: "tag_info", Target: "7", Priority: 5, DedupeKey: "tag:7"},
 	} {
-		_, _, err := st.EnqueueJob(ctx, j)
+		_, _, err := st.AutoCommitForTestOnly().EnqueueJob(ctx, j)
 		require.NoError(t, err)
 	}
 	require.NoError(t, st.Close())

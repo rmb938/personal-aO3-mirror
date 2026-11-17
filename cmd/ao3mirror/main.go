@@ -115,10 +115,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		defer st.Close()
+		ctl := newControllers(cfg, logger, st, nil)
 		if rest[0] == "jobs" {
-			return runJobs(ctx, st, rest[1:], stdout, stderr)
+			return runJobs(ctx, ctl, rest[1:], stdout, stderr)
 		}
-		return runReparse(ctx, newControllers(cfg, logger, st, nil), rest[1:], stdout, stderr)
+		return runReparse(ctx, ctl, rest[1:], stdout, stderr)
 	case "source", "run", "status", "debug", "fetch-work":
 		a, err := openApp(ctx, cfg, logger)
 		if err != nil {

@@ -87,7 +87,7 @@ func openStore(t *testing.T, dir string, now func() time.Time) *store.Store {
 	st, err := store.Open(context.Background(), dir, store.Options{Now: now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	_, err = st.UpsertWork(context.Background(), model.Work{ID: 1}, model.FromBlurb, 0)
+	_, err = st.AutoCommitForTestOnly().UpsertWork(context.Background(), model.Work{ID: 1}, model.FromBlurb, 0)
 	require.NoError(t, err)
 	return st
 }
@@ -100,16 +100,17 @@ func TestWorker(t *testing.T) {
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	st := openStore(t, filepath.Join(dir, "m"), now)
+	db := st.AutoCommitForTestOnly()
 	h := newHost(t)
 	paths := []string{"/a.png", "/private/b.png", "/big.png", "/page", "/gone.png", "/flaky.png", "/dup.png", "/redir.png"}
 	var urls []string
 	for _, p := range paths {
 		urls = append(urls, h.URL+p)
 	}
-	n, err := st.QueueImages(ctx, 1, urls)
+	n, err := db.QueueImages(ctx, 1, urls)
 	require.NoError(t, err)
 	require.Len(t, urls, n)
-	n, err = st.QueueImages(ctx, 1, urls)
+	n, err = db.QueueImages(ctx, 1, urls)
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "re-queue must not duplicate")
 
@@ -136,7 +137,7 @@ func TestWorker(t *testing.T) {
 		if ran {
 			continue
 		}
-		next, err := st.NextImageDueForTestOnly(ctx)
+		next, err := db.NextImageDueForTestOnly(ctx)
 		require.NoError(t, err)
 		if next.IsZero() {
 			break
@@ -146,7 +147,7 @@ func TestWorker(t *testing.T) {
 		}
 		clk = clk.Add(wait)
 	}
-	counts, bytesOK, err := st.ImageCounts(ctx)
+	counts, bytesOK, err := db.ImageCounts(ctx)
 	require.NoError(t, err)
 	// skipped: /page (not an image) and /redir.png (redirects to AO3, refused before following).
 	require.Equal(t, map[string]int{"ok": 3, "disallowed": 1, "too_large": 1, "skipped": 2, "failed": 1}, counts)
@@ -166,14 +167,14 @@ func TestBlocksNonPublicAddresses(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, t.TempDir(), nil)
 	h := newHost(t)
-	_, err := st.QueueImages(ctx, 1, []string{h.URL + "/a.png"})
+	_, err := st.AutoCommitForTestOnly().QueueImages(ctx, 1, []string{h.URL + "/a.png"})
 	require.NoError(t, err)
 	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), MaxBytes: 1000})
 	require.NoError(t, err)
 	ran, _, err := w.Step(ctx)
 	require.NoError(t, err)
 	require.True(t, ran)
-	counts, _, err := st.ImageCounts(ctx)
+	counts, _, err := st.AutoCommitForTestOnly().ImageCounts(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, counts["skipped"], "loopback image must be refused")
 	require.Empty(t, h.seen, "loopback image must be refused before connecting")

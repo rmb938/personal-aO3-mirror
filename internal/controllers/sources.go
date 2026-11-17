@@ -58,6 +58,9 @@ type AddResult struct {
 // backfill and inserts the source as active or pending_confirm. Page-1 works that need a fetch
 // are queued; they only run once the source is active (the scheduler skips jobs of pending or
 // paused sources).
+//
+// Everything after the fetch is one transaction: a failure leaves no source and no page-1 data
+// behind.
 func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (AddResult, error) {
 	src, err := ao3url.Parse(rawURL)
 	if err != nil {
@@ -76,16 +79,32 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 		poll = c.options.Sources.PollInterval
 	}
 	filters := ao3url.FiltersJSON(src.Filters)
-	if id, err := c.store.FindSource(ctx, string(src.Kind), src.Target, filters); err != nil {
-		return AddResult{}, err
-	} else if id != 0 {
-		return AddResult{}, ExistsError{ID: id}
-	}
 	base, err := ao3url.BasePath(src)
 	if err != nil {
 		return AddResult{}, err
 	}
 	log := c.log.With("component", "sources", "kind", string(src.Kind), "target", httpx.Hash(src.Target), "filters", len(src.Filters))
+
+	var page1 *parsedListing
+	var total int
+	if src.Kind != ao3url.KindWork {
+		// Check for a duplicate before spending a request on page 1.
+		var existing int64
+		ctx, existing, err = store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (int64, error) {
+			return tx.FindSource(ctx, string(src.Kind), src.Target, filters)
+		})
+		if err != nil {
+			return AddResult{}, err
+		}
+		if existing != 0 {
+			return AddResult{}, ExistsError{ID: existing}
+		}
+		p, t, err := c.addFirstPage(ctx, src, order)
+		if err != nil {
+			return AddResult{}, err
+		}
+		page1, total = &p, t
+	}
 
 	row := store.SourceRow{
 		Kind: string(src.Kind), Target: src.Target, FiltersJSON: filters, Path: base,
@@ -93,60 +112,60 @@ func (c *Controllers) Add(ctx context.Context, rawURL string, o AddOptions) (Add
 		NextPollAt: c.options.Now().Add(poll),
 	}
 	var res AddResult
-	var page1 blurbsResult
-
-	if src.Kind == ao3url.KindWork {
-		// Single work: no listing; the scheduler fetches it (1 request).
-		res.Estimate = c.estimate(1, 0, 1, false)
-		row.State = store.SourceActive
-		row.TotalWorks, row.EstRequests = 1, res.Estimate.Requests
-		row.BackfillCursor = Cursor{NextPage: 0, Order: orderName}.JSON()
-	} else {
-		var total int
-		total, page1, err = c.addFirstPage(ctx, src, order)
-		if err != nil {
-			return AddResult{}, err
-		}
-		res.Blurbs = len(page1.ids)
-		pages := ao3url.Pages(total)
-		windowed := total > ao3url.MaxResults
-		listing := max(pages-1, 0)
-		// Works on page 1 that are already mirrored and unchanged need no fetch.
-		fetches := max(total-(len(page1.ids)-len(page1.needFetch)), 0)
-		res.Estimate = c.estimate(total, listing, fetches, windowed)
-		row.TotalWorks, row.EstRequests = total, res.Estimate.Requests
-		next := 2
-		if pages <= 1 {
-			next = 0
-		}
-		row.BackfillCursor = Cursor{NextPage: next, Order: orderName}.JSON()
-		if o.Confirm || total <= c.options.Sources.AutoConfirmMax {
+	_, err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var blurbs blurbsResult
+		if page1 == nil {
+			// Single work: no listing; the scheduler fetches it (1 request).
+			res.Estimate = c.estimate(1, 0, 1, false)
 			row.State = store.SourceActive
+			row.TotalWorks, row.EstRequests = 1, res.Estimate.Requests
+			row.BackfillCursor = Cursor{NextPage: 0, Order: orderName}.JSON()
 		} else {
-			row.State = store.SourcePendingConfirm
+			var err error
+			if blurbs, err = c.storeListing(ctx, tx, *page1, 1); err != nil {
+				return err
+			}
+			res.Blurbs = len(blurbs.ids)
+			pages := ao3url.Pages(total)
+			listing := max(pages-1, 0)
+			// Works on page 1 that are already mirrored and unchanged need no fetch.
+			fetches := max(total-(len(blurbs.ids)-len(blurbs.needFetch)), 0)
+			res.Estimate = c.estimate(total, listing, fetches, total > ao3url.MaxResults)
+			row.TotalWorks, row.EstRequests = total, res.Estimate.Requests
+			next := 2
+			if pages <= 1 {
+				next = 0
+			}
+			row.BackfillCursor = Cursor{NextPage: next, Order: orderName}.JSON()
+			if o.Confirm || total <= c.options.Sources.AutoConfirmMax {
+				row.State = store.SourceActive
+			} else {
+				row.State = store.SourcePendingConfirm
+			}
 		}
-	}
-
-	id, err := c.store.InsertSource(ctx, row)
-	if errors.Is(err, store.ErrSourceExists) {
-		existing, _ := c.store.FindSource(ctx, row.Kind, row.Target, row.FiltersJSON)
-		return AddResult{}, ExistsError{ID: existing}
-	}
+		id, err := tx.InsertSource(ctx, row)
+		if errors.Is(err, store.ErrSourceExists) {
+			existing, _ := tx.FindSource(ctx, row.Kind, row.Target, row.FiltersJSON)
+			return ExistsError{ID: existing}
+		}
+		if err != nil {
+			return err
+		}
+		row.ID = id
+		if len(blurbs.ids) > 0 {
+			n, err := linkAndQueue(ctx, tx, id, blurbs, jobs.ClassBackfill)
+			if err != nil {
+				return err
+			}
+			log.Debug("page-1 fetches queued", "source_id", id, "jobs", n)
+		}
+		res.Source = row
+		return nil
+	})
 	if err != nil {
 		return AddResult{}, err
 	}
-	row.ID = id
-	res.Source = row
-	if len(page1.ids) > 0 {
-		// The source exists now; failing here would leave it half-reported, so log instead. The
-		// first poll links and queues these works again.
-		if n, err := c.linkAndQueue(ctx, id, page1, jobs.ClassBackfill); err != nil {
-			log.Error("link/queue page-1 works failed", "source_id", id, "err", err.Error())
-		} else {
-			log.Debug("page-1 fetches queued", "source_id", id, "jobs", n)
-		}
-	}
-	log.Info("source added", "source_id", id, "state", string(row.State), "total_works", row.TotalWorks,
+	log.Info("source added", "source_id", row.ID, "state", string(row.State), "total_works", row.TotalWorks,
 		"est_requests", res.Estimate.Requests, "est_hours", int(res.Estimate.Duration.Hours()),
 		"est_disk_mb", res.Estimate.DiskBytes>>20, "windowed", res.Estimate.Windowed,
 		"auto_confirm_max", c.options.Sources.AutoConfirmMax, "page1_blurbs", res.Blurbs)
@@ -162,64 +181,89 @@ func (c *Controllers) estimate(total, listing, fetches int, windowed bool) Estim
 	}
 }
 
-// addFirstPage fetches and stores page 1 of a new source. It returns the source's total and the
-// stored blurbs (which of them need a full fetch).
-func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order ao3url.Order) (int, blurbsResult, error) {
+// addFirstPage fetches and parses page 1 of a new source (no store access). It returns the
+// parsed page and the source's total.
+func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order ao3url.Order) (parsedListing, int, error) {
 	resp, err := c.getListing(ctx, src, 1, order, nil)
 	if err != nil {
-		return 0, blurbsResult{}, err
+		return parsedListing{}, 0, err
 	}
 	switch resp.Class {
 	case httpx.ClassOK:
 	case httpx.ClassNotFound:
-		return 0, blurbsResult{}, ErrNotFound
+		return parsedListing{}, 0, ErrNotFound
 	case httpx.ClassRestricted, httpx.ClassHidden:
-		return 0, blurbsResult{}, ErrRestricted
+		return parsedListing{}, 0, ErrRestricted
 	case httpx.ClassRateLimited, httpx.ClassUnavailable:
-		return 0, blurbsResult{}, fmt.Errorf("%w (%s)", ErrUnavailable, resp.Reason)
+		return parsedListing{}, 0, fmt.Errorf("%w (%s)", ErrUnavailable, resp.Reason)
 	default:
-		return 0, blurbsResult{}, fmt.Errorf("%w (%s)", ErrUnexpected, resp.Reason)
+		return parsedListing{}, 0, fmt.Errorf("%w (%s)", ErrUnexpected, resp.Reason)
 	}
-	l, _, parseErr, err := c.parseListing(ctx, src, 1, resp)
-	if parseErr != nil {
-		return 0, blurbsResult{}, fmt.Errorf("%w: %w", ErrUnexpected, parseErr)
-	}
+	p, err := c.parseListing(ctx, src, 1, resp)
 	if err != nil {
-		return 0, blurbsResult{}, err
+		return p, 0, fmt.Errorf("%w: %w", ErrUnexpected, err)
 	}
-	total := l.Total
+	total := p.listing.Total
 	if total < 0 {
-		if l.Pagination.Last > 1 {
-			return 0, blurbsResult{}, fmt.Errorf("%w: listing total not found", ErrUnexpected)
+		if p.listing.Pagination.Last > 1 {
+			return p, 0, fmt.Errorf("%w: listing total not found", ErrUnexpected)
 		}
-		total = len(l.Blurbs)
+		total = len(p.listing.Blurbs)
 	}
-	blurbs, err := c.upsertBlurbs(ctx, l.Blurbs, 1)
-	return total, blurbs, err
+	return p, total, nil
+}
+
+// inTx runs one database-only operation in its own transaction.
+func (c *Controllers) inTx(ctx context.Context, fn func(ctx context.Context, tx *store.Tx) error) error {
+	_, err := c.store.InTx(ctx, fn)
+	return err
 }
 
 // Confirm activates a pending source.
 func (c *Controllers) Confirm(ctx context.Context, id int64) error {
-	return c.store.SetSourceState(ctx, id, store.SourceActive, store.SourcePendingConfirm)
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return confirmTx(ctx, tx, id) })
+}
+
+func confirmTx(ctx context.Context, tx *store.Tx, id int64) error {
+	return tx.SetSourceState(ctx, id, store.SourceActive, store.SourcePendingConfirm)
 }
 
 // Pause stops scheduling for a source; queued jobs stay queued but are not picked.
 func (c *Controllers) Pause(ctx context.Context, id int64) error {
-	return c.store.SetSourceState(ctx, id, store.SourcePaused, store.SourceActive, store.SourceDoneBackfill, store.SourcePendingConfirm)
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return pauseTx(ctx, tx, id) })
+}
+
+func pauseTx(ctx context.Context, tx *store.Tx, id int64) error {
+	return tx.SetSourceState(ctx, id, store.SourcePaused, store.SourceActive, store.SourceDoneBackfill, store.SourcePendingConfirm)
 }
 
 // Resume re-activates a paused source.
 func (c *Controllers) Resume(ctx context.Context, id int64) error {
-	return c.store.SetSourceState(ctx, id, store.SourceActive, store.SourcePaused)
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return resumeTx(ctx, tx, id) })
 }
 
-// Cancel stops a source for good and drops its queued jobs. Mirrored works are kept.
+func resumeTx(ctx context.Context, tx *store.Tx, id int64) error {
+	return tx.SetSourceState(ctx, id, store.SourceActive, store.SourcePaused)
+}
+
+// Cancel stops a source for good and drops its queued jobs. Mirrored works are kept. It
+// returns how many queued jobs were dropped.
 func (c *Controllers) Cancel(ctx context.Context, id int64) (int64, error) {
-	if err := c.store.SetSourceState(ctx, id, store.SourceCancelled,
+	var n int64
+	err := c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		n, err = cancelTx(ctx, tx, id)
+		return err
+	})
+	return n, err
+}
+
+func cancelTx(ctx context.Context, tx *store.Tx, id int64) (int64, error) {
+	if err := tx.SetSourceState(ctx, id, store.SourceCancelled,
 		store.SourcePendingConfirm, store.SourceActive, store.SourcePaused, store.SourceDoneBackfill); err != nil {
 		return 0, err
 	}
-	return c.store.CancelSourceJobs(ctx, id)
+	return tx.CancelSourceJobs(ctx, id)
 }
 
 // RefreshResult says what a refresh scheduled (content-free).
@@ -236,7 +280,22 @@ type RefreshResult struct {
 // Only active and done_backfill sources can be refreshed.
 func (c *Controllers) Refresh(ctx context.Context, id int64, full bool) (RefreshResult, error) {
 	var res RefreshResult
-	r, err := c.store.GetSource(ctx, id)
+	err := c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		res, err = c.refreshTx(ctx, tx, id, full)
+		return err
+	})
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	c.log.Info("source refresh", "component", "sources", "source_id", id, "full", full, "requeued_works", res.RequeuedWorks,
+		"rescan_started", res.RescanStarted, "unblocked_parser", res.UnblockedParser)
+	return res, nil
+}
+
+func (c *Controllers) refreshTx(ctx context.Context, tx *store.Tx, id int64, full bool) (RefreshResult, error) {
+	var res RefreshResult
+	r, err := tx.GetSource(ctx, id)
 	if err != nil {
 		return res, err
 	}
@@ -261,40 +320,42 @@ func (c *Controllers) Refresh(ctx context.Context, id int64, full bool) (Refresh
 		}
 		r.BackfillCursor = cur.JSON()
 	}
-	if err := c.store.UpdateSourceProgress(ctx, r); err != nil {
+	if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 		return res, err
 	}
 	if res.RescanStarted {
-		if err := c.store.SetSourceState(ctx, id, store.SourceActive, store.SourceDoneBackfill); err != nil {
+		if err := tx.SetSourceState(ctx, id, store.SourceActive, store.SourceDoneBackfill); err != nil {
 			return res, err
 		}
 	}
-	failed, err := c.store.FailedWorkJobs(ctx, id)
+	failed, err := tx.FailedWorkJobs(ctx, id)
 	if err != nil {
 		return res, err
 	}
 	for _, target := range failed {
 		wid, _ := strconv.ParseInt(target, 10, 64)
-		if _, created, err := c.EnqueueWorkFetch(ctx, wid, id, jobs.ClassPollFetch); err != nil {
+		if _, created, err := enqueueWorkFetch(ctx, tx, wid, id, jobs.ClassPollFetch); err != nil {
 			return res, err
 		} else if created {
 			res.RequeuedWorks++
 		}
 	}
-	c.log.Info("source refresh", "component", "sources", "source_id", id, "full", full, "requeued_works", res.RequeuedWorks,
-		"rescan_started", res.RescanStarted, "unblocked_parser", res.UnblockedParser)
 	return res, nil
 }
 
 // Set changes a source's poll interval and/or priority. Zero/nil values keep the current one.
 // A shorter poll interval takes effect at once (the next poll is moved earlier if needed).
 func (c *Controllers) Set(ctx context.Context, id int64, poll time.Duration, priority *int) error {
-	r, err := c.store.GetSource(ctx, id)
-	if err != nil {
-		return err
-	}
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return c.setTx(ctx, tx, id, poll, priority) })
+}
+
+func (c *Controllers) setTx(ctx context.Context, tx *store.Tx, id int64, poll time.Duration, priority *int) error {
 	if poll != 0 && poll < 10*time.Minute {
 		return fmt.Errorf("sources: poll interval %s must be >= 10m", poll)
+	}
+	r, err := tx.GetSource(ctx, id)
+	if err != nil {
+		return err
 	}
 	if poll == 0 {
 		poll = r.PollInterval
@@ -303,17 +364,19 @@ func (c *Controllers) Set(ctx context.Context, id int64, poll time.Duration, pri
 	if priority != nil {
 		prio = *priority
 	}
-	if err := c.store.UpdateSourceSettings(ctx, id, poll, prio); err != nil {
+	if err := tx.UpdateSourceSettings(ctx, id, poll, prio); err != nil {
 		return err
 	}
 	if next := c.options.Now().Add(poll); !r.NextPollAt.IsZero() && next.Before(r.NextPollAt) {
 		r.NextPollAt = next
-		return c.store.UpdateSourceProgress(ctx, r)
+		return tx.UpdateSourceProgress(ctx, r)
 	}
 	return nil
 }
 
 // Remove deletes a source (and its memberships). Mirrored works are kept.
 func (c *Controllers) Remove(ctx context.Context, id int64) error {
-	return c.store.DeleteSource(ctx, id)
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return removeTx(ctx, tx, id) })
 }
+
+func removeTx(ctx context.Context, tx *store.Tx, id int64) error { return tx.DeleteSource(ctx, id) }

@@ -34,9 +34,10 @@ func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
 }
 
 type env struct {
-	srv *fakeao3.Server
-	st  *store.Store
-	svc *Controllers
+	srv  *fakeao3.Server
+	st   *store.Store
+	svc  *Controllers
+	opts Options // what svc was built with (tests derive variants, e.g. a wrapped Client)
 }
 
 func fixture(t *testing.T, name string) string {
@@ -58,7 +59,8 @@ func newEnv(t *testing.T, autoMax int) *env {
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	cfg := config.Default().Sources
 	cfg.AutoConfirmMax = autoMax
-	return &env{srv: srv, st: st, svc: New(Options{Store: st, Client: c, Sources: cfg, Interval: 10 * time.Second, Now: clk.Now})}
+	o := Options{Store: st, Client: c, Sources: cfg, Interval: 10 * time.Second, Now: clk.Now}
+	return &env{srv: srv, st: st, svc: New(o), opts: o}
 }
 
 const tagURL = "/tags/Fixture%20Fandom/works"
@@ -81,7 +83,7 @@ func TestAddTagSourceGate(t *testing.T) {
 		// fixture: 1,234 works => 62 pages; page 1 done; 2 blurbs both new
 		assert.Equal(t, Estimate{Total: 1234, Pages: 62, ListingRequests: 61, WorkFetches: 1234, Requests: 61 + 1234,
 			Duration: time.Duration(61+1234) * 10 * time.Second, DiskBytes: res.Estimate.DiskBytes}, res.Estimate)
-		got, err := e.st.GetSource(context.Background(), res.Source.ID)
+		got, err := e.svc.GetSource(context.Background(), res.Source.ID)
 		require.NoError(t, err)
 		assert.Equal(t, 2, got.MemberWorks)
 		assert.JSONEq(t, `{"next_page":2,"order":"kudos_desc"}`, got.BackfillCursor)
@@ -118,7 +120,7 @@ func TestAddDuplicateAndErrors(t *testing.T) {
 	require.Error(t, err, "search URL must be rejected")
 	_, err = e.svc.Add(ctx, tagURL+"x", AddOptions{Order: "bogus"})
 	require.Error(t, err, "bad order must be rejected")
-	list, err := e.st.ListSources(ctx)
+	list, err := e.svc.ListSources(ctx)
 	require.NoError(t, err)
 	require.Len(t, list, 1, "failed adds must not create sources")
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // getListing fetches one listing page of a source (a series source's page is the series page).
@@ -27,25 +28,33 @@ func (c *Controllers) getListing(ctx context.Context, src ao3url.Source, page in
 	return c.get(ctx, kind, path)
 }
 
-// parseListing parses a fetched listing page. For a series source it parses the series page and,
-// on page 1, stores the series metadata. parseErr is a page-structure failure (rep says what is
-// missing); err is a store failure.
-func (c *Controllers) parseListing(ctx context.Context, src ao3url.Source, page int, resp *httpx.Response) (
-	l parse.Listing, rep *parse.Report, parseErr, err error) {
+// parsedListing is one parsed listing page. series is set for page 1 of a series source (its
+// metadata is stored with the page's blurbs).
+type parsedListing struct {
+	listing parse.Listing
+	series  *model.Series
+	report  *parse.Report
+}
+
+// parseListing parses a fetched listing page (a series page for series sources). It touches no
+// store; an error is a page-structure failure (report.Missing says what is missing).
+func (c *Controllers) parseListing(ctx context.Context, src ao3url.Source, page int, resp *httpx.Response) (parsedListing, error) {
 	fetched := c.options.Now()
-	var ser parse.Series
+	var p parsedListing
+	var err error
 	if src.Kind == ao3url.KindSeries {
+		var ser parse.Series
 		id, _ := strconv.ParseInt(src.Target, 10, 64)
-		ser, rep, parseErr = parse.ParseSeries(id, resp.Body, fetched)
-		l = ser.Listing
+		ser, p.report, err = parse.ParseSeries(id, resp.Body, fetched)
+		p.listing = ser.Listing
+		if err == nil && page == 1 {
+			p.series = &ser.Series
+		}
 	} else {
-		l, rep, parseErr = parse.ParseListing(resp.Body, fetched)
+		p.listing, p.report, err = parse.ParseListing(resp.Body, fetched)
 	}
-	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "page", page}, rep.Attrs()...)...)
-	if parseErr == nil && src.Kind == ao3url.KindSeries && page == 1 {
-		err = c.store.UpsertSeries(ctx, ser.Series)
-	}
-	return l, rep, parseErr, err
+	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "page", page}, p.report.Attrs()...)...)
+	return p, err
 }
 
 // blurbsResult is what storing a page of listing blurbs produced.
@@ -56,12 +65,17 @@ type blurbsResult struct {
 	changed   int
 }
 
-// upsertBlurbs stores listing blurbs (metadata and stats, zero requests) and reports which works
-// need a full fetch.
-func (c *Controllers) upsertBlurbs(ctx context.Context, blurbs []model.Work, page int) (blurbsResult, error) {
-	res := blurbsResult{ids: make([]int64, 0, len(blurbs))}
-	for _, b := range blurbs {
-		up, err := c.store.UpsertWork(ctx, b, model.FromBlurb, parse.Version)
+// storeListing stores a parsed page: the series metadata (if any) and the blurbs (metadata and
+// stats, zero requests). It reports which works need a full fetch.
+func (c *Controllers) storeListing(ctx context.Context, tx *store.Tx, p parsedListing, page int) (blurbsResult, error) {
+	if p.series != nil {
+		if err := tx.UpsertSeries(ctx, *p.series); err != nil {
+			return blurbsResult{}, err
+		}
+	}
+	res := blurbsResult{ids: make([]int64, 0, len(p.listing.Blurbs))}
+	for _, b := range p.listing.Blurbs {
+		up, err := tx.UpsertWork(ctx, b, model.FromBlurb, parse.Version)
 		if err != nil {
 			return res, err
 		}
@@ -83,13 +97,13 @@ func (c *Controllers) upsertBlurbs(ctx context.Context, blurbs []model.Work, pag
 
 // linkAndQueue records the blurbs as members of a source and queues the fetches they need. It
 // returns how many fetch jobs were newly created.
-func (c *Controllers) linkAndQueue(ctx context.Context, sourceID int64, res blurbsResult, class int) (int, error) {
-	if err := c.store.LinkSourceWorks(ctx, sourceID, res.ids); err != nil {
+func linkAndQueue(ctx context.Context, tx *store.Tx, sourceID int64, res blurbsResult, class int) (int, error) {
+	if err := tx.LinkSourceWorks(ctx, sourceID, res.ids); err != nil {
 		return 0, err
 	}
 	enqueued := 0
 	for _, id := range res.needFetch {
-		_, created, err := c.EnqueueWorkFetch(ctx, id, sourceID, class)
+		_, created, err := enqueueWorkFetch(ctx, tx, id, sourceID, class)
 		if err != nil {
 			return enqueued, err
 		}

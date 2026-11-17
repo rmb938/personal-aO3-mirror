@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func addSource(t *testing.T, s *Store, target string, state SourceState, prio int) int64 {
+func addSource(t *testing.T, s *testStore, target string, state SourceState, prio int) int64 {
 	t.Helper()
 	id, err := s.InsertSource(context.Background(), SourceRow{Kind: "tag", Target: target, FiltersJSON: "{}", Path: "/p",
 		State: state, BackfillOrder: "kudos_desc", PollInterval: time.Hour, Priority: prio, TotalWorks: -1, EstRequests: -1, BackfillCursor: "{}"})
@@ -19,7 +19,7 @@ func addSource(t *testing.T, s *Store, target string, state SourceState, prio in
 }
 
 // enqueue adds a job, failing the test on error, and returns its id.
-func enqueue(t *testing.T, s *Store, j Job) int64 {
+func enqueue(t *testing.T, s *testStore, j Job) int64 {
 	t.Helper()
 	id, _, err := s.EnqueueJob(context.Background(), j)
 	require.NoError(t, err)

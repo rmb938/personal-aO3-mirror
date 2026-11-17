@@ -76,7 +76,7 @@ func scanSource(row interface{ Scan(...any) error }) (SourceRow, error) {
 // InsertSource creates a source. It fails with ErrSourceExists if (kind,target,filters) exists.
 var ErrSourceExists = errors.New("store: source already exists")
 
-func (s *Store) InsertSource(ctx context.Context, r SourceRow) (int64, error) {
+func (s *Tx) InsertSource(ctx context.Context, r SourceRow) (int64, error) {
 	now := s.unix()
 	res, err := s.meta.ExecContext(ctx, `INSERT INTO sources (kind, target, filters_json, path, state,
 		backfill_order, poll_interval_s, priority, total_works, est_requests, backfill_cursor, created_at,
@@ -96,7 +96,7 @@ func (s *Store) InsertSource(ctx context.Context, r SourceRow) (int64, error) {
 }
 
 // FindSource returns the id of an existing (kind,target,filters) source, or 0.
-func (s *Store) FindSource(ctx context.Context, kind, target, filtersJSON string) (int64, error) {
+func (s *ReadTx) FindSource(ctx context.Context, kind, target, filtersJSON string) (int64, error) {
 	var id int64
 	err := s.meta.QueryRowContext(ctx, `SELECT id FROM sources WHERE kind = ? AND target = ? AND filters_json = ?`,
 		kind, target, filtersJSON).Scan(&id)
@@ -106,7 +106,7 @@ func (s *Store) FindSource(ctx context.Context, kind, target, filtersJSON string
 	return id, err
 }
 
-func (s *Store) GetSource(ctx context.Context, id int64) (SourceRow, error) {
+func (s *ReadTx) GetSource(ctx context.Context, id int64) (SourceRow, error) {
 	r, err := scanSource(s.meta.QueryRowContext(ctx, `SELECT `+sourceCols+` FROM sources WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNoSource
@@ -114,7 +114,7 @@ func (s *Store) GetSource(ctx context.Context, id int64) (SourceRow, error) {
 	return r, err
 }
 
-func (s *Store) ListSources(ctx context.Context) ([]SourceRow, error) {
+func (s *ReadTx) ListSources(ctx context.Context) ([]SourceRow, error) {
 	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceCols+` FROM sources ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -132,11 +132,11 @@ func (s *Store) ListSources(ctx context.Context) ([]SourceRow, error) {
 }
 
 // SetSourceState moves a source to `to` only if its current state is one of `from`.
-func (s *Store) SetSourceState(ctx context.Context, id int64, to SourceState, from ...SourceState) error {
+func (s *Tx) SetSourceState(ctx context.Context, id int64, to SourceState, from ...SourceState) error {
 	q := `UPDATE sources SET state = ?, updated_at = ? WHERE id = ?`
 	args := []any{string(to), s.unix(), id}
 	if len(from) > 0 {
-		q += ` AND state IN (` + placeholders(len(from)) + `)` //nolint:gosec // G202: only "?,?,..." is concatenated; values are bound args
+		q += ` AND state IN (` + placeholders(len(from)) + `)` // only "?,?,..." is concatenated; values are bound args
 		for _, f := range from {
 			args = append(args, string(f))
 		}
@@ -157,7 +157,7 @@ func (s *Store) SetSourceState(ctx context.Context, id int64, to SourceState, fr
 }
 
 // UpdateSourceProgress records totals/cursor/error after listing work. Zero values are written.
-func (s *Store) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
+func (s *Tx) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
 	_, err := s.meta.ExecContext(ctx, `UPDATE sources SET total_works = ?, est_requests = ?, backfill_cursor = ?,
 		last_poll_at = ?, next_poll_at = ?, last_full_scan_at = ?, backfill_done_at = ?, last_error = ?, updated_at = ?
 		WHERE id = ?`, r.TotalWorks, r.EstRequests, r.BackfillCursor, zeroUnix(r.LastPollAt), zeroUnix(r.NextPollAt),
@@ -166,7 +166,7 @@ func (s *Store) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
 }
 
 // UpdateSourceSettings changes a source's poll interval and priority (user settings).
-func (s *Store) UpdateSourceSettings(ctx context.Context, id int64, poll time.Duration, priority int) error {
+func (s *Tx) UpdateSourceSettings(ctx context.Context, id int64, poll time.Duration, priority int) error {
 	res, err := s.meta.ExecContext(ctx, `UPDATE sources SET poll_interval_s = ?, priority = ?, updated_at = ? WHERE id = ?`,
 		int64(poll/time.Second), priority, s.unix(), id)
 	if err != nil {
@@ -180,7 +180,7 @@ func (s *Store) UpdateSourceSettings(ctx context.Context, id int64, poll time.Du
 }
 
 // DeleteSource removes a source and its memberships (works are kept) after cancelling its jobs.
-func (s *Store) DeleteSource(ctx context.Context, id int64) error {
+func (s *Tx) DeleteSource(ctx context.Context, id int64) error {
 	if _, err := s.CancelSourceJobs(ctx, id); err != nil {
 		return err
 	}
@@ -196,28 +196,23 @@ func (s *Store) DeleteSource(ctx context.Context, id int64) error {
 }
 
 // LinkSourceWorks records that works appeared in a source's listing.
-func (s *Store) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []int64) error {
+func (s *Tx) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []int64) error {
 	if len(workIDs) == 0 {
 		return nil
 	}
-	tx, err := s.meta.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	now := s.unix()
 	for _, w := range workIDs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
+		if _, err := s.meta.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
 			ON CONFLICT (source_id, work_id) DO UPDATE SET last_seen = excluded.last_seen`, sourceID, w, now, now); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or
 // changed since their last fetch (by revised date, chapters or words), oldest first.
-func (s *Store) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, limit int) ([]int64, error) {
+func (s *ReadTx) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.meta, `SELECT w.id FROM source_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.source_id = ? AND w.status = 'ok' AND (w.last_fetched = 0 OR w.fetched_revised != w.revised_at
 			OR w.fetched_chapters != w.chapters_posted OR w.fetched_words != w.words)
@@ -226,7 +221,7 @@ func (s *Store) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, lim
 
 // SourceWorksNotSeenSince returns ok works linked to a source whose last listing sighting in
 // that source is before since (candidates for deletion checks).
-func (s *Store) SourceWorksNotSeenSince(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
+func (s *ReadTx) SourceWorksNotSeenSince(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
 	return queryInt64s(ctx, s.meta, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.source_id = ? AND sw.last_seen < ? AND w.status = 'ok' ORDER BY sw.work_id`, sourceID, since.Unix())
 }

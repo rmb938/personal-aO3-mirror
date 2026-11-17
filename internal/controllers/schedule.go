@@ -14,42 +14,45 @@ import (
 )
 
 // ScheduleSources queues the jobs every active source needs at now: due update polls, the next
-// backfill or rescan page, single-work fetches, and the end-of-walk bookkeeping. Queuing is
-// deduplicated, so calling it every scheduler round is cheap and idempotent.
+// backfill or rescan page, single-work fetches, and the end-of-walk bookkeeping. It is one
+// transaction (milliseconds; no requests). Queuing is deduplicated, so calling it every
+// scheduler round is cheap and idempotent.
 func (c *Controllers) ScheduleSources(ctx context.Context, now time.Time) error {
-	rows, err := c.store.ListSources(ctx)
-	if err != nil {
-		return err
-	}
-	for _, r := range rows {
-		if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
-			continue
-		}
-		if err := c.scheduleSource(ctx, r, now, c.logger(ctx).With("source_id", r.ID, "source_kind", r.Kind)); err != nil {
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		rows, err := tx.ListSources(ctx)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
+		for _, r := range rows {
+			if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
+				continue
+			}
+			if err := c.scheduleSource(ctx, tx, r, now, c.logger(ctx).With("source_id", r.ID, "source_kind", r.Kind)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
-func (c *Controllers) scheduleSource(ctx context.Context, r store.SourceRow, now time.Time, log *slog.Logger) error {
+func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
 	if r.Kind == string(ao3url.KindWork) {
-		return c.scheduleWorkSource(ctx, r, now, log)
+		return c.scheduleWorkSource(ctx, tx, r, now, log)
 	}
 	if !r.NextPollAt.After(now) {
-		if _, created, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: "1",
+		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: "1",
 			Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(r.ID, 1)}); err != nil {
 			return err
 		} else if created {
 			log.Info("poll scheduled", "next_poll_at", now.Add(r.PollInterval))
 		}
 		r.NextPollAt = now.Add(r.PollInterval)
-		if err := c.store.UpdateSourceProgress(ctx, r); err != nil {
+		if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 			return err
 		}
 	}
 	if r.State == store.SourceDoneBackfill {
-		return c.maybeStartRescan(ctx, r, now, log)
+		return c.maybeStartRescan(ctx, tx, r, now, log)
 	}
 	cur, err := ParseCursor(r.BackfillCursor)
 	if err != nil {
@@ -64,7 +67,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, r store.SourceRow, now
 		if cur.Rescan {
 			class = jobs.ClassMaintenance
 		}
-		if _, created, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindBackfill, SourceID: r.ID,
+		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindBackfill, SourceID: r.ID,
 			Target: strconv.Itoa(cur.NextPage), Priority: class, DedupeKey: jobs.BackfillKey(r.ID, cur.WindowTo, cur.NextPage)}); err != nil {
 			return err
 		} else if created {
@@ -72,26 +75,26 @@ func (c *Controllers) scheduleSource(ctx context.Context, r store.SourceRow, now
 		}
 		return nil
 	}
-	return c.finishWalk(ctx, r, cur, now, log)
+	return finishWalk(ctx, tx, r, cur, now, log)
 }
 
 // finishWalk completes a backfill or rescan: verifies works not seen during a rescan, then
-// marks the source done_backfill.
-func (c *Controllers) finishWalk(ctx context.Context, r store.SourceRow, cur Cursor, now time.Time, log *slog.Logger) error {
-	if err := c.store.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
+// marks the source done_backfill (state, verification jobs and cursor change together).
+func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Cursor, now time.Time, log *slog.Logger) error {
+	if err := tx.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
 		if errors.Is(err, store.ErrStateConflict) {
-			return nil // state changed concurrently (paused/cancelled); try next round
+			return nil // not active any more (paused/cancelled); try next round
 		}
 		return err
 	}
 	verify := 0
 	if cur.Rescan {
-		missing, err := c.store.SourceWorksNotSeenSince(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
+		missing, err := tx.SourceWorksNotSeenSince(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
 		if err != nil {
 			return err
 		}
 		for _, id := range missing {
-			if _, created, err := c.EnqueueWorkFetch(ctx, id, r.ID, jobs.ClassMaintenance); err != nil {
+			if _, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassMaintenance); err != nil {
 				return err
 			} else if created {
 				verify++
@@ -101,7 +104,7 @@ func (c *Controllers) finishWalk(ctx context.Context, r store.SourceRow, cur Cur
 		r.BackfillCursor = cur.JSON()
 	}
 	r.BackfillDoneAt, r.LastFullScanAt = now, now
-	if err := c.store.UpdateSourceProgress(ctx, r); err != nil {
+	if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 		return err
 	}
 	log.Info("source walk complete", "works_seen", r.MemberWorks, "works_fetched", r.FetchedWorks, "verify_jobs", verify)
@@ -110,21 +113,21 @@ func (c *Controllers) finishWalk(ctx context.Context, r store.SourceRow, cur Cur
 
 // maybeStartRescan restarts the listing walk of a done source every RescanInterval to refresh
 // stats and find works that disappeared.
-func (c *Controllers) maybeStartRescan(ctx context.Context, r store.SourceRow, now time.Time, log *slog.Logger) error {
+func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
 	if r.LastFullScanAt.IsZero() {
 		r.LastFullScanAt = now
-		return c.store.UpdateSourceProgress(ctx, r)
+		return tx.UpdateSourceProgress(ctx, r)
 	}
 	if now.Before(r.LastFullScanAt.Add(c.options.RescanInterval)) {
 		return nil
 	}
 	r.BackfillCursor = rescanCursor(r.BackfillOrder, now).JSON()
-	if err := c.store.UpdateSourceProgress(ctx, r); err != nil {
+	if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 		return err
 	}
-	if err := c.store.SetSourceState(ctx, r.ID, store.SourceActive, store.SourceDoneBackfill); err != nil {
+	if err := tx.SetSourceState(ctx, r.ID, store.SourceActive, store.SourceDoneBackfill); err != nil {
 		if errors.Is(err, store.ErrStateConflict) {
-			return nil // paused/cancelled concurrently: no rescan
+			return nil // paused/cancelled: no rescan
 		}
 		return err
 	}
@@ -133,15 +136,15 @@ func (c *Controllers) maybeStartRescan(ctx context.Context, r store.SourceRow, n
 }
 
 // scheduleWorkSource fetches a single-work source once, then refreshes it every poll interval.
-func (c *Controllers) scheduleWorkSource(ctx context.Context, r store.SourceRow, now time.Time, log *slog.Logger) error {
+func (c *Controllers) scheduleWorkSource(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
 	id, _ := strconv.ParseInt(r.Target, 10, 64)
-	_, exists, err := c.store.WorkStatus(ctx, id)
+	_, exists, err := tx.WorkStatus(ctx, id)
 	if err != nil {
 		return err
 	}
 	if !exists || r.FetchedWorks == 0 {
 		// Not fetched yet: keep an on-demand job queued (deduped), don't touch the poll timer.
-		_, created, err := c.EnqueueWorkFetch(ctx, id, r.ID, jobs.ClassOnDemand)
+		_, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassOnDemand)
 		if created {
 			log.Info("work source fetch scheduled", "work_id", id)
 		}
@@ -150,40 +153,42 @@ func (c *Controllers) scheduleWorkSource(ctx context.Context, r store.SourceRow,
 	if r.NextPollAt.After(now) {
 		return nil
 	}
-	if _, _, err := c.EnqueueWorkFetch(ctx, id, r.ID, jobs.ClassPoll); err != nil {
+	if _, _, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassPoll); err != nil {
 		return err
 	}
 	r.NextPollAt = now.Add(r.PollInterval)
-	return c.store.UpdateSourceProgress(ctx, r)
+	return tx.UpdateSourceProgress(ctx, r)
 }
 
 // maxInfoJobs caps how many tag-info and series-info jobs are queued at once (each kind).
 const maxInfoJobs = 25
 
 // ScheduleInfo keeps small queues of series-page and tag-info fetches (most-used tags first),
-// when enabled.
+// when enabled. One transaction; no requests.
 func (c *Controllers) ScheduleInfo(ctx context.Context, now time.Time) error {
-	if err := c.scheduleSeriesInfo(ctx, now); err != nil {
-		return err
-	}
-	return c.scheduleTagInfo(ctx, now)
+	return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := c.scheduleSeriesInfo(ctx, tx, now); err != nil {
+			return err
+		}
+		return c.scheduleTagInfo(ctx, tx, now)
+	})
 }
 
-func (c *Controllers) scheduleTagInfo(ctx context.Context, now time.Time) error {
+func (c *Controllers) scheduleTagInfo(ctx context.Context, tx *store.Tx, now time.Time) error {
 	if len(c.options.TagInfoTypes) == 0 {
 		return nil
 	}
-	active, err := c.store.CountActiveJobs(ctx, jobs.KindTagInfo)
+	active, err := tx.CountActiveJobs(ctx, jobs.KindTagInfo)
 	if err != nil || active >= maxInfoJobs {
 		return err
 	}
-	tags, err := c.store.TagsNeedingInfo(ctx, c.options.TagInfoTypes, now.Add(-c.options.TagInfoTTL), 50)
+	tags, err := tx.TagsNeedingInfo(ctx, c.options.TagInfoTypes, now.Add(-c.options.TagInfoTTL), 50)
 	if err != nil {
 		return err
 	}
 	queued := 0
 	for _, t := range tags {
-		if _, created, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindTagInfo, Target: strconv.FormatInt(t.ID, 10),
+		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindTagInfo, Target: strconv.FormatInt(t.ID, 10),
 			Priority: jobs.ClassTagInfo, DedupeKey: jobs.TagKey(t.ID)}); err != nil {
 			return err
 		} else if created {
@@ -197,21 +202,21 @@ func (c *Controllers) scheduleTagInfo(ctx context.Context, now time.Time) error 
 }
 
 // scheduleSeriesInfo queues series-page fetches for non-source series.
-func (c *Controllers) scheduleSeriesInfo(ctx context.Context, now time.Time) error {
+func (c *Controllers) scheduleSeriesInfo(ctx context.Context, tx *store.Tx, now time.Time) error {
 	if !c.options.SeriesInfo {
 		return nil
 	}
-	active, err := c.store.CountActiveJobs(ctx, jobs.KindSeries)
+	active, err := tx.CountActiveJobs(ctx, jobs.KindSeries)
 	if err != nil || active >= maxInfoJobs {
 		return err
 	}
-	ids, err := c.store.SeriesNeedingInfo(ctx, now.Add(-c.options.SeriesInfoTTL), 50)
+	ids, err := tx.SeriesNeedingInfo(ctx, now.Add(-c.options.SeriesInfoTTL), 50)
 	if err != nil {
 		return err
 	}
 	queued := 0
 	for _, id := range ids {
-		if _, created, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindSeries, Target: strconv.FormatInt(id, 10),
+		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindSeries, Target: strconv.FormatInt(id, 10),
 			Priority: jobs.ClassTagInfo, DedupeKey: jobs.SeriesKey(id)}); err != nil {
 			return err
 		} else if created {

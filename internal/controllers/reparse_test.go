@@ -27,21 +27,22 @@ func TestReparse(t *testing.T) {
 	st, err := store.Open(ctx, dir, store.Options{Now: now, Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	db := st.AutoCommitForTestOnly()
 
 	putPage := func(id int64, path string, page []byte) {
 		t.Helper()
-		_, err := st.PutRawPage(ctx, id, path, page, 1)
+		_, err := db.PutRawPage(ctx, id, path, page, 1)
 		require.NoError(t, err)
 	}
 	upsert := func(w model.Work, origin model.Origin, pv int) {
 		t.Helper()
-		_, err := st.UpsertWork(ctx, w, origin, pv)
+		_, err := db.UpsertWork(ctx, w, origin, pv)
 		require.NoError(t, err)
 	}
 	// Work 1001: stored raw page, parsed by an "old" parser (version 0), metadata stale.
 	putPage(1001, "/works/1001?view_full_work=true", []byte(fixture(t, "work_chaptered.html")))
 	upsert(model.Work{ID: 1001, Title: "stale"}, model.FromPage, 0)
-	require.NoError(t, st.SetWorkStatus(ctx, 1001, model.StatusDeleted))
+	require.NoError(t, db.SetWorkStatus(ctx, 1001, model.StatusDeleted))
 	// Work 1002: already current; Work 9: broken raw page.
 	putPage(1002, "/works/1002?view_full_work=true", []byte(fixture(t, "work_oneshot.html")))
 	upsert(model.Work{ID: 1002, Title: "current"}, model.FromPage, parse.Version)
@@ -50,13 +51,13 @@ func TestReparse(t *testing.T) {
 
 	diag := func(id int64) store.WorkDiag {
 		t.Helper()
-		d, err := st.WorkDiag(ctx, id)
+		d, err := db.WorkDiag(ctx, id)
 		require.NoError(t, err)
 		return d
 	}
 	work := func(id int64) model.Work {
 		t.Helper()
-		w, err := st.Work(ctx, id)
+		w, err := db.Work(ctx, id)
 		require.NoError(t, err)
 		return w
 	}
@@ -80,7 +81,7 @@ func TestReparse(t *testing.T) {
 	require.Equal(t, model.StatusDeleted, d.Status, "reparse must not change the work status")
 	require.Equal(t, parse.Version, d.ParserVersion)
 	require.Equal(t, lastFetchedBefore, d.LastFetched, "reparse is not a fetch")
-	chs, err := st.ChapterBodies(ctx, 1001)
+	chs, err := db.ChapterBodies(ctx, 1001)
 	require.NoError(t, err)
 	require.Len(t, chs, 3)
 	require.Contains(t, chs[0].SummaryHTML, "chapter summary")

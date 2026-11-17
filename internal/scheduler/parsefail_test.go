@@ -33,7 +33,7 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e.drain(50)
 
 	// Work 5001 was mirrored fine. Now AO3 serves a page we cannot parse after an update.
-	good, _, err := e.st.LatestRawPage(ctx, 5001)
+	good, _, err := e.db.LatestRawPage(ctx, 5001)
 	require.NoError(t, err)
 	e.srv.Handle("/works/5001", fakeao3.Reply{Body: brokenWork})
 	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Words += 100; w.Revised = time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC) })
@@ -41,21 +41,21 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e.drain(50)
 
 	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "initial + one failed update, no retries")
-	jobs, err := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5001", 5)
+	jobs, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5001", 5)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, "parse_")
 	require.Equal(t, 1, jobs[0].Attempts)
 	// Good content kept; failed page stored as the newest raw version, good one still there.
-	chs, err := e.st.ChapterBodies(ctx, 5001)
+	chs, err := e.db.ChapterBodies(ctx, 5001)
 	require.NoError(t, err)
 	require.NotEmpty(t, chs, "existing chapter bodies must be kept")
-	latest, _, err := e.st.LatestRawPage(ctx, 5001)
+	latest, _, err := e.db.LatestRawPage(ctx, 5001)
 	require.NoError(t, err)
 	require.Equal(t, brokenWork, string(latest), "failed page must be stored for reparse")
 	require.Equal(t, 2, e.diag(5001).RawVersions, "good raw version must survive")
 	require.NotEmpty(t, good)
-	c, err := e.st.Counts(ctx)
+	c, err := e.db.Counts(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, c.ParseFailures)
 
@@ -86,7 +86,7 @@ func TestBackfillBlocksOnParseFailure(t *testing.T) {
 	// A new parser version (simulated) unblocks; with the page fixed, backfill completes.
 	cur.BlockedParser = parse.Version - 1
 	src.BackfillCursor = cur.JSON()
-	require.NoError(t, e.st.UpdateSourceProgress(ctx, src))
+	require.NoError(t, e.db.UpdateSourceProgress(ctx, src))
 	e.srv.Handle(page2) // remove override: the synthetic site serves it again
 	e.drain(200)
 	src = e.source(id)

@@ -44,6 +44,7 @@ type env struct {
 	site *fakeao3.Site
 	clk  *fakeClock
 	st   *store.Store
+	db   *store.Tx // autocommit, for seeding and inspecting state in tests
 	cl   *httpx.Client
 	ctl  *controllers.Controllers
 	sch  *Scheduler
@@ -66,6 +67,7 @@ func newEnv(t *testing.T, works int, opts func(*controllers.Options)) *env {
 	e.st, err = store.Open(context.Background(), dataDir, store.Options{Now: e.clk.Now, Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, e.st.Close()) })
+	e.db = e.st.AutoCommitForTestOnly()
 	o := controllers.Options{Store: e.st, Client: e.cl, Now: e.clk.Now, DataDir: dataDir, Logger: log,
 		Sources: config.Default().Sources, Interval: 10 * time.Second}
 	if opts != nil {
@@ -99,7 +101,7 @@ func (e *env) add(url string) int64 {
 
 func (e *env) source(id int64) store.SourceRow {
 	e.t.Helper()
-	src, err := e.st.GetSource(context.Background(), id)
+	src, err := e.db.GetSource(context.Background(), id)
 	require.NoError(e.t, err)
 	return src
 }
@@ -114,21 +116,21 @@ func (e *env) queueWork(id int64) {
 // diag returns a work's content-free stored state.
 func (e *env) diag(id int64) store.WorkDiag {
 	e.t.Helper()
-	d, err := e.st.WorkDiag(context.Background(), id)
+	d, err := e.db.WorkDiag(context.Background(), id)
 	require.NoError(e.t, err)
 	return d
 }
 
 func (e *env) series(id int64) store.SeriesRow { //nolint:unparam // one fixture series today; the id keeps call sites readable
 	e.t.Helper()
-	r, err := e.st.Series(context.Background(), id)
+	r, err := e.db.Series(context.Background(), id)
 	require.NoError(e.t, err)
 	return r
 }
 
 func (e *env) fetchedCount() int {
 	e.t.Helper()
-	c, err := e.st.Counts(context.Background())
+	c, err := e.db.Counts(context.Background())
 	require.NoError(e.t, err)
 	return c.WorksFetched
 }
@@ -161,7 +163,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 		e.drain(200)
 		e.clk.Advance(3 * time.Hour)
 	}
-	failed, err := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5000", 5)
+	failed, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5000", 5)
 	require.NoError(t, err)
 	require.NotEmpty(t, failed, "expected failed jobs for 5000")
 	e.srv.Handle("/works/5000") // AO3 recovered
@@ -179,7 +181,7 @@ func TestHandlerPanicFailsJob(t *testing.T) {
 	}
 	e.queueWork(5000)
 	e.drain(5) // must not panic out of Step
-	js, err := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5000", 1)
+	js, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5000", 1)
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, "panic", js[0].LastError, "panicking job should fail with code panic")
@@ -196,7 +198,7 @@ func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	e.queueWork(5000)
 	_, err := e.sch.Step(ctx)
 	require.NoError(t, err)
-	js, err := e.st.ListJobs(context.Background(), "", 0, "work:5000", 1)
+	js, err := e.db.ListJobs(context.Background(), "", 0, "work:5000", 1)
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, store.JobDone, js[0].State, "job that succeeded during shutdown should be done")
@@ -232,7 +234,7 @@ func TestBackfillThenPoll(t *testing.T) {
 		require.Equal(t, 1, n, "work %s request count", uri)
 		require.True(t, strings.HasSuffix(uri, "?view_full_work=true"), "work %s fetched without view_full_work", uri)
 	}
-	chs, err := e.st.ChapterBodies(ctx, 5000)
+	chs, err := e.db.ChapterBodies(ctx, 5000)
 	require.NoError(t, err)
 	require.Len(t, chs, 1)
 	require.Contains(t, chs[0].BodyHTML, "Fixture body 5000")
@@ -289,7 +291,7 @@ func TestFairnessAlternates(t *testing.T) {
 		ran, err := e.sch.Step(ctx)
 		require.NoError(t, err)
 		require.True(t, ran)
-		last, err := e.st.FindJobs(ctx, store.JobFilter{NotQueued: true, Order: store.JobsLastStarted, Limit: 1})
+		last, err := e.db.FindJobs(ctx, store.JobFilter{NotQueued: true, Order: store.JobsLastStarted, Limit: 1})
 		require.NoError(t, err)
 		require.Len(t, last, 1)
 		order = append(order, last[0].SourceID)
@@ -319,12 +321,12 @@ func TestPauseCancelAndRecover(t *testing.T) {
 	require.Len(t, e.srv.Requests(), before, "paused source made requests")
 	require.NoError(t, e.ctl.Resume(ctx, id))
 	// Simulate a crash mid-job: claim a job and leave it running.
-	j, err := e.st.PickJob(ctx, []string{jobs.KindWork, jobs.KindBackfill}, e.clk.Now())
+	j, err := e.db.PickJob(ctx, []string{jobs.KindWork, jobs.KindBackfill}, e.clk.Now())
 	require.NoError(t, err)
 	cctx, cancel := context.WithCancel(ctx)
 	cancel()
 	require.NoError(t, e.sch.Run(cctx)) // recovers running jobs, then stops immediately
-	got, err := e.st.GetJob(ctx, j.ID)
+	got, err := e.db.GetJob(ctx, j.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.JobQueued, got.State, "crashed job not recovered")
 	n, err := e.ctl.Cancel(ctx, id)
@@ -339,7 +341,7 @@ func TestUnavailableRetriesWithBackoff(t *testing.T) {
 	e.add(e.site.TagPath())
 	e.srv.Handle("/works/5000", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
 	e.drain(20)
-	jobs, err := e.st.ListJobs(ctx, "", 0, "work:5000", 5)
+	jobs, err := e.db.ListJobs(ctx, "", 0, "work:5000", 5)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, store.JobQueued, jobs[0].State)
@@ -356,10 +358,10 @@ func TestDeletedWorkKeepsContent(t *testing.T) {
 	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Deleted = true })
 	e.queueWork(5001)
 	e.drain(10)
-	st, _, err := e.st.WorkStatus(ctx, 5001)
+	st, _, err := e.db.WorkStatus(ctx, 5001)
 	require.NoError(t, err)
 	require.Equal(t, model.StatusDeleted, st)
-	chs, err := e.st.ChapterBodies(ctx, 5001)
+	chs, err := e.db.ChapterBodies(ctx, 5001)
 	require.NoError(t, err)
 	require.NotEmpty(t, chs, "deleted work keeps its content")
 }
@@ -405,7 +407,7 @@ func TestLogsContentFree(t *testing.T) {
 		require.NotContains(t, low, word, "logs leaked content")
 	}
 	require.Contains(t, e.logs.String(), `"msg":"job done"`, "expected job logs")
-	evs, err := e.st.JobEvents(context.Background(), 1)
+	evs, err := e.db.JobEvents(context.Background(), 1)
 	require.NoError(t, err)
 	require.NotEmpty(t, evs, "expected job events")
 	for _, ev := range evs {
@@ -420,7 +422,7 @@ func TestTagInfoFetched(t *testing.T) {
 	e.drain(50)
 	e.clk.Advance(2 * time.Minute) // tag scheduling is throttled to once a minute
 	e.drain(50)
-	tag, err := e.st.TagByName(context.Background(), "Fixture Tag")
+	tag, err := e.db.TagByName(context.Background(), "Fixture Tag")
 	require.NoError(t, err)
 	require.False(t, tag.InfoFetchedAt.IsZero(), "tag info not stored")
 	require.NotZero(t, tag.MergerID, "tag merger not stored")
@@ -448,7 +450,7 @@ func TestRescanVerifiesMissingWorks(t *testing.T) {
 	before := len(e.srv.Requests())
 	e.clk.Advance(25 * time.Hour)
 	e.drain(100)
-	st, _, err := e.st.WorkStatus(ctx, 5003)
+	st, _, err := e.db.WorkStatus(ctx, 5003)
 	require.NoError(t, err)
 	require.Equal(t, model.StatusDeleted, st, "missing work verified as deleted")
 	require.Equal(t, 9999, e.diag(5001).Stats.Kudos, "rescan refreshes stats")
@@ -472,7 +474,7 @@ func TestWorkFetchQueuesImages(t *testing.T) {
 	e.srv.Handle("/works/1001", fakeao3.Reply{Body: fixtureBody(t, "work_chaptered.html")})
 	e.queueWork(1001)
 	e.drain(5)
-	counts, _, err := e.st.ImageCounts(context.Background())
+	counts, _, err := e.db.ImageCounts(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 1, counts["queued"], "expected the fixture's one embedded image queued")
 }
@@ -487,7 +489,7 @@ func TestSeriesSourceStoresMetadata(t *testing.T) {
 	require.Equal(t, 13145, ser.Words)
 	// Poll refreshes it.
 	ser.Words = 0
-	require.NoError(t, e.st.UpsertSeries(context.Background(), ser.Series))
+	require.NoError(t, e.db.UpsertSeries(context.Background(), ser.Series))
 	require.Equal(t, 0, e.series(3001).Words)
 	e.clk.Advance(7 * time.Hour)
 	e.drain(20)
@@ -506,7 +508,7 @@ func TestSeriesInfoForNonSourceSeries(t *testing.T) {
 	ser := e.series(3001)
 	require.Contains(t, ser.SummaryHTML, "series description", "series info stored")
 	require.False(t, ser.LastFetched.IsZero())
-	ok, err := e.st.WorkExists(ctx, 999)
+	ok, err := e.db.WorkExists(ctx, 999)
 	require.NoError(t, err)
 	require.False(t, ok, "series info must not add works we do not mirror")
 	// Not refetched again until stale.

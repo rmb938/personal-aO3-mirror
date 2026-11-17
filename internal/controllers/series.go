@@ -11,7 +11,8 @@ import (
 )
 
 // FetchSeriesInfo fetches page 1 of a non-source series: description, notes, stats and
-// creators. Blurbs refresh only works we already mirror (no new works are added).
+// creators. Blurbs refresh only works we already mirror (no new works are added). Everything
+// the page says is stored in one transaction.
 func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, error) {
 	if id <= 0 {
 		return nil, PermanentError{Code: CodeBadSeriesID}
@@ -21,16 +22,20 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 	if err != nil {
 		return nil, err
 	}
+	// markFetched records an attempt that produced no metadata, so the next try waits for
+	// series.info_ttl instead of looping.
+	markFetched := func() error {
+		return c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.MarkSeriesFetched(ctx, id) })
+	}
 	detail := Detail{"series_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
 	switch resp.Class {
 	case httpx.ClassNotFound, httpx.ClassRestricted, httpx.ClassHidden:
-		return detail, c.store.MarkSeriesFetched(ctx, id)
+		return detail, markFetched()
 	}
 	if err := outcome(resp); err != nil {
 		if resp.Class == httpx.ClassUnexpected {
 			c.saveSkeleton(ctx, "series", target, resp.Body)
-			// Mark attempted so the next try waits for series.info_ttl instead of looping.
-			if uerr := c.store.MarkSeriesFetched(ctx, id); uerr != nil {
+			if uerr := markFetched(); uerr != nil {
 				return detail, uerr
 			}
 		}
@@ -40,13 +45,10 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "series_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		c.saveSkeleton(ctx, "series", target, resp.Body)
-		if uerr := c.store.MarkSeriesFetched(ctx, id); uerr != nil {
+		if uerr := markFetched(); uerr != nil {
 			return detail, uerr
 		}
 		return detail, parseUnexpected(rep.Missing)
-	}
-	if err := c.store.UpsertSeries(ctx, ser.Series); err != nil {
-		return detail, err
 	}
 	// Record every work on the page in series_works, mirrored or not (ids and part numbers only,
 	// no extra requests), so partial series can name the works they are missing.
@@ -60,22 +62,30 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64) (Detail, er
 		}
 		members = append(members, m)
 	}
-	if err := c.store.SetSeriesMembers(ctx, id, members); err != nil {
-		return detail, err
-	}
 	refreshed := 0
-	for _, b := range ser.Listing.Blurbs {
-		known, err := c.store.WorkExists(ctx, b.ID)
-		if err != nil {
-			return detail, err
+	if err := c.inTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := tx.UpsertSeries(ctx, ser.Series); err != nil {
+			return err
 		}
-		if !known {
-			continue
+		if err := tx.SetSeriesMembers(ctx, id, members); err != nil {
+			return err
 		}
-		if _, err := c.store.UpsertWork(ctx, b, model.FromBlurb, parse.Version); err != nil {
-			return detail, err
+		for _, b := range ser.Listing.Blurbs {
+			known, err := tx.WorkExists(ctx, b.ID)
+			if err != nil {
+				return err
+			}
+			if !known {
+				continue
+			}
+			if _, err := tx.UpsertWork(ctx, b, model.FromBlurb, parse.Version); err != nil {
+				return err
+			}
+			refreshed++
 		}
-		refreshed++
+		return nil
+	}); err != nil {
+		return detail, err
 	}
 	detail["works_count"], detail["known_works_refreshed"], detail["members_seen"] = ser.WorksCount, refreshed, len(members)
 	return detail, nil

@@ -11,12 +11,8 @@ import (
 
 // UpsertSeries stores a series page's metadata (description, notes, dates, stats, creators)
 // and marks the series fetched.
-func (s *Store) UpsertSeries(ctx context.Context, ser model.Series) error {
-	tx, err := s.meta.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+func (s *Tx) UpsertSeries(ctx context.Context, ser model.Series) error {
+	tx := s.meta
 	now := s.unix()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO series (id, title, summary_html, notes_html, complete, words, works_count,
 		bookmarks, begun, updated, first_seen, last_fetched) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
@@ -40,9 +36,6 @@ func (s *Store) UpsertSeries(ctx context.Context, ser model.Series) error {
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
 	s.log.Debug("series stored", "series_id", ser.ID, "works_count", ser.WorksCount, "words", ser.Words,
 		"complete", ser.Complete, "creators", len(ser.Creators), "summary_len", len(ser.SummaryHTML))
 	return nil
@@ -59,7 +52,7 @@ type SeriesRow struct {
 }
 
 // Series returns a stored series, or ErrNoSeries.
-func (s *Store) Series(ctx context.Context, id int64) (SeriesRow, error) {
+func (s *ReadTx) Series(ctx context.Context, id int64) (SeriesRow, error) {
 	var r SeriesRow
 	r.ID = id
 	var complete int
@@ -75,14 +68,14 @@ func (s *Store) Series(ctx context.Context, id int64) (SeriesRow, error) {
 }
 
 // MarkSeriesFetched records a fetch attempt that produced no metadata (404, restricted, hidden).
-func (s *Store) MarkSeriesFetched(ctx context.Context, id int64) error {
+func (s *Tx) MarkSeriesFetched(ctx context.Context, id int64) error {
 	_, err := s.meta.ExecContext(ctx, `UPDATE series SET last_fetched = ? WHERE id = ?`, s.unix(), id)
 	return err
 }
 
 // SeriesNeedingInfo returns ids of series that are not themselves sources and were never
 // fetched, fetched before `before`, or fetched before one of their mirrored works was revised.
-func (s *Store) SeriesNeedingInfo(ctx context.Context, before time.Time, limit int) ([]int64, error) {
+func (s *ReadTx) SeriesNeedingInfo(ctx context.Context, before time.Time, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.meta, `SELECT se.id FROM series se
 		WHERE NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
 			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
@@ -103,12 +96,8 @@ type SeriesMember struct {
 // do not mirror (no works row). Rows for fetched works are left alone: their work page is the
 // authority for their position. Only page 1 is fetched for non-source series, so for series
 // longer than one page this covers the first page only.
-func (s *Store) SetSeriesMembers(ctx context.Context, seriesID int64, members []SeriesMember) error {
-	tx, err := s.meta.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+func (s *Tx) SetSeriesMembers(ctx context.Context, seriesID int64, members []SeriesMember) error {
+	tx := s.meta
 	// Drop stale unfetched members (a work may have left the series), keep fetched ones.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM series_works WHERE series_id = ?
 		AND work_id NOT IN (SELECT id FROM works WHERE last_fetched > 0)`, seriesID); err != nil {
@@ -120,7 +109,7 @@ func (s *Store) SetSeriesMembers(ctx context.Context, seriesID int64, members []
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // PartialSeries is a series that is not a source and has fewer mirrored works than AO3 lists.
@@ -134,7 +123,7 @@ type PartialSeries struct {
 
 // PartialSeriesList returns partial series, most missing works first. Content-free (ids and
 // counts only).
-func (s *Store) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeries, error) {
+func (s *ReadTx) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeries, error) {
 	out, err := s.partialSeriesRows(ctx, limit)
 	if err != nil {
 		return nil, err
@@ -147,7 +136,7 @@ func (s *Store) PartialSeriesList(ctx context.Context, limit int) ([]PartialSeri
 	return out, nil
 }
 
-func (s *Store) partialSeriesRows(ctx context.Context, limit int) (out []PartialSeries, err error) {
+func (s *ReadTx) partialSeriesRows(ctx context.Context, limit int) (out []PartialSeries, err error) {
 	rows, err := s.meta.QueryContext(ctx, `SELECT se.id, se.works_count,
 			(SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
 			 WHERE sw.series_id = se.id AND w.last_fetched > 0) AS mirrored
@@ -172,7 +161,7 @@ func (s *Store) partialSeriesRows(ctx context.Context, limit int) (out []Partial
 	return out, rows.Err()
 }
 
-func (s *Store) fillMissing(ctx context.Context, p *PartialSeries) error {
+func (s *ReadTx) fillMissing(ctx context.Context, p *PartialSeries) error {
 	positions, err := queryInt64s(ctx, s.meta, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
 		WHERE sw.series_id = ? AND w.last_fetched > 0`, p.ID)
 	if err != nil {

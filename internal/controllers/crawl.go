@@ -3,6 +3,8 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -63,135 +65,159 @@ func sourceOf(r store.SourceRow) (ao3url.Source, error) {
 
 func day(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
-// pageResult is what a listing page produced.
-type pageResult struct {
-	listing  parse.Listing
-	newWorks int
-	changed  int
-	enqueued int
-	reqID    string
+// readSource loads a source and its listing description for a crawl step. A missing source is
+// permanent; other store errors are returned as-is (retried).
+func (c *Controllers) readSource(ctx context.Context, sourceID int64) (context.Context, store.SourceRow, ao3url.Source, error) {
+	ctx, r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
+		return tx.GetSource(ctx, sourceID)
+	})
+	if errors.Is(err, store.ErrNoSource) {
+		return ctx, r, ao3url.Source{}, PermanentError{Code: CodeNoSource}
+	}
+	if err != nil {
+		return ctx, r, ao3url.Source{}, err
+	}
+	src, err := sourceOf(r)
+	if err != nil {
+		return ctx, r, src, PermanentError{Code: CodeBadFilters}
+	}
+	return ctx, r, src, nil
 }
 
-// crawlPage fetches one listing page of a source, stores its blurbs, links them to the source and
-// enqueues work fetches (at fetchClass) for blurbs that need one.
-func (c *Controllers) crawlPage(ctx context.Context, r store.SourceRow, src ao3url.Source,
-	page int, order ao3url.Order, win *ao3url.Window, fetchClass int) (pageResult, error) {
-	var res pageResult
+// fetchPage fetches and parses one listing page of a source. It touches no store. A page AO3
+// served but we could not parse saves a debug skeleton and returns a parse failure.
+func (c *Controllers) fetchPage(ctx context.Context, sourceID int64, src ao3url.Source,
+	page int, order ao3url.Order, win *ao3url.Window) (parsedListing, string, error) {
 	resp, err := c.getListing(ctx, src, page, order, win)
 	if err != nil {
-		return res, err
+		return parsedListing{}, "", err
 	}
-	res.reqID = resp.ReqID
-	skelID := strconv.FormatInt(r.ID, 10) + "-p" + strconv.Itoa(page)
+	skelID := strconv.FormatInt(sourceID, 10) + "-p" + strconv.Itoa(page)
 	if err := outcome(resp); err != nil {
 		if resp.Class == httpx.ClassUnexpected {
 			c.saveSkeleton(ctx, "listing", skelID, resp.Body)
 		}
-		return res, err
+		return parsedListing{}, resp.ReqID, err
 	}
-	l, rep, parseErr, err := c.parseListing(ctx, src, page, resp)
-	res.listing = l
-	if parseErr != nil {
+	p, err := c.parseListing(ctx, src, page, resp)
+	if err != nil {
 		c.saveSkeleton(ctx, "listing", skelID, resp.Body)
-		return res, parseUnexpected(rep.Missing)
+		return p, resp.ReqID, parseUnexpected(p.report.Missing)
 	}
-	if err != nil {
-		return res, err
-	}
-	blurbs, err := c.upsertBlurbs(ctx, l.Blurbs, page)
-	if err != nil {
-		return res, err
-	}
-	res.newWorks, res.changed = blurbs.newWorks, blurbs.changed
-	res.enqueued, err = c.linkAndQueue(ctx, r.ID, blurbs, fetchClass)
-	return res, err
+	return p, resp.ReqID, nil
 }
 
 // PollPage walks one page of a source newest-revised-first, and queues the next page until a
 // page has nothing new or changed.
+//
+// Steps: read the source, fetch the page, then one write transaction that re-reads the source
+// and applies only this page's changes, so a refresh or settings change made during the fetch
+// is kept.
 func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (Detail, error) {
 	log := c.logger(ctx)
-	r, err := c.store.GetSource(ctx, sourceID)
+	ctx, r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
-		return nil, PermanentError{Code: CodeNoSource}
+		return nil, err
 	}
-	src, err := sourceOf(r)
-	if err != nil {
-		return nil, PermanentError{Code: CodeBadFilters}
-	}
-	res, err := c.crawlPage(ctx, r, src, page, ao3url.UpdateOrder, nil, jobs.ClassPollFetch)
+	p, reqID, err := c.fetchPage(ctx, r.ID, src, page, ao3url.UpdateOrder, nil)
 	if IsParseFailure(err) {
 		// No retry: the next poll is a full poll_interval away.
-		r.LastError = "poll page " + strconv.Itoa(page) + ": " + err.Error()
-		r.LastPollAt = c.options.Now()
-		if uerr := c.store.UpdateSourceProgress(ctx, r); uerr != nil {
-			return nil, uerr
-		}
-		return nil, err
+		_, uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			fresh, err2 := tx.GetSource(ctx, sourceID)
+			if err2 != nil {
+				return err2
+			}
+			fresh.LastError = "poll page " + strconv.Itoa(page) + ": " + err.Error()
+			fresh.LastPollAt = c.options.Now()
+			return tx.UpdateSourceProgress(ctx, fresh)
+		})
+		return nil, errors.Join(err, uerr)
 	}
 	if err != nil {
 		return nil, err
 	}
-	r.LastError = ""
-	// Once per poll (page 1): re-queue member works that still need a fetch (an earlier fetch
-	// failed or never ran, e.g. daemon down). The walk below stops at the first unchanged page,
-	// so works deeper in the listing would otherwise wait for the full rescan. Zero requests.
-	requeued := 0
-	if page == 1 {
-		ids, err := c.store.SourceWorksNeedingFetch(ctx, r.ID, 500)
-		if err != nil {
-			return nil, err
+	var detail Detail
+	_, err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		fresh, err := tx.GetSource(ctx, sourceID)
+		if errors.Is(err, store.ErrNoSource) {
+			return PermanentError{Code: CodeNoSource} // removed during the fetch
 		}
-		for _, wid := range ids {
-			if _, created, err := c.EnqueueWorkFetch(ctx, wid, r.ID, jobs.ClassPollFetch); err != nil {
-				return nil, err
-			} else if created {
-				requeued++
+		if err != nil {
+			return err
+		}
+		blurbs, err := c.storeListing(ctx, tx, p, page)
+		if err != nil {
+			return err
+		}
+		enqueued, err := linkAndQueue(ctx, tx, fresh.ID, blurbs, jobs.ClassPollFetch)
+		if err != nil {
+			return err
+		}
+		fresh.LastError = ""
+		// Once per poll (page 1): re-queue member works that still need a fetch (an earlier
+		// fetch failed or never ran, e.g. daemon down). The walk below stops at the first
+		// unchanged page, so works deeper in the listing would otherwise wait for the full
+		// rescan. Zero requests.
+		requeued := 0
+		if page == 1 {
+			ids, err := tx.SourceWorksNeedingFetch(ctx, fresh.ID, 500)
+			if err != nil {
+				return err
+			}
+			for _, wid := range ids {
+				if _, created, err := enqueueWorkFetch(ctx, tx, wid, fresh.ID, jobs.ClassPollFetch); err != nil {
+					return err
+				} else if created {
+					requeued++
+				}
 			}
 		}
-	}
-	p := res.listing.Pagination
-	more := p.Current < p.Last && page < c.options.MaxPollPages
-	switch {
-	case src.Kind == ao3url.KindSeries:
-		// Series pages are in part order; new parts can be anywhere, so walk them all.
-	case res.newWorks+res.changed == 0:
-		more = false // newest-first: an unchanged page means older pages are unchanged too
-	}
-	if capped := p.Current < p.Last && page >= c.options.MaxPollPages &&
-		(src.Kind == ao3url.KindSeries || res.newWorks+res.changed > 0); capped {
-		log.Warn("poll page cap reached; later changes wait for the full rescan (consider source set --poll with a shorter interval)",
-			"source_id", r.ID, "max_poll_pages", c.options.MaxPollPages, "page", page, "last_page", p.Last)
-	}
-	if page == 1 && res.listing.Total >= 0 && res.listing.Total != r.TotalWorks {
-		r.TotalWorks = res.listing.Total
-	}
-	if more {
-		if _, _, err := c.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: strconv.Itoa(page + 1),
-			Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(r.ID, page+1)}); err != nil {
-			return nil, err
+		l := p.listing
+		pg := l.Pagination
+		more := pg.Current < pg.Last && page < c.options.MaxPollPages
+		switch {
+		case src.Kind == ao3url.KindSeries:
+			// Series pages are in part order; new parts can be anywhere, so walk them all.
+		case blurbs.newWorks+blurbs.changed == 0:
+			more = false // newest-first: an unchanged page means older pages are unchanged too
 		}
-	} else {
-		r.LastPollAt = c.options.Now()
-	}
-	if err := c.store.UpdateSourceProgress(ctx, r); err != nil {
-		return nil, err
-	}
-	return Detail{"page": page, "blurbs": len(res.listing.Blurbs), "new": res.newWorks, "changed": res.changed,
-		"work_jobs": res.enqueued, "requeued_unfetched": requeued, "continue": more, "total": res.listing.Total, "req_id": res.reqID}, nil
+		if capped := pg.Current < pg.Last && page >= c.options.MaxPollPages &&
+			(src.Kind == ao3url.KindSeries || blurbs.newWorks+blurbs.changed > 0); capped {
+			log.Warn("poll page cap reached; later changes wait for the full rescan (consider source set --poll with a shorter interval)",
+				"source_id", fresh.ID, "max_poll_pages", c.options.MaxPollPages, "page", page, "last_page", pg.Last)
+		}
+		if page == 1 && l.Total >= 0 {
+			fresh.TotalWorks = l.Total
+		}
+		if more {
+			if _, _, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: fresh.ID, Target: strconv.Itoa(page + 1),
+				Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(fresh.ID, page+1)}); err != nil {
+				return err
+			}
+		} else {
+			fresh.LastPollAt = c.options.Now()
+		}
+		if err := tx.UpdateSourceProgress(ctx, fresh); err != nil {
+			return err
+		}
+		detail = Detail{"page": page, "blurbs": len(l.Blurbs), "new": blurbs.newWorks, "changed": blurbs.changed,
+			"work_jobs": enqueued, "requeued_unfetched": requeued, "continue": more, "total": l.Total, "req_id": reqID}
+		return nil
+	})
+	return detail, err
 }
 
 // BackfillPage walks one page of a source in its backfill order; >MaxResults sources go window
 // by window.
+//
+// Steps: read the source and cursor, fetch the page, then one write transaction that re-reads
+// the source. If the cursor moved during the fetch (a refresh or rescan reset it), the page's
+// blurbs are still stored but the cursor is left alone.
 func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int) (Detail, error) {
 	log := c.logger(ctx)
-	r, err := c.store.GetSource(ctx, sourceID)
+	ctx, r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
-		return nil, PermanentError{Code: CodeNoSource}
-	}
-	src, err := sourceOf(r)
-	if err != nil {
-		return nil, PermanentError{Code: CodeBadFilters}
+		return nil, err
 	}
 	cur, err := ParseCursor(r.BackfillCursor)
 	if err != nil {
@@ -225,41 +251,87 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 	if cur.Rescan {
 		fetchClass = jobs.ClassMaintenance
 	}
-	res, err := c.crawlPage(ctx, r, src, page, order, win, fetchClass)
+	p, reqID, err := c.fetchPage(ctx, r.ID, src, page, order, win)
 	if IsParseFailure(err) {
 		// The same page will parse the same way: stop this source's backfill here until a new
 		// parser version ships (it then resumes automatically).
-		cur.BlockedParser = parse.Version
-		r.BackfillCursor = cur.JSON()
-		r.LastError = "backfill page " + strconv.Itoa(page) + ": " + err.Error()
-		if uerr := c.store.UpdateSourceProgress(ctx, r); uerr != nil {
-			return nil, uerr
-		}
+		_, uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			fresh, err2 := tx.GetSource(ctx, sourceID)
+			if err2 != nil {
+				return err2
+			}
+			if fresh.BackfillCursor == r.BackfillCursor { // not moved during the fetch
+				cur.BlockedParser = parse.Version
+				fresh.BackfillCursor = cur.JSON()
+			}
+			fresh.LastError = "backfill page " + strconv.Itoa(page) + ": " + err.Error()
+			return tx.UpdateSourceProgress(ctx, fresh)
+		})
 		log.Warn("backfill blocked on parse failure until parser update", "page", page, "parser_version", parse.Version)
-		return Detail{"page": page, "blocked_parser": parse.Version}, err
+		return Detail{"page": page, "blocked_parser": parse.Version}, errors.Join(err, uerr)
 	}
 	if err != nil {
 		return nil, err
 	}
-	cur.BlockedParser = 0
-	r.LastError = ""
-	detail := Detail{"page": page, "blurbs": len(res.listing.Blurbs), "new": res.newWorks, "rescan": cur.Rescan,
-		"work_jobs": res.enqueued, "total": res.listing.Total, "req_id": res.reqID}
-	if win != nil {
-		detail["window_to"], detail["window_from"] = cur.WindowTo, cur.WindowFrom
-	}
 
+	var detail Detail
+	_, err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		fresh, err := tx.GetSource(ctx, sourceID)
+		if errors.Is(err, store.ErrNoSource) {
+			return PermanentError{Code: CodeNoSource} // removed during the fetch
+		}
+		if err != nil {
+			return err
+		}
+		blurbs, err := c.storeListing(ctx, tx, p, page)
+		if err != nil {
+			return err
+		}
+		enqueued, err := linkAndQueue(ctx, tx, fresh.ID, blurbs, fetchClass)
+		if err != nil {
+			return err
+		}
+		l := p.listing
+		detail = Detail{"page": page, "blurbs": len(l.Blurbs), "new": blurbs.newWorks, "rescan": cur.Rescan,
+			"work_jobs": enqueued, "total": l.Total, "req_id": reqID}
+		if win != nil {
+			detail["window_to"], detail["window_from"] = cur.WindowTo, cur.WindowFrom
+		}
+		if fresh.BackfillCursor != r.BackfillCursor {
+			// Refresh/rescan moved the cursor while we fetched: keep the blurbs, not our cursor step.
+			detail["stale_after_fetch"] = true
+			return nil
+		}
+		c.advanceCursor(&cur, page, win, l, detail, log)
+		if page == 1 && win == nil && l.Total >= 0 {
+			fresh.TotalWorks = l.Total
+		}
+		fresh.BackfillCursor = cur.JSON()
+		fresh.LastError = ""
+		if err := tx.UpdateSourceProgress(ctx, fresh); err != nil {
+			return err
+		}
+		detail["next_page"] = cur.NextPage
+		return nil
+	})
+	return detail, err
+}
+
+// advanceCursor moves a backfill cursor past a successfully stored page: next page, a smaller
+// window when the current one is over AO3's result window, the previous date window, or done.
+func (c *Controllers) advanceCursor(cur *Cursor, page int, win *ao3url.Window, l parse.Listing, detail Detail, log *slog.Logger) {
+	cur.BlockedParser = 0
 	maxPages := ao3url.Pages(c.options.MaxResults)
-	p := res.listing.Pagination
+	pg := l.Pagination
 	switch {
-	case win != nil && page == 1 && res.listing.Total > c.options.MaxResults && cur.SpanDays > 1:
+	case win != nil && page == 1 && l.Total > c.options.MaxResults && cur.SpanDays > 1:
 		// Window still too big: halve it and redo page 1 (blurbs already stored are kept).
 		cur.SpanDays /= 2
 		to, _ := time.Parse("2006-01-02", cur.WindowTo)
 		cur.WindowFrom = day(to.AddDate(0, 0, -cur.SpanDays+1))
 		cur.NextPage = 1
 		detail["shrink_span_days"] = cur.SpanDays
-	case p.Current < p.Last && page < maxPages:
+	case pg.Current < pg.Last && page < maxPages:
 		cur.NextPage = page + 1
 	case win != nil:
 		// Window done: move to the previous window.
@@ -270,28 +342,16 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 		} else {
 			// Grow back toward the configured span after shrinking.
 			if cur.SpanDays < c.options.WindowDays {
-				cur.SpanDays *= 2
-				if cur.SpanDays > c.options.WindowDays {
-					cur.SpanDays = c.options.WindowDays
-				}
+				cur.SpanDays = min(cur.SpanDays*2, c.options.WindowDays)
 			}
 			cur.WindowTo, cur.WindowFrom = day(to), day(to.AddDate(0, 0, -cur.SpanDays+1))
 			cur.NextPage = 1
 		}
 	default:
-		if p.Current < p.Last {
+		if pg.Current < pg.Last {
 			detail["truncated_at_max_results"] = true
 			log.Warn("backfill reached AO3 result window; remaining works only via windows", "page", page)
 		}
 		cur.NextPage = 0
 	}
-	if page == 1 && win == nil && res.listing.Total >= 0 {
-		r.TotalWorks = res.listing.Total
-	}
-	r.BackfillCursor = cur.JSON()
-	if err := c.store.UpdateSourceProgress(ctx, r); err != nil {
-		return nil, err
-	}
-	detail["next_page"] = cur.NextPage
-	return detail, nil
 }

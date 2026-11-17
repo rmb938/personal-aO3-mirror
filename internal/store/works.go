@@ -43,14 +43,14 @@ type workState struct {
 //
 // origin FromBlurb updates listing-visible metadata and stats, but never chapters, notes, the
 // published date or fetch bookkeeping. FromPage updates everything and marks the work fetched.
-func (s *Store) UpsertWork(ctx context.Context, w model.Work, origin model.Origin, parserVersion int) (UpsertResult, error) {
+func (s *Tx) UpsertWork(ctx context.Context, w model.Work, origin model.Origin, parserVersion int) (UpsertResult, error) {
 	return s.upsert(ctx, w, origin, parserVersion, upsertOpt{})
 }
 
 // ReparseWork re-applies a work parsed from a stored raw page (fetched at pageAt). It never
 // changes availability status or fetch times. Listing-visible metadata (title, tags, stats...)
 // is only rewritten if no newer listing blurb has been seen since the page was fetched.
-func (s *Store) ReparseWork(ctx context.Context, w model.Work, pageAt time.Time, parserVersion int) error {
+func (s *Tx) ReparseWork(ctx context.Context, w model.Work, pageAt time.Time, parserVersion int) error {
 	_, err := s.upsert(ctx, w, model.FromPage, parserVersion, upsertOpt{reparse: true, pageAt: pageAt.Unix()})
 	return err
 }
@@ -60,22 +60,18 @@ type upsertOpt struct {
 	pageAt  int64
 }
 
-func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, parserVersion int, opt upsertOpt) (UpsertResult, error) {
+func (s *Tx) upsert(ctx context.Context, w model.Work, origin model.Origin, parserVersion int, opt upsertOpt) (UpsertResult, error) {
 	if w.ID <= 0 {
 		return UpsertResult{}, errors.New("store: work id required")
 	}
 	start := time.Now()
 	defer s.timed("upsert_work", start, "work_id", w.ID, "origin", int(origin))
 	now := s.unix()
-	tx, err := s.meta.BeginTx(ctx, nil)
-	if err != nil {
-		return UpsertResult{}, err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	tx := s.meta
 
 	var st workState
 	var res UpsertResult
-	err = tx.QueryRowContext(ctx, `SELECT revised_at, chapters_posted, words, status, last_fetched,
+	err := tx.QueryRowContext(ctx, `SELECT revised_at, chapters_posted, words, status, last_fetched,
 		fetched_revised, fetched_chapters, fetched_words, last_listed FROM works WHERE id = ?`, w.ID).
 		Scan(&st.revised, &st.chapters, &st.words, &st.status, &st.lastFetched,
 			&st.fetchedRevised, &st.fetchedChapters, &st.fetchedWords, &st.lastListed)
@@ -210,9 +206,6 @@ func (s *Store) upsert(ctx context.Context, w model.Work, origin model.Origin, p
 		}
 		res.MetaChanged = diffMeta(before, after)
 	}
-	if err := tx.Commit(); err != nil {
-		return res, err
-	}
 	s.log.Debug("work upserted", "work_id", w.ID, "origin", originName(origin), "reparse", opt.reparse,
 		"listing_meta_updated", listingMeta, "new", res.New,
 		"changed", res.Changed, "needs_fetch", res.NeedsFetch, "revived", res.Revived,
@@ -227,7 +220,7 @@ func originName(o model.Origin) string {
 	return "blurb"
 }
 
-func replaceChapters(ctx context.Context, tx *sql.Tx, workID int64, chs []model.Chapter) error {
+func replaceChapters(ctx context.Context, tx querier, workID int64, chs []model.Chapter) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chapters WHERE work_id = ?`, workID); err != nil {
 		return err
 	}
@@ -240,7 +233,7 @@ func replaceChapters(ctx context.Context, tx *sql.Tx, workID int64, chs []model.
 	return nil
 }
 
-func (s *Store) replaceCreators(ctx context.Context, tx *sql.Tx, workID int64, cs []model.Creator) error {
+func (s *Tx) replaceCreators(ctx context.Context, tx querier, workID int64, cs []model.Creator) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM work_creators WHERE work_id = ?`, workID); err != nil {
 		return err
 	}
@@ -257,7 +250,7 @@ func (s *Store) replaceCreators(ctx context.Context, tx *sql.Tx, workID int64, c
 	return nil
 }
 
-func creatorID(ctx context.Context, tx *sql.Tx, c model.Creator) (int64, error) {
+func creatorID(ctx context.Context, tx querier, c model.Creator) (int64, error) {
 	pseud := c.Pseud
 	if pseud == "" {
 		pseud = c.User
@@ -270,7 +263,7 @@ func creatorID(ctx context.Context, tx *sql.Tx, c model.Creator) (int64, error) 
 }
 
 // TagID returns the local id for name, creating it. A known type replaces "Unknown".
-func (s *Store) tagID(ctx context.Context, tx *sql.Tx, t model.Tag) (int64, error) {
+func (s *Tx) tagID(ctx context.Context, tx querier, t model.Tag) (int64, error) {
 	typ := t.Type
 	if typ == "" {
 		typ = model.TagUnknown
@@ -282,7 +275,7 @@ func (s *Store) tagID(ctx context.Context, tx *sql.Tx, t model.Tag) (int64, erro
 	return id, err
 }
 
-func (s *Store) replaceTags(ctx context.Context, tx *sql.Tx, workID int64, tags []model.Tag) error {
+func (s *Tx) replaceTags(ctx context.Context, tx querier, workID int64, tags []model.Tag) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM work_tags WHERE work_id = ?`, workID); err != nil {
 		return err
 	}
@@ -302,7 +295,7 @@ func (s *Store) replaceTags(ctx context.Context, tx *sql.Tx, workID int64, tags 
 	return nil
 }
 
-func (s *Store) replaceSeries(ctx context.Context, tx *sql.Tx, workID int64, parts []model.SeriesPart) error {
+func (s *Tx) replaceSeries(ctx context.Context, tx querier, workID int64, parts []model.SeriesPart) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM series_works WHERE work_id = ?`, workID); err != nil {
 		return err
 	}
@@ -323,7 +316,7 @@ func (s *Store) replaceSeries(ctx context.Context, tx *sql.Tx, workID int64, par
 	return nil
 }
 
-func replaceCollections(ctx context.Context, tx *sql.Tx, workID int64, cs []model.Collection) error {
+func replaceCollections(ctx context.Context, tx querier, workID int64, cs []model.Collection) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM work_collections WHERE work_id = ?`, workID); err != nil {
 		return err
 	}
@@ -351,7 +344,7 @@ func plainText(h string) string {
 	return strings.Join(strings.Fields(html.UnescapeString(tagRe.ReplaceAllString(h, " "))), " ")
 }
 
-func updateFTS(ctx context.Context, tx *sql.Tx, w model.Work) error {
+func updateFTS(ctx context.Context, tx querier, w model.Work) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM works_fts WHERE rowid = ?`, w.ID); err != nil {
 		return err
 	}
@@ -369,12 +362,12 @@ func updateFTS(ctx context.Context, tx *sql.Tx, w model.Work) error {
 }
 
 // SearchWorkIDs runs an FTS5 MATCH query and returns work ids by rank.
-func (s *Store) SearchWorkIDs(ctx context.Context, match string, limit int) ([]int64, error) {
+func (s *ReadTx) SearchWorkIDs(ctx context.Context, match string, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.meta, `SELECT rowid FROM works_fts WHERE works_fts MATCH ? ORDER BY rank LIMIT ?`, match, limit)
 }
 
 // SetWorkStatus records a verification result (deleted/hidden/restricted/...). Content is kept.
-func (s *Store) SetWorkStatus(ctx context.Context, workID int64, status model.WorkStatus) error {
+func (s *Tx) SetWorkStatus(ctx context.Context, workID int64, status model.WorkStatus) error {
 	now := s.unix()
 	res, err := s.meta.ExecContext(ctx, `UPDATE works SET
 		status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,
@@ -392,7 +385,7 @@ func (s *Store) SetWorkStatus(ctx context.Context, workID int64, status model.Wo
 }
 
 // WorkStatus returns a work's status and whether it exists.
-func (s *Store) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus, bool, error) {
+func (s *ReadTx) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus, bool, error) {
 	var st model.WorkStatus
 	err := s.meta.QueryRowContext(ctx, `SELECT status FROM works WHERE id = ?`, workID).Scan(&st)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -406,7 +399,7 @@ var ErrNoWork = errors.New("store: no such work")
 
 // Work returns a work's own metadata and stats (the works row). Related rows (creators, tags,
 // series, collections, chapters) are not loaded. The result holds fanwork content: never log it.
-func (s *Store) Work(ctx context.Context, id int64) (model.Work, error) {
+func (s *ReadTx) Work(ctx context.Context, id int64) (model.Work, error) {
 	w := model.Work{ID: id}
 	var complete, restricted, anonymous int
 	err := s.meta.QueryRowContext(ctx, `SELECT title, summary_html, notes_html, endnotes_html, language, words,
@@ -451,7 +444,7 @@ type WorkDiag struct {
 }
 
 // WorkDiag returns the content-free diagnostic view of a work, or ErrNoWork.
-func (s *Store) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
+func (s *ReadTx) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
 	var d WorkDiag
 	var restricted, anonymous int
 	var firstSeen, lastListed, lastFetched, lastChecked int64
@@ -485,14 +478,14 @@ func (s *Store) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
 }
 
 // WorkExists reports whether a work row exists.
-func (s *Store) WorkExists(ctx context.Context, id int64) (bool, error) {
+func (s *ReadTx) WorkExists(ctx context.Context, id int64) (bool, error) {
 	var n int
 	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM works WHERE id = ?`, id).Scan(&n)
 	return n > 0, err
 }
 
 // WorkParserVersion returns the parser version a work was last parsed with (0 if unknown).
-func (s *Store) WorkParserVersion(ctx context.Context, workID int64) (int, error) {
+func (s *ReadTx) WorkParserVersion(ctx context.Context, workID int64) (int, error) {
 	var v int
 	err := s.meta.QueryRowContext(ctx, `SELECT parser_version FROM works WHERE id = ?`, workID).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -505,7 +498,7 @@ func (s *Store) WorkParserVersion(ctx context.Context, workID int64) (int, error
 // is marked fetched (so listings stop asking for it until it changes on AO3) with
 // parser_version 0 (so `reparse` retries it from the stored raw page after a parser fix).
 // Existing content and metadata are kept.
-func (s *Store) MarkWorkParseFailed(ctx context.Context, workID int64) error {
+func (s *Tx) MarkWorkParseFailed(ctx context.Context, workID int64) error {
 	now := s.unix()
 	if _, err := s.meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
 		ON CONFLICT (id) DO NOTHING`, workID, now, now); err != nil {

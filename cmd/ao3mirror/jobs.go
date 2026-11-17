@@ -8,11 +8,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // runJobs lists jobs. Content-free: targets are numeric work/tag/series ids or page numbers.
-func runJobs(ctx context.Context, st *store.Store, args []string, out, errOut io.Writer) int {
+func runJobs(ctx context.Context, ctl *controllers.Controllers, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("jobs", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	state := fs.String("state", "", "queued|running|done|failed|cancelled (default: all)")
@@ -33,7 +34,7 @@ func runJobs(ctx context.Context, st *store.Store, args []string, out, errOut io
 	if *state == store.JobQueued {
 		order = store.JobsOldest
 	}
-	js, err := st.FindJobs(ctx, store.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})
+	js, err := ctl.FindJobs(ctx, store.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})
 	if err != nil {
 		fmt.Fprintf(errOut, "jobs: %v\n", err)
 		return 1

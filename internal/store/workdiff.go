@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,7 +31,7 @@ type metaSnapshot struct {
 	sets   map[string]map[string]bool
 }
 
-func snapshotMeta(ctx context.Context, tx *sql.Tx, workID int64) (metaSnapshot, error) {
+func snapshotMeta(ctx context.Context, tx querier, workID int64) (metaSnapshot, error) {
 	snap := metaSnapshot{fields: make([]string, len(metaFields)), sets: map[string]map[string]bool{}}
 	cols := make([]string, len(metaFields))
 	for i, f := range metaFields {
@@ -56,7 +55,7 @@ func snapshotMeta(ctx context.Context, tx *sql.Tx, workID int64) (metaSnapshot, 
 	return snap, nil
 }
 
-func queryKeys(ctx context.Context, tx *sql.Tx, q string, workID int64) (keys map[string]bool, err error) {
+func queryKeys(ctx context.Context, tx querier, q string, workID int64) (keys map[string]bool, err error) {
 	rows, err := tx.QueryContext(ctx, q, workID)
 	if err != nil {
 		return nil, err

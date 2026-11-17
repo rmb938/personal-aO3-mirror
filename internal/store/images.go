@@ -26,15 +26,11 @@ type ImageRow struct {
 }
 
 // QueueImages records the images a work embeds and queues new ones for download.
-func (s *Store) QueueImages(ctx context.Context, workID int64, urls []string) (int, error) {
+func (s *Tx) QueueImages(ctx context.Context, workID int64, urls []string) (int, error) {
 	if len(urls) == 0 {
 		return 0, nil
 	}
-	tx, err := s.meta.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	tx := s.meta
 	now := s.unix()
 	added := 0
 	for _, raw := range urls {
@@ -55,11 +51,11 @@ func (s *Store) QueueImages(ctx context.Context, workID int64, urls []string) (i
 			return added, err
 		}
 	}
-	return added, tx.Commit()
+	return added, nil
 }
 
 // NextImages returns due queued images, oldest first.
-func (s *Store) NextImages(ctx context.Context, now time.Time, limit int) ([]ImageRow, error) {
+func (s *ReadTx) NextImages(ctx context.Context, now time.Time, limit int) ([]ImageRow, error) {
 	rows, err := s.meta.QueryContext(ctx, `SELECT id, url, host, attempts FROM images
 		WHERE status = 'queued' AND not_before <= ? ORDER BY not_before, id LIMIT ?`, now.Unix(), limit)
 	if err != nil {
@@ -80,7 +76,7 @@ func (s *Store) NextImages(ctx context.Context, now time.Time, limit int) ([]Ima
 // NextImageDueForTestOnly returns when the earliest queued image becomes due (zero if none
 // queued). Only the imagefetch tests use it, to advance their fake clock; production code must
 // not call it (the image worker paces itself from NextImages).
-func (s *Store) NextImageDueForTestOnly(ctx context.Context) (time.Time, error) {
+func (s *ReadTx) NextImageDueForTestOnly(ctx context.Context) (time.Time, error) {
 	var nb int64
 	err := s.meta.QueryRowContext(ctx, `SELECT COALESCE(MIN(not_before), -1) FROM images WHERE status = 'queued'`).Scan(&nb)
 	if err != nil || nb < 0 {
@@ -89,28 +85,28 @@ func (s *Store) NextImageDueForTestOnly(ctx context.Context) (time.Time, error) 
 	return time.Unix(nb, 0), nil
 }
 
-func (s *Store) ImageDone(ctx context.Context, id int64, sha, contentType string, bytes int) error {
+func (s *Tx) ImageDone(ctx context.Context, id int64, sha, contentType string, bytes int) error {
 	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = 'ok', sha256 = ?, content_type = ?, bytes = ?, fetched_at = ?,
 		last_error = '', attempts = attempts + 1 WHERE id = ?`, sha, contentType, bytes, s.unix(), id)
 	return err
 }
 
 // ImageRetry re-queues after notBefore; after maxAttempts the image is marked failed.
-func (s *Store) ImageRetry(ctx context.Context, id int64, notBefore time.Time, lastError string, maxAttempts int) error {
+func (s *Tx) ImageRetry(ctx context.Context, id int64, notBefore time.Time, lastError string, maxAttempts int) error {
 	_, err := s.meta.ExecContext(ctx, `UPDATE images SET attempts = attempts + 1, last_error = ?, not_before = ?,
 		status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'queued' END WHERE id = ?`, lastError, notBefore.Unix(), maxAttempts, id)
 	return err
 }
 
 // ImageFinal marks an image permanently failed/skipped/too_large/disallowed.
-func (s *Store) ImageFinal(ctx context.Context, id int64, status, lastError string) error {
+func (s *Tx) ImageFinal(ctx context.Context, id int64, status, lastError string) error {
 	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = ?, last_error = ?, attempts = attempts + 1, fetched_at = ?
 		WHERE id = ?`, status, lastError, s.unix(), id)
 	return err
 }
 
 // ImageCounts groups images by status.
-func (s *Store) ImageCounts(ctx context.Context) (map[string]int, int64, error) {
+func (s *ReadTx) ImageCounts(ctx context.Context) (map[string]int, int64, error) {
 	out := map[string]int{}
 	if err := countGroups(ctx, s.meta, `SELECT status, COUNT(*) FROM images GROUP BY status`, out); err != nil {
 		return nil, 0, err

@@ -19,7 +19,7 @@ type TagRef struct {
 // TagInfoProgress counts tags that qualify for tag info (given types, used by a mirrored work):
 // total, how many have ever been fetched, and how many are due (never fetched or older than
 // `before`). Same selection as TagsNeedingInfo.
-func (s *Store) TagInfoProgress(ctx context.Context, types []string, before time.Time) (total, fetched, due int, err error) {
+func (s *ReadTx) TagInfoProgress(ctx context.Context, types []string, before time.Time) (total, fetched, due int, err error) {
 	if len(types) == 0 {
 		return 0, 0, 0, nil
 	}
@@ -36,7 +36,7 @@ func (s *Store) TagInfoProgress(ctx context.Context, types []string, before time
 // TagsNeedingInfo returns tags of the given types never fetched or fetched before `before`,
 // most-used first. Only tags used by at least one mirrored work qualify: synonyms and meta tags
 // learned from tag pages get a type too, and fetching each of those would multiply requests.
-func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time.Time, limit int) ([]TagRef, error) {
+func (s *ReadTx) TagsNeedingInfo(ctx context.Context, types []string, before time.Time, limit int) ([]TagRef, error) {
 	if len(types) == 0 {
 		return nil, nil
 	}
@@ -45,7 +45,7 @@ func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time
 		args = append(args, t)
 	}
 	args = append(args, before.Unix(), limit)
-	//nolint:gosec // G202: only placeholders(n) ("?,?,...") is concatenated; values are bound args
+	// Only placeholders(n) ("?,?,...") is concatenated; values are bound args.
 	rows, err := s.meta.QueryContext(ctx, `SELECT t.id, t.name, t.type FROM tags t
 		WHERE t.type IN (`+placeholders(len(types))+`) AND t.info_fetched_at < ?
 		  AND EXISTS (SELECT 1 FROM work_tags wt WHERE wt.tag_id = t.id)
@@ -69,7 +69,7 @@ func (s *Store) TagsNeedingInfo(ctx context.Context, types []string, before time
 // ErrNoTag means no tag row matches.
 var ErrNoTag = errors.New("store: no such tag")
 
-func (s *Store) TagByID(ctx context.Context, id int64) (TagRef, error) {
+func (s *ReadTx) TagByID(ctx context.Context, id int64) (TagRef, error) {
 	var r TagRef
 	err := s.meta.QueryRowContext(ctx, `SELECT id, name, type FROM tags WHERE id = ?`, id).Scan(&r.ID, &r.Name, &r.Type)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -87,7 +87,7 @@ type TagInfo struct {
 }
 
 // TagByName returns a tag and its wrangling state by name (case-insensitive), or ErrNoTag.
-func (s *Store) TagByName(ctx context.Context, name string) (TagInfo, error) {
+func (s *ReadTx) TagByName(ctx context.Context, name string) (TagInfo, error) {
 	var t TagInfo
 	var canonical, merger sql.NullInt64
 	var fetched int64
@@ -117,18 +117,12 @@ type TagInfoUpdate struct {
 // get this tag's type (an already-known type is never overwritten). Parent tags can be of other
 // types (a relationship's parents mix fandoms and characters), so they are created as Unknown
 // and get a type when they appear on a work.
-func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) error {
-	tx, err := s.meta.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) error {
+	tx := s.meta
 	now := s.unix()
 	if u.Missing {
-		if _, err := tx.ExecContext(ctx, `UPDATE tags SET info_fetched_at = ? WHERE id = ?`, now, tagID); err != nil {
-			return err
-		}
-		return tx.Commit()
+		_, err := tx.ExecContext(ctx, `UPDATE tags SET info_fetched_at = ? WHERE id = ?`, now, tagID)
+		return err
 	}
 	sameType := u.Type
 	if sameType == model.TagUnknown || sameType == "" {
@@ -188,9 +182,6 @@ func (s *Store) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate)
 			tagID, id, tagID); err != nil {
 			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 	s.log.Debug("tag info stored", "tag_id", tagID, "type", string(u.Type), "canonical", u.Canonical,
 		"has_merger", u.MergerOf != "", "parents", len(u.Parents), "meta", len(u.MetaTags), "synonyms", len(u.Synonyms))

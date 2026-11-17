@@ -10,19 +10,18 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // runStatus prints a content-free overview: daemon, pacer, works, queue, requests, sources,
 // recent errors. Safe for Claude to read (see CLAUDE.md).
 func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
-	c, err := a.store.Counts(ctx)
+	rep, err := a.ctl.Status(ctx)
 	if err != nil {
 		fmt.Fprintf(errOut, "status: %v\n", err)
 		return 1
 	}
-	ds, at, _ := a.store.DaemonState(ctx)
+	c, ds, at := rep.Counts, rep.Daemon, rep.DaemonAt
 	fmt.Fprintln(out, "== daemon")
 	switch {
 	case at.IsZero():
@@ -52,16 +51,16 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "parse failures: %s (raw pages kept and debug skeletons saved; run reparse after a parser fix)\n", comma(c.ParseFailures))
 	}
 	fmt.Fprintf(out, "raw pages: %s (%s raw, %s stored)\n", comma(c.RawPages), mb(c.RawBytes), mb(c.RawZstdBytes))
-	if ic, ib, err := a.store.ImageCounts(ctx); err == nil && len(ic) > 0 {
-		fmt.Fprintf(out, "images: %s (%s stored)\n", kv(ic), mb(ib))
+	if len(rep.Images) > 0 {
+		fmt.Fprintf(out, "images: %s (%s stored)\n", kv(rep.Images), mb(rep.ImageBytes))
 	}
-	if total, fetched, due, err := a.store.TagInfoProgress(ctx, a.cfg.Tags.InfoTypes, time.Now().Add(-a.cfg.Tags.InfoTTL)); err == nil && total > 0 {
+	if ti := rep.TagInfo; ti.Total > 0 {
 		fmt.Fprintf(out, "tag info: %s/%s fetched, %s due (%s used by mirrored works)\n",
-			comma(fetched), comma(total), comma(due), strings.Join(a.cfg.Tags.InfoTypes, "/"))
+			comma(ti.Fetched), comma(ti.Total), comma(ti.Due), strings.Join(ti.Types, "/"))
 	}
 
 	fmt.Fprintln(out, "\n== queue")
-	jc, _ := a.store.JobCounts(ctx)
+	jc := rep.Jobs
 	kinds := make([]string, 0, len(jc))
 	for k := range jc {
 		kinds = append(kinds, k)
@@ -78,16 +77,15 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	fmt.Fprintf(out, "last 1h: %d, last 24h: %d, 24h by class: %s\n", c.Requests1h, c.Requests24h, kv(c.RequestsByClass))
 
 	fmt.Fprintln(out, "\n== sources")
-	rows, _ := a.store.ListSources(ctx)
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tKIND\tTARGET\tSTATE\tseen/fetched/total\tNEXT POLL\tERROR")
-	for _, r := range rows {
+	for _, r := range rep.Sources {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\n", r.ID, r.Kind, target(r, false), r.State,
 			r.MemberWorks, r.FetchedWorks, total(r.TotalWorks), when(r.NextPollAt), dash(r.LastError))
 	}
 	tw.Flush()
 
-	if ps, err := a.store.PartialSeriesList(ctx, 20); err == nil && len(ps) > 0 {
+	if ps := rep.PartialSeries; len(ps) > 0 {
 		fmt.Fprintln(out, "\n== partial series (not a source; add one to mirror all of it)")
 		tw = tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(tw, "SERIES\tHAVE\tMISSING PARTS\tMISSING WORK IDS")
@@ -98,7 +96,7 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	}
 
 	fmt.Fprintln(out, "\n== recent request errors")
-	reqs, _ := a.store.RecentRequests(ctx, true, 0, "", 10)
+	reqs := rep.RequestErrors
 	if len(reqs) == 0 {
 		fmt.Fprintln(out, "none")
 	}
@@ -109,7 +107,7 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	tw.Flush()
 
 	fmt.Fprintln(out, "\n== recent failed jobs")
-	failed, _ := a.store.ListJobs(ctx, store.JobFailed, 0, "", 10)
+	failed := rep.FailedJobs
 	if len(failed) == 0 {
 		fmt.Fprintln(out, "none")
 	}
@@ -134,30 +132,33 @@ func runDebug(ctx context.Context, a *app, args []string, out, errOut io.Writer)
 	}
 	switch args[0] {
 	case "job":
-		j, err := a.store.GetJob(ctx, id)
+		d, err := a.ctl.DebugJob(ctx, id)
 		if err != nil {
 			fmt.Fprintf(errOut, "debug job: %v\n", err)
 			return 1
 		}
-		printJob(out, j)
-		evs, _ := a.store.JobEvents(ctx, id)
+		printJob(out, d.Job)
 		fmt.Fprintln(out, "\nevents:")
-		for _, e := range evs {
+		for _, e := range d.Events {
 			fmt.Fprintf(out, "  %s  %-7s %s\n", e.Time.Local().Format("01-02 15:04:05"), e.Event, e.Detail)
 		}
-		printRequests(ctx, a, out, id, "")
+		printRequests(out, d.Requests)
 	case "work":
-		if err := printWork(ctx, a, out, id); err != nil {
+		d, err := a.ctl.DebugWork(ctx, id)
+		if err != nil {
 			fmt.Fprintf(errOut, "debug work: %v\n", err)
 			return 1
 		}
-		js, _ := a.store.ListJobs(ctx, "", 0, jobs.WorkKey(id), 20)
+		if err := printWork(out, id, d.Diag); err != nil {
+			fmt.Fprintf(errOut, "debug work: %v\n", err)
+			return 1
+		}
 		fmt.Fprintln(out, "\njobs:")
-		for _, j := range js {
+		for _, j := range d.Jobs {
 			fmt.Fprintf(out, "  job %d %s class %d attempts %d/%d %s %s\n", j.ID, j.State, j.Priority, j.Attempts, j.MaxAttempts,
 				when(j.FinishedAt), dash(j.LastError))
 		}
-		printRequests(ctx, a, out, 0, "/works/"+strconv.FormatInt(id, 10))
+		printRequests(out, d.Requests)
 	}
 	return 0
 }
@@ -175,8 +176,7 @@ func printJob(out io.Writer, j store.Job) {
 	tw.Flush()
 }
 
-func printRequests(ctx context.Context, a *app, out io.Writer, jobID int64, prefix string) {
-	reqs, _ := a.store.RecentRequests(ctx, false, jobID, prefix, 20)
+func printRequests(out io.Writer, reqs []store.RequestRow) {
 	fmt.Fprintln(out, "\nrequests:")
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	for _, r := range reqs {
@@ -187,11 +187,7 @@ func printRequests(ctx context.Context, a *app, out io.Writer, jobID int64, pref
 }
 
 // printWork shows numeric/status fields only: no title, summary, names or tags.
-func printWork(ctx context.Context, a *app, out io.Writer, id int64) error {
-	d, err := a.store.WorkDiag(ctx, id)
-	if err != nil {
-		return err
-	}
+func printWork(out io.Writer, id int64, d store.WorkDiag) error {
 	exp := "?"
 	if d.ChaptersExpected > 0 {
 		exp = strconv.Itoa(d.ChaptersExpected)

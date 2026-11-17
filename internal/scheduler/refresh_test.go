@@ -34,7 +34,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 		e.clk.Advance(3 * time.Hour)
 	}
 	// Polls every 6h also re-queue it (still unfetched), so there may be several failed jobs.
-	failed, err := e.st.ListJobs(ctx, store.JobFailed, 0, "work:5002", 5)
+	failed, err := e.db.ListJobs(ctx, store.JobFailed, 0, "work:5002", 5)
 	require.NoError(t, err)
 	require.NotEmpty(t, failed, "expected failed jobs for 5002")
 	e.srv.Handle("/works/5002") // AO3 recovered: the synthetic site serves it again
@@ -46,7 +46,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 	require.True(t, res.PollNow)
 	e.drain(50)
 	require.NotEqual(t, before, listingRequests(e), "refresh should poll right away")
-	st, _, err := e.st.WorkStatus(ctx, 5002)
+	st, _, err := e.db.WorkStatus(ctx, 5002)
 	require.NoError(t, err)
 	require.Equal(t, "ok", string(st))
 	require.False(t, e.diag(5002).LastFetched.IsZero(), "re-queued work was not fetched")

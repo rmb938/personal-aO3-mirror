@@ -17,19 +17,15 @@ var ErrNoRawPage = errors.New("store: no raw page")
 // PutRawPage stores a fetched work page (zstd) unless an identical copy exists, then prunes
 // older versions beyond keep. The newest copy is never pruned.
 // It returns whether the page was new (not a duplicate of a stored version).
-func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page []byte, keep int) (bool, error) {
+func (s *Tx) PutRawPage(ctx context.Context, workID int64, path string, page []byte, keep int) (bool, error) {
 	start := time.Now()
 	sum := sha256.Sum256(page)
 	hash := hex.EncodeToString(sum[:])
 	z := s.compress(page)
 	defer s.timed("put_raw_page", start, "work_id", workID, "bytes", len(page))
-	tx, err := s.content.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	tx := s.content
 	var existing int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM raw_pages WHERE work_id = ? AND sha256 = ?`, workID, hash).Scan(&existing)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM raw_pages WHERE work_id = ? AND sha256 = ?`, workID, hash).Scan(&existing)
 	isNew := errors.Is(err, sql.ErrNoRows)
 	switch {
 	case isNew:
@@ -53,9 +49,6 @@ func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page 
 	if err != nil {
 		return false, err
 	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
 	n, _ := pruned.RowsAffected()
 	s.log.Debug("raw page stored", "work_id", workID, "bytes", len(page), "zstd_bytes", len(z),
 		"duplicate", !isNew, "versions_before_prune", versions, "pruned", n)
@@ -63,7 +56,7 @@ func (s *Store) PutRawPage(ctx context.Context, workID int64, path string, page 
 }
 
 // LatestRawPage returns the newest stored page for a work.
-func (s *Store) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.Time, error) {
+func (s *ReadTx) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.Time, error) {
 	var z []byte
 	var at int64
 	err := s.content.QueryRowContext(ctx, `SELECT html_zstd, fetched_at FROM raw_pages WHERE work_id = ?
@@ -79,24 +72,20 @@ func (s *Store) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.T
 }
 
 // RawPageWorkIDs pages through work ids that have raw pages (for reparse), ascending after afterID.
-func (s *Store) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
+func (s *ReadTx) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.content, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
 		ORDER BY work_id LIMIT ?`, afterID, limit)
 }
 
 // PutWorkContent replaces a work's chapter bodies and skin.
-func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {
+func (s *Tx) PutWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {
 	start := time.Now()
 	defer s.timed("put_work_content", start, "work_id", workID, "chapters", len(chs))
 	change, err := s.compareWorkContent(ctx, workID, chs, skinCSS)
 	if err != nil {
 		return "", err
 	}
-	tx, err := s.content.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	tx := s.content
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chapter_bodies WHERE work_id = ?`, workID); err != nil {
 		return "", err
 	}
@@ -122,9 +111,6 @@ func (s *Store) PutWorkContent(ctx context.Context, workID int64, chs []model.Ch
 	if err != nil {
 		return "", err
 	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
 	s.log.Debug("work content stored", "work_id", workID, "chapters", len(chs), "body_bytes", total,
 		"skin_bytes", len(skinCSS), "content", string(change))
 	return change, nil
@@ -144,7 +130,7 @@ const (
 
 // compareWorkContent compares new content with the stored copy. Content is compared, never
 // logged.
-func (s *Store) compareWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {
+func (s *ReadTx) compareWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {
 	old, err := s.ChapterBodies(ctx, workID)
 	if err != nil {
 		return "", err
@@ -171,7 +157,7 @@ func (s *Store) compareWorkContent(ctx context.Context, workID int64, chs []mode
 }
 
 // ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them).
-func (s *Store) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapter, error) {
+func (s *ReadTx) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapter, error) {
 	rows, err := s.content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd
 		FROM chapter_bodies WHERE work_id = ? ORDER BY position`, workID)
 	if err != nil {

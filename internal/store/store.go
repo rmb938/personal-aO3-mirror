@@ -35,13 +35,20 @@ const (
 // SlowQuery is the threshold above which store operations are logged at warn.
 var SlowQuery = 200 * time.Millisecond
 
+// Store holds both databases. It has no query methods: all access goes through InTx / InReadTx
+// (tx.go), so every store call runs inside a transaction.
 type Store struct {
+	*core
 	meta    *sql.DB
 	content *sql.DB
-	log     *slog.Logger
-	now     func() time.Time
-	enc     *zstd.Encoder
-	dec     *zstd.Decoder
+}
+
+// core is what the Store and its transactions share: logging, the clock and the zstd coders.
+type core struct {
+	log *slog.Logger
+	now func() time.Time
+	enc *zstd.Encoder
+	dec *zstd.Decoder
 }
 
 // Options configures Open.
@@ -78,7 +85,7 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("store: zstd decoder: %w", err), enc.Close(), meta.Close(), content.Close())
 	}
-	s := &Store{meta: meta, content: content, log: log, now: o.Now, enc: enc, dec: dec}
+	s := &Store{core: &core{log: log, now: o.Now, enc: enc, dec: dec}, meta: meta, content: content}
 	if err := s.migrate(ctx, meta, "meta"); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
@@ -167,7 +174,7 @@ func (s *Store) Close() error {
 	return errors.Join(errs...)
 }
 
-func (s *Store) unix() int64 { return s.now().Unix() }
+func (c *core) unix() int64 { return c.now().Unix() }
 
 // migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.
 func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
@@ -264,24 +271,24 @@ func (s *Store) schemaVersion(ctx context.Context, name string) (int, error) {
 }
 
 // timed logs operations slower than SlowQuery (content-free attrs only).
-func (s *Store) timed(op string, start time.Time, attrs ...any) {
+func (c *core) timed(op string, start time.Time, attrs ...any) {
 	if d := time.Since(start); d > SlowQuery {
-		s.log.Warn("slow store op", append([]any{"op", op, "ms", d.Milliseconds()}, attrs...)...)
+		c.log.Warn("slow store op", append([]any{"op", op, "ms", d.Milliseconds()}, attrs...)...)
 	}
 }
 
-func (s *Store) compress(b []byte) []byte {
+func (c *core) compress(b []byte) []byte {
 	if len(b) == 0 {
 		return nil
 	}
-	return s.enc.EncodeAll(b, make([]byte, 0, len(b)/4))
+	return c.enc.EncodeAll(b, make([]byte, 0, len(b)/4))
 }
 
-func (s *Store) decompress(b []byte) ([]byte, error) {
+func (c *core) decompress(b []byte) ([]byte, error) {
 	if len(b) == 0 {
 		return nil, nil
 	}
-	return s.dec.DecodeAll(b, nil)
+	return c.dec.DecodeAll(b, nil)
 }
 
 // ---- SQL helpers ----
@@ -334,7 +341,7 @@ func likeEscape(s string) string {
 }
 
 // queryInt64s runs a single-integer-column query and returns its values in order.
-func queryInt64s(ctx context.Context, db *sql.DB, q string, args ...any) (out []int64, err error) {
+func queryInt64s(ctx context.Context, db querier, q string, args ...any) (out []int64, err error) {
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

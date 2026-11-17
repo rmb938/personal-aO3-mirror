@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
 	"strings"
 	"testing"
@@ -19,7 +20,16 @@ type tclock struct{ t time.Time }
 
 func (c *tclock) now() time.Time { return c.t }
 
-func openTest(t *testing.T) (*Store, *tclock, *bytes.Buffer) {
+// testStore runs every store method in autocommit mode (each statement its own transaction) and
+// exposes the raw databases as meta/content (shadowing the Tx fields) for direct test queries.
+type testStore struct {
+	*Tx
+	st      *Store
+	meta    *sql.DB
+	content *sql.DB
+}
+
+func openTest(t *testing.T) (*testStore, *tclock, *bytes.Buffer) {
 	t.Helper()
 	clk := &tclock{t: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
 	logs := &bytes.Buffer{}
@@ -29,7 +39,7 @@ func openTest(t *testing.T) (*Store, *tclock, *bytes.Buffer) {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	return s, clk, logs
+	return &testStore{Tx: s.AutoCommitForTestOnly(), st: s, meta: s.meta, content: s.content}, clk, logs
 }
 
 func fixtureWork(id int64) model.Work {
