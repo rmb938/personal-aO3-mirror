@@ -33,7 +33,7 @@ Repo today: only `README.md` and `LICENSE`. Go 1.27 is installed. Greenfield pro
 | Part | Deliverable | Notes |
 |---|---|---|
 | 1 | `ao3mirror run` daemon + source CLI | This plan. Writes `meta.db`, `content.db`, `images/`. |
-| 2 | `ao3mirror serve` JSON API | Go `net/http`. Endpoints mirror AO3: `/works/:id`, `/tags/:name/works` with the same `work_search` filter/sort params, search over FTS5 plus filters, fandom browse by media, creators, series, collections. Also source management: add a URL, see the estimate, confirm, pause, cancel. Calls the same `internal/sources` package as the CLI. |
+| 2 | `ao3mirror serve` JSON API | Go `net/http`. Endpoints mirror AO3: `/works/:id`, `/tags/:name/works` with the same `work_search` filter/sort params, search over FTS5 plus filters, fandom browse by media, creators, series, collections. Also source management: add a URL, see the estimate, confirm, pause, cancel. Calls the same `internal/controllers` package as the CLI. |
 | 3 | AO3-style UI | Server-rendered `html/template`, embedded in the same binary. Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs are rewritten to the local `images/` at render time. "Mirror this URL" box for on-demand scraping. |
 
 ### Requirement (Part 3): serve mirrored images safely
@@ -76,9 +76,11 @@ internal/config/          ao3mirror.yaml (rate, poll intervals, thresholds, data
 internal/httpx/           THE ONLY HTTP entry point: UA transport, limiter, robots, backoff, response classifier, cookie jar
 internal/ao3url/          AO3 URL <-> Source (parse any AO3 URL; build robots-allowed listing URLs)
 internal/parse/           goquery parsers: listing blurbs, pagination/total, work page, tag page, series page, error pages
-internal/store/           meta.db + content.db, embedded SQL migrations, repositories
-internal/sources/         add/estimate/confirm/pause/cancel logic (shared with the future API)
-internal/scheduler/       persistent job queue, workers, fairness, poll timers
+internal/store/           meta.db + content.db, embedded SQL migrations, repositories (the ONLY package with SQL)
+internal/controllers/     business logic over store+fetch+parse: sources (add/estimate/confirm/pause/cancel),
+                          scheduling decisions, poll/backfill pages, work/tag/series fetches, reparse
+                          (shared by the CLI, the scheduler and the future API)
+internal/scheduler/       persistent job queue loop: pick, run via controllers, retry/fail, heartbeat
 internal/images/          image extraction + per-host fetch worker
 internal/fakeao3/         httptest fake AO3 with SYNTHETIC fixtures (tests + `ao3mirror dev fake-server`)
 testdata/fixtures/        hand-written fake pages (fake titles/authors/text)

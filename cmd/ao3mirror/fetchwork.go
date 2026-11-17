@@ -8,9 +8,8 @@ import (
 	"strconv"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
-	"github.com/rmb938/personal-aO3-mirror/internal/reparse"
-	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -33,8 +32,7 @@ func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Wri
 		}
 		id, _ = strconv.ParseInt(src.Target, 10, 64)
 	}
-	jobID, created, err := a.store.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, Target: strconv.FormatInt(id, 10),
-		Priority: jobs.ClassOnDemand, DedupeKey: jobs.WorkKey(id)})
+	jobID, created, err := a.ctl.EnqueueWorkFetch(ctx, id, 0, jobs.ClassOnDemand)
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work: %v\n", err)
 		return 1
@@ -57,8 +55,7 @@ func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Wri
 			fmt.Fprintf(errOut, "fetch-work --now: releasing lock: %v\n", err)
 		}
 	}()
-	s := scheduler.New(a.schedulerOptions())
-	j, err := s.RunJob(ctx, jobID)
+	j, err := a.scheduler().RunJob(ctx, jobID)
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work --now: %v\n", err)
 		return 1
@@ -70,8 +67,9 @@ func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Wri
 	return 0
 }
 
-// runReparse rebuilds parsed data from stored raw pages. It makes no network requests.
-func runReparse(ctx context.Context, st *store.Store, a appCfg, args []string, out, errOut io.Writer) int {
+// runReparse rebuilds parsed data from stored raw pages. It makes no network requests: ctl is
+// built without an AO3 client.
+func runReparse(ctx context.Context, ctl *controllers.Controllers, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("reparse", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	all := fs.Bool("all", false, "reparse every stored work, not only those parsed by an older parser version")
@@ -79,9 +77,9 @@ func runReparse(ctx context.Context, st *store.Store, a appCfg, args []string, o
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	res, err := reparse.Run(ctx, st, reparse.Options{
-		All: *all, WorkID: *work, DataDir: a.dataDir, QueueImages: a.queueImages, Logger: a.log,
-		Progress: func(r reparse.Result) {
+	res, err := ctl.Reparse(ctx, controllers.ReparseOptions{
+		All: *all, WorkID: *work,
+		Progress: func(r controllers.ReparseResult) {
 			fmt.Fprintf(errOut, "... seen %d, reparsed %d, skipped %d, failed %d\n", r.Seen, r.Reparsed, r.Skipped, r.Failed)
 		},
 	})

@@ -16,10 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
-	"github.com/rmb938/personal-aO3-mirror/internal/sources"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -44,12 +44,14 @@ type env struct {
 	clk  *fakeClock
 	st   *store.Store
 	cl   *httpx.Client
-	srcs *sources.Service
+	ctl  *controllers.Controllers
 	sch  *Scheduler
 	logs *bytes.Buffer
 }
 
-func newEnv(t *testing.T, works int, opts func(*Options)) *env {
+// newEnv builds a fake AO3, store, controllers and scheduler. opts tunes the controllers (the
+// business options); the scheduler itself has nothing worth tuning in tests.
+func newEnv(t *testing.T, works int, opts func(*controllers.Options)) *env {
 	t.Helper()
 	e := &env{t: t, srv: fakeao3.New(), clk: &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}, logs: &bytes.Buffer{}}
 	t.Cleanup(e.srv.Close)
@@ -63,13 +65,13 @@ func newEnv(t *testing.T, works int, opts func(*Options)) *env {
 	e.st, err = store.Open(context.Background(), dataDir, store.Options{Now: e.clk.Now, Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, e.st.Close()) })
-	cfg := config.Default().Sources
-	e.srcs = sources.New(sources.Options{Store: e.st, Client: e.cl, Config: cfg, Interval: 10 * time.Second, Now: e.clk.Now, Logger: log})
-	o := Options{Store: e.st, Client: e.cl, Now: e.clk.Now, DataDir: dataDir, Logger: log}
+	o := controllers.Options{Store: e.st, Client: e.cl, Now: e.clk.Now, DataDir: dataDir, Logger: log,
+		Sources: config.Default().Sources, Interval: 10 * time.Second}
 	if opts != nil {
 		opts(&o)
 	}
-	e.sch = New(o)
+	e.ctl = controllers.New(o)
+	e.sch = New(Options{Store: e.st, Controllers: e.ctl, Pacer: e.cl, Now: e.clk.Now, Logger: log})
 	return e
 }
 
@@ -87,9 +89,9 @@ func (e *env) drain(limit int) int {
 	return limit
 }
 
-func (e *env) add(url string, o sources.AddOptions) int64 {
+func (e *env) add(url string, o controllers.AddOptions) int64 {
 	e.t.Helper()
-	res, err := e.srcs.Add(context.Background(), url, o)
+	res, err := e.ctl.Add(context.Background(), url, o)
 	require.NoError(e.t, err)
 	return res.Source.ID
 }
@@ -152,7 +154,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 	// 5000 is the oldest work: page 3 of the newest-first update order. Its fetch keeps failing
 	// until its attempts are exhausted.
 	e.srv.Handle("/works/5000", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
-	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), controllers.AddOptions{})
 	for range 10 {
 		e.drain(200)
 		e.clk.Advance(3 * time.Hour)
@@ -170,7 +172,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 func TestHandlerPanicFailsJob(t *testing.T) {
 	e := newEnv(t, 1, nil)
 	ctx := context.Background()
-	e.sch.handlers[KindWork] = func(context.Context, store.Job, *slog.Logger) (map[string]any, error) {
+	e.sch.handlers[KindWork] = func(context.Context, store.Job) (controllers.Detail, error) {
 		panic("fixture panic value")
 	}
 	e.enqueue(store.Job{Kind: KindWork, Target: "5000", Priority: ClassOnDemand, DedupeKey: "work:5000"})
@@ -185,7 +187,7 @@ func TestHandlerPanicFailsJob(t *testing.T) {
 func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	e := newEnv(t, 1, nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	e.sch.handlers[KindWork] = func(context.Context, store.Job, *slog.Logger) (map[string]any, error) {
+	e.sch.handlers[KindWork] = func(context.Context, store.Job) (controllers.Detail, error) {
 		cancel() // shutdown arrives just as the job succeeds
 		return nil, nil
 	}
@@ -199,8 +201,8 @@ func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 }
 
 func TestPollPageCapWarns(t *testing.T) {
-	e := newEnv(t, 45, func(o *Options) { o.MaxPollPages = 1 })
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	e := newEnv(t, 45, func(o *controllers.Options) { o.MaxPollPages = 1 })
+	id := e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(500)
 	require.NotContains(t, e.logs.String(), "poll page cap reached", "backfill must not trigger the poll cap warning")
 	// Page 1 of the update order changes, and more pages exist: the 1-page cap cuts the poll short.
@@ -216,7 +218,7 @@ func TestPollPageCapWarns(t *testing.T) {
 func TestBackfillThenPoll(t *testing.T) {
 	e := newEnv(t, 45, nil)
 	ctx := context.Background()
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	id := e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(500)
 
 	src := e.source(id)
@@ -277,8 +279,8 @@ func TestFairnessAlternates(t *testing.T) {
 	e := newEnv(t, 60, nil)
 	ctx := context.Background()
 	// Two sources over the same synthetic tag with different filters (distinct sources).
-	a := e.add(e.site.TagPath()+"?work_search%5Blanguage_id%5D=en", sources.AddOptions{})
-	b := e.add(e.site.TagPath()+"?work_search%5Bcomplete%5D=T", sources.AddOptions{})
+	a := e.add(e.site.TagPath()+"?work_search%5Blanguage_id%5D=en", controllers.AddOptions{})
+	b := e.add(e.site.TagPath()+"?work_search%5Bcomplete%5D=T", controllers.AddOptions{})
 	var order []int64
 	for range 12 {
 		e.clk.Advance(time.Second)
@@ -306,14 +308,14 @@ func TestFairnessAlternates(t *testing.T) {
 func TestPauseCancelAndRecover(t *testing.T) {
 	e := newEnv(t, 45, nil)
 	ctx := context.Background()
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	id := e.add(e.site.TagPath(), controllers.AddOptions{})
 	_, err := e.sch.Step(ctx) // backfill page 2 (class 4) or work jobs
 	require.NoError(t, err)
-	require.NoError(t, e.srcs.Pause(ctx, id))
+	require.NoError(t, e.ctl.Pause(ctx, id))
 	before := len(e.srv.Requests())
 	require.Equal(t, 0, e.drain(10), "paused source ran jobs")
 	require.Len(t, e.srv.Requests(), before, "paused source made requests")
-	require.NoError(t, e.srcs.Resume(ctx, id))
+	require.NoError(t, e.ctl.Resume(ctx, id))
 	// Simulate a crash mid-job: claim a job and leave it running.
 	j, err := e.st.PickJob(ctx, []string{KindWork, KindBackfill}, e.clk.Now())
 	require.NoError(t, err)
@@ -323,7 +325,7 @@ func TestPauseCancelAndRecover(t *testing.T) {
 	got, err := e.st.GetJob(ctx, j.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.JobQueued, got.State, "crashed job not recovered")
-	n, err := e.srcs.Cancel(ctx, id)
+	n, err := e.ctl.Cancel(ctx, id)
 	require.NoError(t, err)
 	require.NotZero(t, n, "cancel should drop queued jobs")
 	require.Equal(t, 0, e.drain(10), "cancelled source ran jobs")
@@ -332,7 +334,7 @@ func TestPauseCancelAndRecover(t *testing.T) {
 func TestUnavailableRetriesWithBackoff(t *testing.T) {
 	e := newEnv(t, 5, nil)
 	ctx := context.Background()
-	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.srv.Handle("/works/5000", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
 	e.drain(20)
 	jobs, err := e.st.ListJobs(ctx, "", 0, "work:5000", 5)
@@ -347,7 +349,7 @@ func TestUnavailableRetriesWithBackoff(t *testing.T) {
 func TestDeletedWorkKeepsContent(t *testing.T) {
 	e := newEnv(t, 3, nil)
 	ctx := context.Background()
-	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(50)
 	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Deleted = true })
 	e.enqueue(store.Job{Kind: KindWork, Target: "5001", Priority: ClassOnDemand, DedupeKey: "work:5001"})
@@ -362,7 +364,7 @@ func TestDeletedWorkKeepsContent(t *testing.T) {
 
 func TestWorkSource(t *testing.T) {
 	e := newEnv(t, 3, nil)
-	id := e.add("/works/5002/chapters/1", sources.AddOptions{})
+	id := e.add("/works/5002/chapters/1", controllers.AddOptions{})
 	e.drain(10)
 	require.Equal(t, 1, e.source(id).FetchedWorks)
 	require.Len(t, e.workRequests(), 1)
@@ -376,8 +378,8 @@ func TestWorkSource(t *testing.T) {
 
 func TestWindowedBackfill(t *testing.T) {
 	// 90 works over ~1.7 years, result window 40 => backfill must slice by date windows.
-	e := newEnv(t, 90, func(o *Options) { o.MaxResults = 40; o.WindowDays = 120 })
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	e := newEnv(t, 90, func(o *controllers.Options) { o.MaxResults = 40; o.WindowDays = 120 })
+	id := e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(2000)
 	src := e.source(id)
 	require.Equal(t, 90, src.MemberWorks)
@@ -394,7 +396,7 @@ func TestWindowedBackfill(t *testing.T) {
 
 func TestLogsContentFree(t *testing.T) {
 	e := newEnv(t, 3, nil)
-	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(50)
 	low := strings.ToLower(e.logs.String())
 	for _, word := range []string{"fixture work", "fixture body", "fixture summary", "fixture_author", "fixture tag"} {
@@ -410,9 +412,9 @@ func TestLogsContentFree(t *testing.T) {
 }
 
 func TestTagInfoFetched(t *testing.T) {
-	e := newEnv(t, 3, func(o *Options) { o.TagInfoTypes = []string{"Fandom"} })
+	e := newEnv(t, 3, func(o *controllers.Options) { o.TagInfoTypes = []string{"Fandom"} })
 	e.srv.Handle("/tags/Fixture%20Tag", fakeao3.Reply{Body: fixtureBody(t, "tag_synonym.html")})
-	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(50)
 	e.clk.Advance(2 * time.Minute) // tag scheduling is throttled to once a minute
 	e.drain(50)
@@ -432,9 +434,9 @@ func TestTagInfoFetched(t *testing.T) {
 }
 
 func TestRescanVerifiesMissingWorks(t *testing.T) {
-	e := newEnv(t, 5, func(o *Options) { o.RescanInterval = 24 * time.Hour })
+	e := newEnv(t, 5, func(o *controllers.Options) { o.RescanInterval = 24 * time.Hour })
 	ctx := context.Background()
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	id := e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(50)
 	src := e.source(id)
 	require.Equal(t, store.SourceDoneBackfill, src.State)
@@ -464,7 +466,7 @@ func TestRescanVerifiesMissingWorks(t *testing.T) {
 }
 
 func TestWorkFetchQueuesImages(t *testing.T) {
-	e := newEnv(t, 0, func(o *Options) { o.QueueImages = true })
+	e := newEnv(t, 0, func(o *controllers.Options) { o.QueueImages = true })
 	e.srv.Handle("/works/1001", fakeao3.Reply{Body: fixtureBody(t, "work_chaptered.html")})
 	e.enqueue(store.Job{Kind: KindWork, Target: "1001", Priority: ClassOnDemand, DedupeKey: "work:1001"})
 	e.drain(5)
@@ -476,7 +478,7 @@ func TestWorkFetchQueuesImages(t *testing.T) {
 func TestSeriesSourceStoresMetadata(t *testing.T) {
 	e := newEnv(t, 0, nil)
 	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fixtureBody(t, "series.html")})
-	e.add("/series/3001", sources.AddOptions{})
+	e.add("/series/3001", controllers.AddOptions{})
 	ser := e.series(3001)
 	require.Contains(t, ser.SummaryHTML, "series description", "series metadata from add")
 	require.Equal(t, 2, ser.WorksCount)
@@ -491,7 +493,7 @@ func TestSeriesSourceStoresMetadata(t *testing.T) {
 }
 
 func TestSeriesInfoForNonSourceSeries(t *testing.T) {
-	e := newEnv(t, 0, func(o *Options) { o.SeriesInfo = true })
+	e := newEnv(t, 0, func(o *controllers.Options) { o.SeriesInfo = true })
 	ctx := context.Background()
 	e.srv.Handle("/works/1001", fakeao3.Reply{Body: fixtureBody(t, "work_chaptered.html")}) // part 2 of series 3001
 	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fixtureBody(t, "series.html")})

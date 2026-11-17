@@ -63,6 +63,15 @@ user approval. Keep `data_dir` at the default `./data` so the guard covers it.
 - Logs must NEVER contain fanwork content (see list above). Tag/user/collection names in URL paths
   are replaced by numeric IDs or hashes. A sentinel-string test enforces this.
 
+## Layering
+
+- `internal/store` is the only package with SQL. Nothing else touches `database/sql`.
+- `internal/controllers` holds business logic. New code (CLI commands, scheduler handlers,
+  Part 2 API handlers) calls controllers, not the store.
+- Direct store calls outside controllers are allowed only for a single call with no logic
+  around it (e.g. imagefetch's per-image status update, status/debug reads). Once such code
+  needs a second store call or a decision between calls, move it into a controller.
+
 ## Dev workflow
 
 - Config: `ao3mirror.example.yaml` is committed; copy to `ao3mirror.local.yaml` (gitignored) and

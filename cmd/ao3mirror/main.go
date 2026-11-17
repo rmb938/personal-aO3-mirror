@@ -118,7 +118,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if rest[0] == "jobs" {
 			return runJobs(ctx, st, rest[1:], stdout, stderr)
 		}
-		return runReparse(ctx, st, appCfg{dataDir: cfg.DataDir, queueImages: cfg.Images.Enabled, log: logger}, rest[1:], stdout, stderr)
+		return runReparse(ctx, newControllers(cfg, logger, st, nil), rest[1:], stdout, stderr)
 	case "source", "run", "status", "debug", "fetch-work":
 		a, err := openApp(ctx, cfg, logger)
 		if err != nil {

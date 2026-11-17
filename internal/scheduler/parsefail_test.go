@@ -7,9 +7,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
-	"github.com/rmb938/personal-aO3-mirror/internal/sources"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -29,7 +29,7 @@ func countRequests(e *env, uri string) int {
 func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e := newEnv(t, 3, nil)
 	ctx := context.Background()
-	e.add(e.site.TagPath(), sources.AddOptions{})
+	e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(50)
 
 	// Work 5001 was mirrored fine. Now AO3 serves a page we cannot parse after an update.
@@ -70,7 +70,7 @@ func TestBackfillBlocksOnParseFailure(t *testing.T) {
 	ctx := context.Background()
 	page2 := e.site.TagPath() + "?page=2&work_search%5Bsort_column%5D=kudos_count&work_search%5Bsort_direction%5D=desc"
 	e.srv.Handle(page2, fakeao3.Reply{Body: fakeao3.Page(`<h2 class="heading">x</h2><p>synthetic broken listing</p>`)})
-	id := e.add(e.site.TagPath(), sources.AddOptions{})
+	id := e.add(e.site.TagPath(), controllers.AddOptions{})
 	e.drain(100)
 	e.clk.Advance(time.Minute)
 	e.drain(100)

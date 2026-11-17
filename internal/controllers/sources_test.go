@@ -1,4 +1,4 @@
-package sources
+package controllers
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
 type env struct {
 	srv *fakeao3.Server
 	st  *store.Store
-	svc *Service
+	svc *Controllers
 }
 
 func fixture(t *testing.T, name string) string {
@@ -58,7 +58,7 @@ func newEnv(t *testing.T, autoMax int) *env {
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	cfg := config.Default().Sources
 	cfg.AutoConfirmMax = autoMax
-	return &env{srv: srv, st: st, svc: New(Options{Store: st, Client: c, Config: cfg, Interval: 10 * time.Second, Now: clk.Now})}
+	return &env{srv: srv, st: st, svc: New(Options{Store: st, Client: c, Sources: cfg, Interval: 10 * time.Second, Now: clk.Now})}
 }
 
 const tagURL = "/tags/Fixture%20Fandom/works"

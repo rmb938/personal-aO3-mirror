@@ -11,8 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
-	"github.com/rmb938/personal-aO3-mirror/internal/sources"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -41,7 +41,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 		fmt.Fprint(errOut, sourceUsage)
 		return 2
 	}
-	svc := a.sources()
+	svc := a.ctl
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "add":
@@ -57,8 +57,8 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprint(errOut, sourceUsage)
 			return 2
 		}
-		res, err := svc.Add(ctx, u, sources.AddOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
-		if ex, ok := errors.AsType[sources.ExistsError](err); ok {
+		res, err := svc.Add(ctx, u, controllers.AddOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
+		if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
 			fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", ex.ID, ex.ID)
 			return 1
 		}

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
-	"github.com/rmb938/personal-aO3-mirror/internal/sources"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -22,6 +22,7 @@ type app struct {
 	log    *slog.Logger
 	store  *store.Store
 	client *httpx.Client
+	ctl    *controllers.Controllers
 }
 
 func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, error) {
@@ -56,27 +57,31 @@ func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, er
 		st.Close()
 		return nil, err
 	}
+	a.ctl = newControllers(cfg, log, st, a.client)
 	return a, nil
 }
 
 func (a *app) Close() { a.store.Close() }
 
-func (a *app) schedulerOptions() scheduler.Options {
-	return scheduler.Options{
-		Store: a.store, Client: a.client, Logger: a.log,
-		DataDir: a.cfg.DataDir, KeepVersions: a.cfg.Content.KeepVersions,
-		TagInfoTypes: a.cfg.Tags.InfoTypes, TagInfoTTL: a.cfg.Tags.InfoTTL,
-		RescanInterval: a.cfg.Sources.FullRescanInterval,
-		QueueImages:    a.cfg.Images.Enabled,
-		SeriesInfo:     a.cfg.Series.Info, SeriesInfoTTL: a.cfg.Series.InfoTTL,
+// newControllers builds the business layer. client is nil for offline commands (reparse): no
+// HTTP client is ever built for them, and any AO3 fetch fails with controllers.ErrOffline.
+func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client *httpx.Client) *controllers.Controllers {
+	o := controllers.Options{
+		Store: st, Logger: log, Now: time.Now,
+		DataDir: cfg.DataDir, KeepVersions: cfg.Content.KeepVersions, QueueImages: cfg.Images.Enabled,
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval,
+		TagInfoTypes: cfg.Tags.InfoTypes, TagInfoTTL: cfg.Tags.InfoTTL,
+		RescanInterval: cfg.Sources.FullRescanInterval,
+		SeriesInfo:     cfg.Series.Info, SeriesInfoTTL: cfg.Series.InfoTTL,
 	}
+	if client != nil { // a typed nil would defeat the controllers' offline check
+		o.Client = client
+	}
+	return controllers.New(o)
 }
 
-// appCfg is what offline commands (reparse) need: no HTTP client is ever built for them.
-type appCfg struct {
-	dataDir     string
-	queueImages bool // images.enabled: reparse queues embedded images it finds
-	log         *slog.Logger
+func (a *app) scheduler() *scheduler.Scheduler {
+	return scheduler.New(scheduler.Options{Store: a.store, Controllers: a.ctl, Pacer: a.client, Logger: a.log})
 }
 
 // baseURL returns the AO3 base URL. AO3MIRROR_BASE_URL may point at a local fake AO3
@@ -94,11 +99,4 @@ func baseURL() (string, error) {
 		return "", fmt.Errorf("AO3MIRROR_BASE_URL must be a loopback address (fake AO3 only), got %q", u.Hostname())
 	}
 	return v, nil
-}
-
-func (a *app) sources() *sources.Service {
-	return sources.New(sources.Options{
-		Store: a.store, Client: a.client, Config: a.cfg.Sources,
-		Interval: a.cfg.Rate.Interval, Logger: a.log, Now: time.Now,
-	})
 }

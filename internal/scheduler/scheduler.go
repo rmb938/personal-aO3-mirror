@@ -18,12 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
-	"github.com/rmb938/personal-aO3-mirror/internal/parse"
-	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -43,85 +41,65 @@ const (
 	KindSeries   = jobs.KindSeries
 )
 
-// Fetcher is the subset of httpx.Client the scheduler needs.
-type Fetcher interface {
-	Get(ctx context.Context, kind httpx.Kind, ref string) (*httpx.Response, error)
+// Pacer reports the AO3 client's pacing state (httpx.Client implements it).
+type Pacer interface {
 	PacerState() httpx.PacerState
 }
 
 type Options struct {
-	Store        *store.Store
-	Client       Fetcher
-	Logger       *slog.Logger
-	Now          func() time.Time
-	DataDir      string        // for data/debug skeletons
-	KeepVersions int           // content.keep_versions
-	Idle         time.Duration // sleep when nothing is runnable (default 5s)
-	MaxResults   int           // AO3 search window (default ao3url.MaxResults); tests lower it
-	MaxPollPages int           // cap on pages walked per update poll (default 50)
-	WindowDays   int           // initial date-window span for >MaxResults sources (default 365)
-
-	TagInfoTypes   []string      // tag types to fetch wrangling info for (empty = off)
-	TagInfoTTL     time.Duration // refetch tag info after this long (default 30d)
-	RescanInterval time.Duration // full re-walk of done sources (default 30d)
-	QueueImages    bool          // queue embedded images of fetched works for the image worker
-	SeriesInfo     bool          // fetch pages of series that mirrored works belong to
-	SeriesInfoTTL  time.Duration // refresh those at least this often (default 30d)
+	Store       *store.Store // job queue, heartbeat, pruning
+	Controllers *controllers.Controllers
+	Pacer       Pacer
+	Logger      *slog.Logger
+	Now         func() time.Time
+	Idle        time.Duration // sleep when nothing is runnable (default 5s)
 }
 
+// handler runs one job. Its detail is recorded as the job's event detail (content-free).
+type handler func(ctx context.Context, job store.Job) (controllers.Detail, error)
+
 type Scheduler struct {
-	o         Options
-	st        *store.Store
-	c         Fetcher
-	log       *slog.Logger
-	handlers  map[string]func(context.Context, store.Job, *slog.Logger) (map[string]any, error)
-	kinds     []string
-	lastPrune time.Time
-	lastTags  time.Time
+	options     Options
+	store       *store.Store
+	controllers *controllers.Controllers
+	log         *slog.Logger
+	handlers    map[string]handler
+	kinds       []string
+	lastPrune   time.Time
+	lastInfo    time.Time
 
 	hbMu   sync.Mutex // guards curJob/phase, read by the heartbeat ticker
 	curJob int64
 	phase  string
 }
 
-func New(o Options) *Scheduler {
-	if o.Logger == nil {
-		o.Logger = slog.Default()
+func New(opts Options) *Scheduler {
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
 	}
-	if o.Now == nil {
-		o.Now = time.Now
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
-	if o.Idle == 0 {
-		o.Idle = 5 * time.Second
+	if opts.Idle == 0 {
+		opts.Idle = 5 * time.Second
 	}
-	if o.MaxResults == 0 {
-		o.MaxResults = ao3url.MaxResults
-	}
-	if o.MaxPollPages == 0 {
-		o.MaxPollPages = 50
-	}
-	if o.WindowDays == 0 {
-		o.WindowDays = 365
-	}
-	if o.KeepVersions < 1 {
-		o.KeepVersions = 1
-	}
-	if o.TagInfoTTL == 0 {
-		o.TagInfoTTL = 30 * 24 * time.Hour
-	}
-	if o.SeriesInfoTTL == 0 {
-		o.SeriesInfoTTL = 30 * 24 * time.Hour
-	}
-	if o.RescanInterval == 0 {
-		o.RescanInterval = 30 * 24 * time.Hour
-	}
-	s := &Scheduler{o: o, st: o.Store, c: o.Client, log: o.Logger.With("component", "scheduler")}
-	s.handlers = map[string]func(context.Context, store.Job, *slog.Logger) (map[string]any, error){
-		KindPoll:     s.handlePoll,
-		KindBackfill: s.handleBackfill,
-		KindWork:     s.handleWork,
-		KindTagInfo:  s.handleTagInfo,
-		KindSeries:   s.handleSeriesInfo,
+	s := &Scheduler{options: opts, store: opts.Store, controllers: opts.Controllers, log: opts.Logger.With("component", "scheduler")}
+	s.handlers = map[string]handler{
+		KindPoll: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.PollPage(ctx, j.SourceID, atoi(j.Target))
+		},
+		KindBackfill: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.BackfillPage(ctx, j.SourceID, atoi(j.Target))
+		},
+		KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)
+		},
+		KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target))
+		},
+		KindSeries: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target))
+		},
 	}
 	for k := range s.handlers {
 		s.kinds = append(s.kinds, k)
@@ -129,21 +107,21 @@ func New(o Options) *Scheduler {
 	return s
 }
 
-// ---- outcomes ----
+// atoi and atoi64 parse a job target; a malformed target becomes 0, which the controllers
+// reject as a bad id or a stale page.
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
 
-// retryError asks for the job to be re-queued after the client's backoff.
-type retryError struct{ code string }
-
-func (e retryError) Error() string { return e.code }
-
-// permanentError fails the job without retry.
-type permanentError struct{ code string }
-
-func (e permanentError) Error() string { return e.code }
+func atoi64(s string) int64 {
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
+}
 
 // Run loops until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	n, err := s.st.RecoverRunning(context.WithoutCancel(ctx))
+	n, err := s.store.RecoverRunning(context.WithoutCancel(ctx))
 	if err != nil {
 		return err
 	}
@@ -166,7 +144,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.setPhase(ctx, 0, "idle")
 			select {
 			case <-ctx.Done():
-			case <-time.After(s.o.Idle):
+			case <-time.After(s.options.Idle):
 			}
 		}
 	}
@@ -178,7 +156,7 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("schedule: %w", err)
 	}
 	s.maybePrune(ctx)
-	job, err := s.st.PickJob(ctx, s.kinds, s.o.Now())
+	job, err := s.store.PickJob(ctx, s.kinds, s.options.Now())
 	if errors.Is(err, store.ErrNoJob) {
 		return false, nil
 	}
@@ -200,49 +178,49 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 		}
 	}
 	s.setPhase(ctx, job.ID, "running")
-	note("event_start", s.st.JobEvent(bk, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target}))
-	start := s.o.Now()
+	note("event_start", s.store.JobEvent(bk, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target}))
+	start := s.options.Now()
 	detail, err := s.runHandler(jctx, job, log)
 	if detail == nil {
-		detail = map[string]any{}
+		detail = controllers.Detail{}
 	}
-	detail["ms"] = s.o.Now().Sub(start).Milliseconds()
+	detail["ms"] = s.options.Now().Sub(start).Milliseconds()
 
-	var re retryError
-	var pe permanentError
+	var re controllers.RetryError
+	var pe controllers.PermanentError
 	switch {
 	case err == nil:
 		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
-		note("finish", s.st.FinishJob(bk, job.ID, store.JobDone, ""))
+		note("finish", s.store.FinishJob(bk, job.ID, store.JobDone, ""))
 		log.Info("job done", append([]any{"ms", detail["ms"]}, flatten(detail)...)...)
-		note("event_done", s.st.JobEvent(bk, job.ID, "done", detail))
+		note("event_done", s.store.JobEvent(bk, job.ID, "done", detail))
 	case ctx.Err() != nil:
-		note("requeue", s.st.RequeueJob(bk, job.ID, s.o.Now()))
+		note("requeue", s.store.RequeueJob(bk, job.ID, s.options.Now()))
 		log.Info("job interrupted; requeued")
 		return
 	case errors.As(err, &re):
-		nb := s.o.Now().Add(time.Minute)
-		if st := s.c.PacerState(); st.BackoffTill.After(nb) {
+		nb := s.options.Now().Add(time.Minute)
+		if st := s.options.Pacer.PacerState(); st.BackoffTill.After(nb) {
 			nb = st.BackoffTill
 		}
-		state, rerr := s.st.RetryJob(bk, job.ID, nb, re.code)
+		state, rerr := s.store.RetryJob(bk, job.ID, nb, re.Code)
 		note("retry", rerr)
-		detail["error"], detail["next_state"], detail["not_before"] = re.code, state, nb.UTC().Format(time.RFC3339)
-		log.Warn("job retry", "error", re.code, "next_state", state, "not_before", nb)
-		note("event_retry", s.st.JobEvent(bk, job.ID, "retry", detail))
+		detail["error"], detail["next_state"], detail["not_before"] = re.Code, state, nb.UTC().Format(time.RFC3339)
+		log.Warn("job retry", "error", re.Code, "next_state", state, "not_before", nb)
+		note("event_retry", s.store.JobEvent(bk, job.ID, "retry", detail))
 	case errors.As(err, &pe):
-		note("finish", s.st.FinishJob(bk, job.ID, store.JobFailed, pe.code))
-		detail["error"] = pe.code
-		log.Warn("job failed", "error", pe.code)
-		note("event_failed", s.st.JobEvent(bk, job.ID, "failed", detail))
+		note("finish", s.store.FinishJob(bk, job.ID, store.JobFailed, pe.Error()))
+		detail["error"] = pe.Error()
+		log.Warn("job failed", "error", pe.Error())
+		note("event_failed", s.store.JobEvent(bk, job.ID, "failed", detail))
 	default:
 		// Unexpected (store/transport) errors: retry; the store caps attempts.
 		code := "internal:" + errCode(err)
-		state, rerr := s.st.RetryJob(bk, job.ID, s.o.Now().Add(5*time.Minute), code)
+		state, rerr := s.store.RetryJob(bk, job.ID, s.options.Now().Add(5*time.Minute), code)
 		note("retry", rerr)
 		detail["error"], detail["next_state"] = code, state
 		log.Error("job error", "error", err.Error(), "next_state", state)
-		note("event_error", s.st.JobEvent(bk, job.ID, "error", detail))
+		note("event_error", s.store.JobEvent(bk, job.ID, "error", detail))
 	}
 	s.setPhase(ctx, 0, "between")
 }
@@ -250,14 +228,14 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 // runHandler runs a job's handler, turning a panic into a permanent failure so one bad page or
 // bug cannot take down the daemon (or crash-loop it via restart recovery). Only the panic's type
 // is logged: its value could carry page content.
-func (s *Scheduler) runHandler(ctx context.Context, job store.Job, log *slog.Logger) (detail map[string]any, err error) {
+func (s *Scheduler) runHandler(ctx context.Context, job store.Job, log *slog.Logger) (detail controllers.Detail, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("job handler panicked", "panic_type", fmt.Sprintf("%T", r))
-			detail, err = nil, permanentError{code: "panic"}
+			detail, err = nil, controllers.PermanentError{Code: controllers.CodePanic}
 		}
 	}()
-	return s.handlers[job.Kind](ctx, job, log)
+	return s.handlers[job.Kind](ctx, job)
 }
 
 // errCode keeps internal errors short and content-free (they are ours, not AO3 text).
@@ -287,251 +265,31 @@ func flatten(m map[string]any) []any {
 	return out
 }
 
-// classify maps an httpx response class to a handler outcome for non-OK responses.
-func outcome(resp *httpx.Response) error {
-	switch resp.Class {
-	case httpx.ClassRateLimited, httpx.ClassUnavailable:
-		return retryError{code: string(resp.Class)}
-	case httpx.ClassOK:
-		return nil
-	}
-	return permanentError{code: string(resp.Class)}
-}
-
 // ---- scheduling ----
 
+// schedule asks the controllers to queue due work: info fetches (at most once a minute) and
+// each source's polls and backfill pages. The scheduler's logger rides along in ctx so
+// scheduling logs keep the scheduler component.
 func (s *Scheduler) schedule(ctx context.Context) error {
-	rows, err := s.st.ListSources(ctx)
-	if err != nil {
-		return err
-	}
-	now := s.o.Now()
-	if err := s.scheduleTagInfo(ctx, now); err != nil {
-		return err
-	}
-	for _, r := range rows {
-		if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
-			continue
-		}
-		log := s.log.With("source_id", r.ID, "source_kind", r.Kind)
-		if r.Kind == string(ao3url.KindWork) {
-			if err := s.scheduleWorkSource(ctx, r, now, log); err != nil {
-				return err
-			}
-			continue
-		}
-		if !r.NextPollAt.After(now) {
-			if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindPoll, SourceID: r.ID, Target: "1",
-				Priority: ClassPoll, DedupeKey: fmt.Sprintf("poll:%d:1", r.ID)}); err != nil {
-				return err
-			} else if created {
-				log.Info("poll scheduled", "next_poll_at", now.Add(r.PollInterval))
-			}
-			r.NextPollAt = now.Add(r.PollInterval)
-			if err := s.st.UpdateSourceProgress(ctx, r); err != nil {
-				return err
-			}
-		}
-		if r.State == store.SourceDoneBackfill {
-			if err := s.maybeStartRescan(ctx, r, now, log); err != nil {
-				return err
-			}
-			continue
-		}
-		cur, err := store.ParseCursor(r.BackfillCursor)
-		if err != nil {
-			log.Error("bad backfill cursor; resetting", "err", err.Error())
-			cur = store.Cursor{NextPage: 1, Order: r.BackfillOrder}
-		}
-		if cur.NextPage > 0 && cur.BlockedParser == parse.Version {
-			continue // parse failure at this page; resumes when a new parser version ships
-		}
-		if cur.NextPage > 0 {
-			class := ClassBackfill
-			if cur.Rescan {
-				class = ClassMaintenance
-			}
-			key := backfillKey(r.ID, cur)
-			if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindBackfill, SourceID: r.ID,
-				Target: strconv.Itoa(cur.NextPage), Priority: class, DedupeKey: key}); err != nil {
-				return err
-			} else if created {
-				log.Debug("backfill page scheduled", "page", cur.NextPage, "window_to", cur.WindowTo, "rescan", cur.Rescan)
-			}
-			continue
-		}
-		if err := s.finishWalk(ctx, r, cur, now, log); err != nil {
+	ctx = logx.With(ctx, s.log)
+	now := s.options.Now()
+	if now.Sub(s.lastInfo) >= time.Minute {
+		s.lastInfo = now
+		if err := s.controllers.ScheduleInfo(ctx, now); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-// finishWalk completes a backfill or rescan: verifies works not seen during a rescan, then
-// marks the source done_backfill.
-func (s *Scheduler) finishWalk(ctx context.Context, r store.SourceRow, cur store.Cursor, now time.Time, log *slog.Logger) error {
-	if err := s.st.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
-		if errors.Is(err, store.ErrStateConflict) {
-			return nil // state changed concurrently (paused/cancelled); try next round
-		}
-		return err
-	}
-	verify := 0
-	if cur.Rescan {
-		missing, err := s.st.SourceWorksNotSeenSince(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
-		if err != nil {
-			return err
-		}
-		for _, id := range missing {
-			if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindWork, SourceID: r.ID, Target: strconv.FormatInt(id, 10),
-				Priority: ClassMaintenance, DedupeKey: jobs.WorkKey(id)}); err != nil {
-				return err
-			} else if created {
-				verify++
-			}
-		}
-		cur.Rescan, cur.RescanStarted = false, 0
-		r.BackfillCursor = cur.JSON()
-	}
-	r.BackfillDoneAt, r.LastFullScanAt = now, now
-	if err := s.st.UpdateSourceProgress(ctx, r); err != nil {
-		return err
-	}
-	log.Info("source walk complete", "works_seen", r.MemberWorks, "works_fetched", r.FetchedWorks, "verify_jobs", verify)
-	return nil
-}
-
-// maybeStartRescan restarts the listing walk of a done source every RescanInterval to refresh
-// stats and find works that disappeared.
-func (s *Scheduler) maybeStartRescan(ctx context.Context, r store.SourceRow, now time.Time, log *slog.Logger) error {
-	if r.Kind == string(ao3url.KindWork) {
-		return nil
-	}
-	if r.LastFullScanAt.IsZero() {
-		r.LastFullScanAt = now
-		return s.st.UpdateSourceProgress(ctx, r)
-	}
-	if now.Before(r.LastFullScanAt.Add(s.o.RescanInterval)) {
-		return nil
-	}
-	cur := store.Cursor{NextPage: 1, Order: r.BackfillOrder, Rescan: true, RescanStarted: now.Unix()}
-	r.BackfillCursor = cur.JSON()
-	if err := s.st.UpdateSourceProgress(ctx, r); err != nil {
-		return err
-	}
-	if err := s.st.SetSourceState(ctx, r.ID, store.SourceActive, store.SourceDoneBackfill); err != nil {
-		if errors.Is(err, store.ErrStateConflict) {
-			return nil // paused/cancelled concurrently: no rescan
-		}
-		return err
-	}
-	log.Info("rescan started", "last_full_scan", r.LastFullScanAt)
-	return nil
-}
-
-// scheduleTagInfo keeps a small queue of tag-info fetches (most-used tags first).
-func (s *Scheduler) scheduleTagInfo(ctx context.Context, now time.Time) error {
-	if now.Sub(s.lastTags) < time.Minute {
-		return nil
-	}
-	s.lastTags = now
-	if err := s.scheduleSeriesInfo(ctx, now); err != nil {
-		return err
-	}
-	if len(s.o.TagInfoTypes) == 0 {
-		return nil
-	}
-	active, err := s.st.CountActiveJobs(ctx, KindTagInfo)
-	if err != nil || active >= 25 {
-		return err
-	}
-	tags, err := s.st.TagsNeedingInfo(ctx, s.o.TagInfoTypes, now.Add(-s.o.TagInfoTTL), 50)
-	if err != nil {
-		return err
-	}
-	queued := 0
-	for _, t := range tags {
-		if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindTagInfo, Target: strconv.FormatInt(t.ID, 10),
-			Priority: ClassTagInfo, DedupeKey: jobs.TagKey(t.ID)}); err != nil {
-			return err
-		} else if created {
-			queued++
-		}
-	}
-	if queued > 0 {
-		s.log.Debug("tag info scheduled", "jobs", queued)
-	}
-	return nil
-}
-
-// scheduleSeriesInfo keeps a small queue of series-page fetches for non-source series.
-func (s *Scheduler) scheduleSeriesInfo(ctx context.Context, now time.Time) error {
-	if !s.o.SeriesInfo {
-		return nil
-	}
-	active, err := s.st.CountActiveJobs(ctx, KindSeries)
-	if err != nil || active >= 25 {
-		return err
-	}
-	ids, err := s.st.SeriesNeedingInfo(ctx, now.Add(-s.o.SeriesInfoTTL), 50)
-	if err != nil {
-		return err
-	}
-	queued := 0
-	for _, id := range ids {
-		if _, created, err := s.st.EnqueueJob(ctx, store.Job{Kind: KindSeries, Target: strconv.FormatInt(id, 10),
-			Priority: ClassTagInfo, DedupeKey: jobs.SeriesKey(id)}); err != nil {
-			return err
-		} else if created {
-			queued++
-		}
-	}
-	if queued > 0 {
-		s.log.Debug("series info scheduled", "jobs", queued)
-	}
-	return nil
-}
-
-func backfillKey(sourceID int64, c store.Cursor) string {
-	return fmt.Sprintf("backfill:%d:%s:%d", sourceID, c.WindowTo, c.NextPage)
-}
-
-// scheduleWorkSource fetches a single-work source once, then refreshes it every poll interval.
-func (s *Scheduler) scheduleWorkSource(ctx context.Context, r store.SourceRow, now time.Time, log *slog.Logger) error {
-	id, _ := strconv.ParseInt(r.Target, 10, 64)
-	_, exists, err := s.st.WorkStatus(ctx, id)
-	if err != nil {
-		return err
-	}
-	job := store.Job{Kind: KindWork, SourceID: r.ID, Target: r.Target, DedupeKey: "work:" + r.Target}
-	if !exists || r.FetchedWorks == 0 {
-		// Not fetched yet: keep an on-demand job queued (deduped), don't touch the poll timer.
-		job.Priority = ClassOnDemand
-		_, created, err := s.st.EnqueueJob(ctx, job)
-		if created {
-			log.Info("work source fetch scheduled", "work_id", id)
-		}
-		return err
-	}
-	if r.NextPollAt.After(now) {
-		return nil
-	}
-	job.Priority = ClassPoll
-	if _, _, err := s.st.EnqueueJob(ctx, job); err != nil {
-		return err
-	}
-	r.NextPollAt = now.Add(r.PollInterval)
-	return s.st.UpdateSourceProgress(ctx, r)
+	return s.controllers.ScheduleSources(ctx, now)
 }
 
 func (s *Scheduler) maybePrune(ctx context.Context) {
-	now := s.o.Now()
+	now := s.options.Now()
 	if now.Sub(s.lastPrune) < time.Hour {
 		return
 	}
 	s.lastPrune = now
-	jobs, err1 := s.st.PruneJobs(ctx, 7*24*time.Hour, 30*24*time.Hour)
-	reqs, err2 := s.st.PruneRequests(ctx, 30*24*time.Hour)
+	jobs, err1 := s.store.PruneJobs(ctx, 7*24*time.Hour, 30*24*time.Hour)
+	reqs, err2 := s.store.PruneRequests(ctx, 30*24*time.Hour)
 	if err := errors.Join(err1, err2); err != nil {
 		s.log.Warn("prune failed", "err", err.Error())
 		return
@@ -582,9 +340,9 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 	s.hbMu.Lock()
 	jobID, phase := s.curJob, s.phase
 	s.hbMu.Unlock()
-	st := s.c.PacerState()
+	st := s.options.Pacer.PacerState()
 	kv := map[string]string{
-		"heartbeat":     s.o.Now().UTC().Format(time.RFC3339),
+		"heartbeat":     s.options.Now().UTC().Format(time.RFC3339),
 		"pid":           strconv.Itoa(os.Getpid()),
 		"phase":         phase,
 		"current_job":   strconv.FormatInt(jobID, 10),
@@ -597,37 +355,24 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 		"daily_budget":  strconv.Itoa(st.DailyBudget),
 		"backoff_until": "",
 	}
-	if st.BackoffTill.After(s.o.Now()) {
+	if st.BackoffTill.After(s.options.Now()) {
 		kv["backoff_until"] = st.BackoffTill.UTC().Format(time.RFC3339)
 	}
 	if !st.WaitingUntil.IsZero() {
 		kv["waiting_until"] = st.WaitingUntil.UTC().Format(time.RFC3339)
 	}
-	if err := s.st.SetDaemonState(ctx, kv); err != nil && ctx.Err() == nil {
+	if err := s.store.SetDaemonState(ctx, kv); err != nil && ctx.Err() == nil {
 		s.log.Warn("heartbeat failed", "err", err.Error())
 	}
-}
-
-// saveSkeleton writes a structure-only copy of an unexpected page to data/debug for diagnosis.
-func (s *Scheduler) saveSkeleton(kind string, id string, page []byte, log *slog.Logger) {
-	if len(page) == 0 || s.o.DataDir == "" {
-		return
-	}
-	rel, err := skeleton.SaveDebug(s.o.DataDir, kind, id, page, s.o.Now())
-	if err != nil {
-		log.Warn("debug skeleton failed", "err", err.Error())
-		return
-	}
-	log.Warn("saved debug skeleton", "file", rel)
 }
 
 // RunJob runs one specific queued job now (used by `fetch-work --now` when no daemon runs).
 // It returns the job's final state.
 func (s *Scheduler) RunJob(ctx context.Context, id int64) (store.Job, error) {
-	job, err := s.st.ClaimJob(ctx, id, s.o.Now())
+	job, err := s.store.ClaimJob(ctx, id, s.options.Now())
 	if err != nil {
 		return store.Job{}, err
 	}
 	s.execute(ctx, job)
-	return s.st.GetJob(ctx, id)
+	return s.store.GetJob(ctx, id)
 }

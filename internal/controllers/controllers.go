@@ -1,0 +1,201 @@
+// Package controllers holds the mirror's business operations: everything that combines several
+// store calls, usually with fetching and parsing. The CLI, the scheduler and the Part 2 API call
+// these. Only internal/store runs SQL.
+//
+//   - sources.go: add (with estimate and confirm gate), confirm, pause, resume, cancel, refresh,
+//     set, remove
+//   - schedule.go: which jobs each source needs now (polls, backfill pages, rescans, info fetches)
+//   - crawl.go: one poll or backfill listing page (incl. date windows for huge sources)
+//   - listings.go: fetch, parse and ingest one listing or series page
+//   - works.go: fetch one work page, store a parsed work, queue work fetches
+//   - tags.go, series.go: tag and series info pages
+//   - reparse.go: rebuild parsed data from stored raw pages (zero requests)
+//
+// Logging is content-free: ids, counts, classes, timings, hashed names.
+package controllers
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
+	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/logx"
+	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
+)
+
+// Fetcher is the subset of httpx.Client the controllers need.
+type Fetcher interface {
+	Get(ctx context.Context, kind httpx.Kind, ref string) (*httpx.Response, error)
+}
+
+// ErrOffline is returned by operations that need AO3 when the controllers were built without a
+// client (offline commands such as reparse).
+var ErrOffline = errors.New("controllers: no AO3 client (offline command)")
+
+type Options struct {
+	Store  *store.Store
+	Client Fetcher // nil for offline commands; every AO3 fetch then fails with ErrOffline
+	Logger *slog.Logger
+	Now    func() time.Time
+
+	DataDir      string // for data/debug skeletons
+	KeepVersions int    // content.keep_versions
+	QueueImages  bool   // queue embedded images of stored works for the image worker
+
+	Sources  config.Sources // add defaults and auto-confirm gate
+	Interval time.Duration  // current request interval, for add estimates
+
+	MaxResults   int // AO3 search window (default ao3url.MaxResults); tests lower it
+	MaxPollPages int // cap on pages walked per update poll (default 50)
+	WindowDays   int // initial date-window span for >MaxResults sources (default 365)
+
+	TagInfoTypes   []string      // tag types to fetch wrangling info for (empty = off)
+	TagInfoTTL     time.Duration // refetch tag info after this long (default 30d)
+	RescanInterval time.Duration // full re-walk of done sources (default 30d)
+	SeriesInfo     bool          // fetch pages of series that mirrored works belong to
+	SeriesInfoTTL  time.Duration // refresh those at least this often (default 30d)
+}
+
+// Controllers runs the mirror's business operations. It is safe to share; it holds no
+// per-call state.
+type Controllers struct {
+	options Options
+	store   *store.Store
+	log     *slog.Logger
+}
+
+func New(opts Options) *Controllers {
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	if opts.KeepVersions < 1 {
+		opts.KeepVersions = 1
+	}
+	if opts.MaxResults == 0 {
+		opts.MaxResults = ao3url.MaxResults
+	}
+	if opts.MaxPollPages == 0 {
+		opts.MaxPollPages = 50
+	}
+	if opts.WindowDays == 0 {
+		opts.WindowDays = 365
+	}
+	if opts.TagInfoTTL == 0 {
+		opts.TagInfoTTL = 30 * 24 * time.Hour
+	}
+	if opts.SeriesInfoTTL == 0 {
+		opts.SeriesInfoTTL = 30 * 24 * time.Hour
+	}
+	if opts.RescanInterval == 0 {
+		opts.RescanInterval = 30 * 24 * time.Hour
+	}
+	return &Controllers{options: opts, store: opts.Store, log: opts.Logger}
+}
+
+// Detail is a content-free summary of one operation (ids, counts, classes), recorded as the
+// job event detail by the scheduler.
+type Detail = map[string]any
+
+// logger returns the request-scoped logger (job attrs from the scheduler) or the default one.
+func (c *Controllers) logger(ctx context.Context) *slog.Logger { return logx.From(ctx, c.log) }
+
+// get fetches one AO3 path through the paced client.
+func (c *Controllers) get(ctx context.Context, kind httpx.Kind, path string) (*httpx.Response, error) {
+	if c.options.Client == nil {
+		return nil, ErrOffline
+	}
+	return c.options.Client.Get(ctx, kind, path)
+}
+
+// ---- outcomes ----
+
+// RetryError means AO3 was rate limiting or unavailable: retry after the client's backoff.
+type RetryError struct{ Code string }
+
+func (e RetryError) Error() string { return e.Code }
+
+// ErrorCode classifies a PermanentError. Codes are content-free and stable: they end up in job
+// last_error and logs.
+type ErrorCode string
+
+const (
+	// Page structure: no retry will fix these until the parser changes.
+	CodeParseUnexpected ErrorCode = ErrorCode(httpx.ClassUnexpected) // required structure missing
+	CodeParseError      ErrorCode = "parse_error"                    // page could not be parsed at all
+
+	// AO3 answered, but not with the page (from the httpx response class).
+	CodeNotFound   ErrorCode = ErrorCode(httpx.ClassNotFound)
+	CodeRestricted ErrorCode = ErrorCode(httpx.ClassRestricted)
+	CodeHidden     ErrorCode = ErrorCode(httpx.ClassHidden)
+	CodeAdultGate  ErrorCode = ErrorCode(httpx.ClassAdultGate)
+
+	// Bad input or state.
+	CodeBadSource   ErrorCode = "bad_source"
+	CodeBadFilters  ErrorCode = "bad_filters"
+	CodeBadCursor   ErrorCode = "bad_cursor"
+	CodeBadWorkID   ErrorCode = "bad_work_id"
+	CodeBadSeriesID ErrorCode = "bad_series_id"
+	CodeNoSource    ErrorCode = "no_source"
+	CodeNoTag       ErrorCode = "no_tag"
+
+	CodePanic ErrorCode = "panic" // the job handler panicked (set by the scheduler)
+)
+
+// PermanentError means a retry cannot help (not found, parse failure, bad input).
+type PermanentError struct {
+	Code   ErrorCode
+	Detail string // optional content-free detail, e.g. the missing selectors
+}
+
+// Error renders "code" or "code:detail".
+func (e PermanentError) Error() string {
+	if e.Detail == "" {
+		return string(e.Code)
+	}
+	return string(e.Code) + ":" + e.Detail
+}
+
+// outcome maps an httpx response class to an operation outcome for non-OK responses.
+func outcome(resp *httpx.Response) error {
+	switch resp.Class {
+	case httpx.ClassRateLimited, httpx.ClassUnavailable:
+		return RetryError{Code: string(resp.Class)}
+	case httpx.ClassOK:
+		return nil
+	}
+	return PermanentError{Code: ErrorCode(resp.Class)}
+}
+
+// parseUnexpected is the error for a page missing required structure (rep.Missing lists it).
+func parseUnexpected(missing []string) PermanentError {
+	return PermanentError{Code: CodeParseUnexpected, Detail: strings.Join(missing, ",")}
+}
+
+// IsParseFailure reports whether err is a page-structure problem (no retry will fix it).
+func IsParseFailure(err error) bool {
+	var pe PermanentError
+	return errors.As(err, &pe) && (pe.Code == CodeParseUnexpected || pe.Code == CodeParseError)
+}
+
+// saveSkeleton writes a structure-only copy of an unexpected page to data/debug for diagnosis.
+func (c *Controllers) saveSkeleton(ctx context.Context, kind string, id string, page []byte) {
+	if len(page) == 0 || c.options.DataDir == "" {
+		return
+	}
+	log := c.logger(ctx)
+	rel, err := skeleton.SaveDebug(c.options.DataDir, kind, id, page, c.options.Now())
+	if err != nil {
+		log.Warn("debug skeleton failed", "err", err.Error())
+		return
+	}
+	log.Warn("saved debug skeleton", "file", rel)
+}

@@ -14,7 +14,6 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
-	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
 )
 
 // lockDaemon takes an exclusive lock so only one daemon runs per data dir. The returned unlock
@@ -61,7 +60,7 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "run: releasing lock: %v\n", err)
 		}
 	}()
-	s := scheduler.New(a.schedulerOptions())
+	s := a.scheduler()
 	a.log.Info("daemon starting", "interval", a.cfg.Rate.Interval.String(), "daily_budget", a.cfg.Rate.DailyBudget,
 		"user_agent_contact_set", a.cfg.Contact.Discord != "", "images", a.cfg.Images.Enabled,
 		"tag_info_types", len(a.cfg.Tags.InfoTypes))
