@@ -332,7 +332,7 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 	default:
 		v = classify(kind, hr.StatusCode, body)
 	}
-	retryAfter := parseRetryAfter(hr.Header.Get("Retry-After"), c.clock.Now())
+	retryAfter := ParseRetryAfter(hr.Header.Get("Retry-After"), c.clock.Now())
 	var st PacerState
 	if (tooLarge && hr.StatusCode < 400) || cancelled {
 		// AO3 answered fine (we refused the size) or we gave up: neither is AO3 failing.

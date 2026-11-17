@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -303,6 +305,71 @@ func TestHostBacksOffOn429(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, images, "host kept being requested during its Retry-After (%v)", seen)
+}
+
+// pngHost serves robots.txt from robots (in order, last repeats) and a PNG for anything else.
+func pngHost(t *testing.T, robots ...int) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			mu.Lock()
+			status := robots[0]
+			if len(robots) > 1 {
+				robots = robots[1:]
+			}
+			mu.Unlock()
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{1}, 50)...))
+	}))
+	t.Cleanup(h.Close)
+	return h
+}
+
+// A robots.txt that is briefly unavailable (503) refuses images only until it is read again:
+// the image is retried and downloaded, not marked disallowed for good.
+func TestRobotsUnavailableRetriesImage(t *testing.T) {
+	h := pngHost(t, http.StatusServiceUnavailable, http.StatusNotFound)
+	db, run := fakeWorker(t, []string{h.URL + "/a.png"})
+	run(60) // up to an hour of fake time: past the 15 minute robots error TTL
+	counts, _, err := db.ImageCounts(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"ok": 1}, counts, "image lost to a temporary robots.txt error")
+}
+
+// A host held back by a 429 does not stall images on other hosts, however many of its own
+// images are queued ahead of them.
+func TestBackedOffHostDoesNotBlockOthers(t *testing.T) {
+	busy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Retry-After", "21600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(busy.Close)
+	other := pngHost(t, http.StatusNotFound)
+	var urls []string
+	for i := range 80 { // more than any fixed look-ahead window
+		urls = append(urls, busy.URL+"/"+strconv.Itoa(i)+".png")
+	}
+	// Same server, other hostname: localhost vs 127.0.0.1 are different hosts to the worker.
+	urls = append(urls, strings.Replace(other.URL, "127.0.0.1", "localhost", 1)+"/x.png")
+	db, run := fakeWorker(t, urls)
+	run(20)
+	counts, _, err := db.ImageCounts(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, counts["ok"], "other host's image stalled behind a backed-off host (%v)", counts)
+}
+
+func TestIsAO3TrailingDot(t *testing.T) {
+	require.True(t, isAO3("archiveofourown."+"org."), "fully-qualified AO3 host")
+	require.True(t, isAO3("WWW.ArchiveOfOurOwn."+"org."))
+	require.False(t, isAO3("example.org."))
 }
 
 // A robots.txt that redirects (http→https is common) is followed, and its rules apply.

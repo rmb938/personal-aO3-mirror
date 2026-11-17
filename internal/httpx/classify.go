@@ -146,8 +146,10 @@ func cfReason(cf string) string {
 	return " cf_markers=" + cf
 }
 
-// parseRetryAfter handles both delta-seconds and HTTP-date forms.
-func parseRetryAfter(v string, now time.Time) time.Duration {
+// ParseRetryAfter reads a Retry-After header in either form (delta-seconds or HTTP date). It
+// returns 0 when the header is absent, invalid or already past. The AO3 client and the image
+// worker both use it.
+func ParseRetryAfter(v string, now time.Time) time.Duration {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return 0

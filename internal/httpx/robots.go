@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"net/http"
 	"net/url"
 	"time"
 
@@ -26,11 +27,12 @@ type Robots struct {
 
 // NewRobots builds a cache entry from a robots.txt response. Per the robots spec (and
 // temoto/robotstxt): 2xx parses the file, 4xx allows everything, 5xx disallows everything until
-// the next refresh (which comes sooner). unavailable marks a challenge page served with a
+// the next refresh (which comes sooner). A 429 is the server being busy, not "no robots.txt",
+// so it counts as a 5xx too (RFC 9309). unavailable marks a challenge page served with a
 // non-5xx status, which is treated as a server error.
 func NewRobots(status int, body []byte, now time.Time, unavailable bool) (*Robots, error) {
-	if unavailable && status < 500 {
-		status = 503 // Cloudflare challenge served as 200/403: treat as server error => disallow all
+	if (unavailable && status < 500) || status == http.StatusTooManyRequests {
+		status = http.StatusServiceUnavailable // disallow all, refresh after robotsErrorTTL
 	}
 	data, err := robotstxt.FromStatusAndBytes(status, body)
 	if err != nil {
@@ -50,6 +52,14 @@ func (r *Robots) Fresh(now time.Time) bool {
 
 // Status is the effective HTTP status the entry was built from.
 func (r *Robots) Status() int { return r.status }
+
+// Unavailable reports whether the entry stands for a robots.txt that could not be read (5xx,
+// 429, challenge): everything is disallowed only until the next refresh, so a refusal from it
+// is temporary.
+func (r *Robots) Unavailable() bool { return r.status >= 500 }
+
+// ExpiresAt is when the entry stops being Fresh and robots.txt is read again.
+func (r *Robots) ExpiresAt() time.Time { return r.fetched.Add(r.ttl) }
 
 // Allowed reports whether u (escaped path + query) may be fetched by ProductToken.
 // TestAgent honours the allow-all (4xx) and disallow-all (5xx) states.

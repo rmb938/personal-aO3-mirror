@@ -131,7 +131,7 @@ Dependencies are pure Go, so there is no cgo and the result is a static binary:
   - `series`: `/series/<id>`
   - `collection`: `/collections/<c>/works`
   - `work`: `/works/<id>`
-- **URL input:** `ao3url.Parse(anyAO3URL)` turns any pasted AO3 URL into a Source. This is what the future UI/API "mirror this URL" button uses. A filtered `/works?tag_id=X&work_search[...]` URL is rewritten to the allowed `/tags/X/works?work_search[...]` form.
+- **URL input:** `ao3url.Parse(anyAO3URL)` turns any pasted AO3 URL into a Source. This is what the future UI/API "mirror this URL" button uses. A filtered `/works?tag_id=X&work_search[...]` index URL is rejected with a pointer to the `/tags/X/works?work_search[...]` form: the index is robots-disallowed, and its ids are not decoded like path params, so accepting it could add one tag as two sources.
 - **Add flow:**
   0. `source add` only validates the URL and queues an `add_source` job (the URL waits in
      `source_adds`; the job targets that row id). Only the daemon talks to AO3, so page 1 goes

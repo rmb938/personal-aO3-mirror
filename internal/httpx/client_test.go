@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -263,6 +264,25 @@ func TestRobotsUnavailableDisallowsAll(t *testing.T) {
 	for _, r := range h.srv.Requests() {
 		require.Equal(t, "/robots.txt", r.URI, "sent a request while robots unavailable")
 	}
+	require.NoError(t, h.clock.Sleep(context.Background(), robotsErrorTTL+time.Second))
+	require.Equal(t, ClassOK, h.get(t, KindWork, "/works/1").Class, "after robots recovered")
+}
+
+// A rate-limited robots.txt is "busy", not "no robots.txt": nothing is allowed until it is
+// re-read after the short error TTL (it must not become allow-all for a day).
+func TestRobotsRateLimitedDisallowsAll(t *testing.T) {
+	h := newHarness(t, 10*time.Second, 0)
+	h.srv.SetRobots(fakeao3.Reply{Status: 429, Header: map[string]string{"Retry-After": "60"}}, fakeao3.Reply{Body: fakeao3.Robots})
+	h.srv.Handle("/works/1", fakeao3.Reply{Body: fakeao3.WorkPage("x")})
+	_, err := h.c.Get(context.Background(), KindWork, "/works/1")
+	require.ErrorIs(t, err, ErrDisallowed, "429 robots.txt treated as allow-all")
+	for _, r := range h.srv.Requests() {
+		require.Equal(t, "/robots.txt", r.URI, "sent a request while robots was rate limited")
+	}
+	r, err := NewRobots(http.StatusTooManyRequests, nil, h.clock.Now(), false)
+	require.NoError(t, err)
+	require.True(t, r.Unavailable())
+	require.False(t, r.Fresh(h.clock.Now().Add(robotsErrorTTL+time.Second)), "429 entry cached past the error TTL")
 	require.NoError(t, h.clock.Sleep(context.Background(), robotsErrorTTL+time.Second))
 	require.Equal(t, ClassOK, h.get(t, KindWork, "/works/1").Class, "after robots recovered")
 }

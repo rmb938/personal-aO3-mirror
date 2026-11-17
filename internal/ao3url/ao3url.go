@@ -116,18 +116,11 @@ func Parse(raw string) (Source, error) {
 		}
 		return Source{Kind: KindCollection, Target: name, Filters: filters}, nil
 	case len(segs) == 1 && segs[0] == "works":
-		// Filtered index (/works?tag_id=X&work_search[...]): robots-disallowed form; rewrite.
-		switch {
-		case q.Get("tag_id") != "":
-			return Source{Kind: KindTag, Target: q.Get("tag_id"), Filters: filters}, nil
-		case q.Get("collection_id") != "":
-			return Source{Kind: KindCollection, Target: q.Get("collection_id"), Filters: filters}, nil
-		case q.Get("user_id") != "" && q.Get("pseud_id") != "":
-			return Source{Kind: KindPseud, Target: q.Get("user_id") + "/" + q.Get("pseud_id"), Filters: filters}, nil
-		case q.Get("user_id") != "":
-			return Source{Kind: KindUser, Target: q.Get("user_id"), Filters: filters}, nil
-		}
-		return Source{}, fmt.Errorf("%w: the works index needs a tag, user or collection; open a tag page and filter there", ErrUnsupported)
+		// The filtered index (/works?tag_id=X&work_search[...]) is robots-disallowed, and its ids
+		// are not decoded like path params, so one tag could become two sources. Not accepted:
+		// the same listing is the /tags, /users or /collections page with the same filters.
+		return Source{}, fmt.Errorf("%w: the /works index is not supported; use the tag, user or collection "+
+			"page (e.g. /tags/<tag>/works) and filter there", ErrUnsupported)
 	case len(segs) >= 2 && segs[0] == "works" && segs[1] == "search":
 		return Source{}, fmt.Errorf("%w: work search is disallowed by robots.txt; use a tag page with filters instead", ErrUnsupported)
 	}

@@ -27,15 +27,12 @@ func TestParse(t *testing.T) {
 		{host + "/tags/Fandom%20*a*%20Co*d*", Source{Kind: KindTag, Target: "Fandom & Co."}},
 		{host + "/tags/Fixture/works?page=3&work_search%5Bsort_column%5D=hits&work_search%5Blanguage_id%5D=en&work_search%5Bcomplete%5D=T",
 			Source{Kind: KindTag, Target: "Fixture", Filters: url.Values{"work_search[language_id]": {"en"}, "work_search[complete]": {"T"}}}},
-		{host + "/works?tag_id=Fixture&work_search%5Bcrossover%5D=F&commit=Sort+and+Filter",
-			Source{Kind: KindTag, Target: "Fixture", Filters: url.Values{"work_search[crossover]": {"F"}}}},
 		{host + "/users/someone", Source{Kind: KindUser, Target: "someone"}},
 		{host + "/users/someone/works", Source{Kind: KindUser, Target: "someone"}},
 		{host + "/users/someone/pseuds/alias/works", Source{Kind: KindPseud, Target: "someone/alias"}},
 		{host + "/users/someone/pseuds/alias", Source{Kind: KindPseud, Target: "someone/alias"}},
 		{host + "/users/someone/bookmarks", Source{Kind: KindUserBookmarks, Target: "someone"}},
 		{host + "/collections/fixture_coll/works", Source{Kind: KindCollection, Target: "fixture_coll"}},
-		{host + "/works?user_id=someone&pseud_id=alias", Source{Kind: KindPseud, Target: "someone/alias"}},
 	}
 	for _, c := range cases {
 		got, err := Parse(c.in)
@@ -51,9 +48,14 @@ func TestParseErrors(t *testing.T) {
 		"works/1":                     ErrNotAO3,
 		host + "/works/search?work_search%5Bquery%5D=x": ErrUnsupported,
 		host + "/works?work_search%5Bquery%5D=x":        ErrUnsupported,
-		host + "/downloads/1/x.html":                    ErrUnsupported,
-		host + "/tags/x/bookmarks":                      ErrUnsupported,
-		host + "/":                                      ErrUnsupported,
+		// The /works index is never accepted, even with an id (its ids are not decoded like
+		// path params, so one tag could become two sources).
+		host + "/works?tag_id=Fixture&work_search%5Bcrossover%5D=F": ErrUnsupported,
+		host + "/works?user_id=someone&pseud_id=alias":              ErrUnsupported,
+		host + "/works?collection_id=fixture_coll":                  ErrUnsupported,
+		host + "/downloads/1/x.html":                                ErrUnsupported,
+		host + "/tags/x/bookmarks":                                  ErrUnsupported,
+		host + "/":                                                  ErrUnsupported,
 	} {
 		_, err := Parse(in)
 		assert.ErrorIs(t, err, want, "Parse(%q)", in)

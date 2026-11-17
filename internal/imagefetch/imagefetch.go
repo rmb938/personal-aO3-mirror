@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -95,8 +94,11 @@ func normalize(raw string) string {
 	return u.String()
 }
 
+// isAO3 reports whether host is an AO3 hostname, so the image worker never sends AO3 a request
+// that would bypass the AO3 pacer. A fully-qualified name's trailing dot ("archiveofourown.org.")
+// is the same host. (AO3's IP addresses are not known here, so IP literals cannot be checked.)
 func isAO3(host string) bool {
-	h := strings.ToLower(host)
+	h := strings.TrimSuffix(strings.ToLower(host), ".")
 	return h == "archiveofourown.org" || strings.HasSuffix(h, ".archiveofourown.org") || h == "ao3.org" || strings.HasSuffix(h, ".ao3.org")
 }
 
@@ -145,7 +147,7 @@ func New(o Options) (*Worker, error) {
 		o.PerHostInterval = time.Second
 	}
 	if o.Sleep == nil {
-		o.Sleep = sleep
+		o.Sleep = httpx.Sleep
 	}
 	client, err := httpx.NewExternalClient(httpx.ExternalOptions{UserAgent: o.UserAgent, DialControl: func(network, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
@@ -170,17 +172,6 @@ func New(o Options) (*Worker, error) {
 	}
 	return &Worker{o: o, log: o.Logger.With("component", "imagefetch"), nextHost: map[string]time.Time{}, robots: map[string]*httpx.Robots{},
 		client: client}, nil
-}
-
-func sleep(ctx context.Context, d time.Duration) error {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
 }
 
 // Run downloads queued images until ctx is cancelled.
@@ -212,28 +203,41 @@ func (w *Worker) Run(ctx context.Context) error {
 // returns how long to wait.
 func (w *Worker) Step(ctx context.Context) (bool, time.Duration, error) {
 	now := w.o.Now()
-	rows, err := w.images().NextImages(ctx, now, 50)
+	// Hosts cooling down (interval or a 429/5xx backoff) are excluded in the query itself, so a
+	// backlog on one held-back host never hides due images on other hosts.
+	cooling, earliest := w.coolingHosts(now)
+	rows, err := w.images().NextImages(ctx, now, 1, cooling)
 	if err != nil {
 		return false, 0, err
 	}
-	var earliest time.Time
-	for _, r := range rows {
-		w.mu.Lock()
-		free := w.nextHost[r.Host]
-		w.mu.Unlock()
-		if free.After(now) {
-			if earliest.IsZero() || free.Before(earliest) {
-				earliest = free
-			}
-			continue
-		}
-		w.safeFetch(ctx, r)
+	if len(rows) > 0 {
+		w.safeFetch(ctx, rows[0])
 		return true, 0, nil
 	}
 	if !earliest.IsZero() {
-		return false, earliest.Sub(now), nil
+		return false, earliest.Sub(now), nil // Run caps this at Idle
 	}
 	return false, w.o.Idle, nil
+}
+
+// coolingHosts lists the hosts not free at now and the earliest time one frees up. Entries
+// that have expired are dropped, so the map only holds hosts still cooling.
+func (w *Worker) coolingHosts(now time.Time) ([]string, time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var hosts []string
+	var earliest time.Time
+	for h, free := range w.nextHost {
+		if !free.After(now) {
+			delete(w.nextHost, h)
+			continue
+		}
+		hosts = append(hosts, h)
+		if earliest.IsZero() || free.Before(earliest) {
+			earliest = free
+		}
+	}
+	return hosts, earliest
 }
 
 func (w *Worker) hostDone(host string) {
@@ -260,21 +264,6 @@ func (w *Worker) hostBackoff(host string, d time.Duration) time.Time {
 		w.nextHost[host] = next
 	}
 	return w.nextHost[host]
-}
-
-// retryAfter parses a Retry-After header (seconds or an HTTP date); 0 when absent or invalid.
-func retryAfter(v string, now time.Time) time.Duration {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return 0
-	}
-	if s, err := strconv.Atoi(v); err == nil && s > 0 {
-		return time.Duration(s) * time.Second
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		return t.Sub(now)
-	}
-	return 0
 }
 
 // safeFetch runs fetch and turns a panic into a failed image, so the worker goroutine (which
@@ -327,7 +316,7 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		// The whole host backs off (Retry-After, or the first retry delay), not just this image:
 		// its other queued images wait too.
 		host := strings.ToLower(resp.Request.URL.Hostname())
-		cool := w.hostBackoff(host, retryAfter(resp.Header.Get("Retry-After"), w.o.Now()))
+		cool := w.hostBackoff(host, httpx.ParseRetryAfter(resp.Header.Get("Retry-After"), w.o.Now()))
 		log.Warn("image host unavailable; host backing off", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"),
 			"host_free_at", cool)
 		nb := w.o.Now().Add(w.backoff(r.Attempts))
@@ -455,7 +444,7 @@ func (w *Worker) waitHost(ctx context.Context, host string) error {
 // was just made to that host.
 func (w *Worker) robotsGate(ctx context.Context, r store.ImageRow, u *url.URL, log *slog.Logger) (proceed, fetched bool) {
 	st := w.images()
-	allowed, fetched, retry, err := w.robotsAllowed(ctx, u, log)
+	rb, fetched, retry, err := w.robotsFor(ctx, u, log)
 	switch {
 	case err != nil && errors.Is(err, errBlockedAddr):
 		log.Warn("image host resolves to a non-public address; skipped")
@@ -464,7 +453,16 @@ func (w *Worker) robotsGate(ctx context.Context, r store.ImageRow, u *url.URL, l
 		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "robots:"+short(err), w.o.MaxAttempts)
 	case err != nil:
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "robots:"+short(err))
-	case !allowed:
+	case !rb.Allowed(u) && rb.Unavailable():
+		// robots.txt could not be read (5xx, 429, unresolvable redirect): everything is refused
+		// only until the next robots refresh, so retry the image instead of failing it for good.
+		nb := w.o.Now().Add(w.backoff(r.Attempts))
+		if exp := rb.ExpiresAt(); exp.After(nb) {
+			nb = exp // an earlier retry would only meet the same cached refusal
+		}
+		log.Info("image host robots.txt unavailable; will retry", "robots_status", rb.Status(), "not_before", nb)
+		_ = st.ImageRetry(ctx, r.ID, nb, "robots_unavailable", w.o.MaxAttempts)
+	case !rb.Allowed(u):
 		log.Info("image disallowed by host robots.txt")
 		_ = st.ImageFinal(ctx, r.ID, store.ImageDisallowed, "robots")
 	default:
@@ -483,9 +481,9 @@ func (i imageStore) write(ctx context.Context, fn func(ctx context.Context, tx *
 	return i.s.InTx(ctx, fn)
 }
 
-func (i imageStore) NextImages(ctx context.Context, now time.Time, limit int) ([]store.ImageRow, error) {
+func (i imageStore) NextImages(ctx context.Context, now time.Time, limit int, skipHosts []string) ([]store.ImageRow, error) {
 	return store.ReadValue(ctx, i.s, func(ctx context.Context, tx *store.ReadTx) ([]store.ImageRow, error) {
-		return tx.NextImages(ctx, now, limit)
+		return tx.NextImages(ctx, now, limit, skipHosts)
 	})
 }
 
@@ -550,20 +548,21 @@ func (w *Worker) backoff(attempts int) time.Duration {
 	return d
 }
 
-// robotsAllowed checks the image host's robots.txt (fetched with our UA, cached 24h).
-// retry=true means the check could not be made now (5xx/network) and should be retried.
-func (w *Worker) robotsAllowed(ctx context.Context, u *url.URL, log *slog.Logger) (allowed, fetched, retry bool, err error) {
+// robotsFor returns the image host's robots.txt entry (fetched with our UA, cached 24h, or 15m
+// when it could not be read). retry=true means the check could not be made now (network) and
+// should be retried; fetched=true means a robots.txt request was just made.
+func (w *Worker) robotsFor(ctx context.Context, u *url.URL, log *slog.Logger) (e *httpx.Robots, fetched, retry bool, err error) {
 	key := u.Scheme + "://" + u.Host
 	w.mu.Lock()
-	e := w.robots[key]
+	e = w.robots[key]
 	w.mu.Unlock()
 	if !e.Fresh(w.o.Now()) {
 		status, body, hops, err := w.fetchRobots(ctx, &url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/robots.txt"})
 		switch {
 		case err != nil && errors.Is(err, errBlockedAddr):
-			return false, false, false, errBlockedAddr
+			return nil, false, false, errBlockedAddr
 		case err != nil:
-			return false, false, true, err
+			return nil, false, true, err
 		}
 		e, err = httpx.NewRobots(status, body, w.o.Now(), false)
 		if err != nil {
@@ -575,7 +574,7 @@ func (w *Worker) robotsAllowed(ctx context.Context, u *url.URL, log *slog.Logger
 		w.mu.Unlock()
 		fetched = true
 	}
-	return e.Allowed(u), fetched, false, nil
+	return e, fetched, false, nil
 }
 
 // maxRobotsRedirects is how many robots.txt redirects are followed (RFC 9309 asks for at

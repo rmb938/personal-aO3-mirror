@@ -20,7 +20,11 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
 
-func (realClock) Sleep(ctx context.Context, d time.Duration) error {
+func (realClock) Sleep(ctx context.Context, d time.Duration) error { return Sleep(ctx, d) }
+
+// Sleep waits for d or until ctx is done (returning ctx's error). The AO3 client's real clock
+// and the image worker both use it.
+func Sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return ctx.Err()
 	}

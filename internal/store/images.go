@@ -54,10 +54,18 @@ func (s *Tx) QueueImages(ctx context.Context, workID int64, urls []string) (int,
 	return added, nil
 }
 
-// NextImages returns due queued images, oldest first.
-func (s *ReadTx) NextImages(ctx context.Context, now time.Time, limit int) ([]ImageRow, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT id, url, host, attempts FROM images
-		WHERE status = 'queued' AND not_before <= ? ORDER BY not_before, id LIMIT ?`, now.Unix(), limit)
+// NextImages returns due queued images, oldest first, leaving out skipHosts (hosts the image
+// worker is holding back) so they never crowd out other hosts' images.
+func (s *ReadTx) NextImages(ctx context.Context, now time.Time, limit int, skipHosts []string) ([]ImageRow, error) {
+	q := `SELECT id, url, host, attempts FROM images WHERE status = 'queued' AND not_before <= ?`
+	args := []any{now.Unix()}
+	if len(skipHosts) > 0 {
+		q += ` AND host NOT IN (` + placeholders(len(skipHosts)) + `)` // only "?,?,..." is concatenated
+		for _, h := range skipHosts {
+			args = append(args, h)
+		}
+	}
+	rows, err := s.meta.QueryContext(ctx, q+` ORDER BY not_before, id LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
