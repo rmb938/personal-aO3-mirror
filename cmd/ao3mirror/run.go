@@ -16,6 +16,8 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 )
 
+var errDaemonLocked = errors.New("another ao3mirror run is already using this data dir")
+
 // lockDaemon takes an exclusive lock so only one daemon runs per data dir. The returned unlock
 // releases it and reports any error.
 func lockDaemon(dataDir string) (unlock func() error, err error) {
@@ -33,7 +35,7 @@ func lockDaemon(dataDir string) (unlock func() error, err error) {
 	}()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, errors.New("another ao3mirror run is already using this data dir")
+			return nil, errDaemonLocked
 		}
 		return nil, err
 	}
@@ -47,6 +49,19 @@ func lockDaemon(dataDir string) (unlock func() error, err error) {
 	return func() error {
 		return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close())
 	}, nil
+}
+
+// daemonRunning reports whether a process (normally `ao3mirror run`) holds the daemon lock for
+// dataDir. It takes no lock that lingers.
+func daemonRunning(dataDir string) (bool, error) {
+	unlock, err := lockDaemon(dataDir)
+	if errors.Is(err, errDaemonLocked) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, unlock()
 }
 
 func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {

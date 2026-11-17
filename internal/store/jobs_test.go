@@ -121,7 +121,22 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	j2, err := s.GetJob(ctx, id2)
 	require.NoError(t, err)
 	require.Equal(t, JobQueued, j2.State)
-	require.Equal(t, 0, j2.Attempts, "recovery refunds the attempt")
+	require.Equal(t, 1, j2.Attempts, "a crash counts as an attempt")
+	require.Equal(t, CodeCrashed, j2.LastError)
+
+	// A job that keeps killing the daemon runs out of attempts instead of crash-looping.
+	id3 := enqueue(t, s, Job{Kind: "work", Target: "3", Priority: 1, MaxAttempts: 2, DedupeKey: "work:3"})
+	for range 2 {
+		j, err := s.PickJob(ctx, []string{"work"}, clk.t)
+		require.NoError(t, err)
+		require.Equal(t, id3, j.ID)
+		_, err = s.RecoverRunning(ctx)
+		require.NoError(t, err)
+	}
+	j3, err := s.GetJob(ctx, id3)
+	require.NoError(t, err)
+	require.Equal(t, JobFailed, j3.State, "crash loop must end")
+	require.Equal(t, CodeCrashed, j3.LastError)
 
 	require.NoError(t, s.JobEvent(ctx, id, "picked", map[string]any{"class": 3}))
 	ev, err := s.JobEvents(ctx, id)

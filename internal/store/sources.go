@@ -50,19 +50,32 @@ type SourceRow struct {
 	FetchedWorks   int // of those, fetched at least once
 }
 
-const sourceCols = `id, kind, target, filters_json, path, state, backfill_order, poll_interval_s, priority,
+// sourceBaseCols are the sources columns; sourceCols adds the member counts, which scan every
+// membership of the source (fine for status and show, too slow for every scheduler round).
+const (
+	sourceBaseCols = `id, kind, target, filters_json, path, state, backfill_order, poll_interval_s, priority,
 	total_works, est_requests, backfill_cursor, created_at, updated_at, last_poll_at, next_poll_at,
-	last_full_scan_at, backfill_done_at, last_error,
-	(SELECT COUNT(*) FROM source_works sw WHERE sw.source_id = sources.id),
+	last_full_scan_at, backfill_done_at, last_error`
+	sourceCountCols = `(SELECT COUNT(*) FROM source_works sw WHERE sw.source_id = sources.id),
 	(SELECT COUNT(*) FROM source_works sw JOIN works w ON w.id = sw.work_id
 	  WHERE sw.source_id = sources.id AND w.last_fetched > 0)`
+	sourceCols = sourceBaseCols + `, ` + sourceCountCols
+)
 
 func scanSource(row interface{ Scan(...any) error }) (SourceRow, error) {
+	return scanSourceRow(row, true)
+}
+
+func scanSourceRow(row interface{ Scan(...any) error }, counts bool) (SourceRow, error) {
 	var r SourceRow
 	var poll, created, updated, lastPoll, nextPoll, lastScan, done int64
-	err := row.Scan(&r.ID, &r.Kind, &r.Target, &r.FiltersJSON, &r.Path, &r.State, &r.BackfillOrder, &poll,
+	dest := []any{&r.ID, &r.Kind, &r.Target, &r.FiltersJSON, &r.Path, &r.State, &r.BackfillOrder, &poll,
 		&r.Priority, &r.TotalWorks, &r.EstRequests, &r.BackfillCursor, &created, &updated, &lastPoll, &nextPoll,
-		&lastScan, &done, &r.LastError, &r.MemberWorks, &r.FetchedWorks)
+		&lastScan, &done, &r.LastError}
+	if counts {
+		dest = append(dest, &r.MemberWorks, &r.FetchedWorks)
+	}
+	err := row.Scan(dest...)
 	if err != nil {
 		return r, err
 	}
@@ -129,6 +142,32 @@ func (s *ReadTx) ListSources(ctx context.Context) ([]SourceRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// SchedulableSources returns the active and done_backfill sources without member counts
+// (MemberWorks and FetchedWorks are 0): the scheduler reads them before every job pick.
+func (s *ReadTx) SchedulableSources(ctx context.Context) ([]SourceRow, error) {
+	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceBaseCols+` FROM sources
+		WHERE state IN ('active','done_backfill') ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SourceRow
+	for rows.Next() {
+		r, err := scanSourceRow(rows, false)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SourceWorkCounts returns how many works a source has seen and how many of those were fetched.
+func (s *ReadTx) SourceWorkCounts(ctx context.Context, id int64) (seen, fetched int, err error) {
+	err = s.meta.QueryRowContext(ctx, `SELECT `+sourceCountCols+` FROM sources WHERE id = ?`, id).Scan(&seen, &fetched)
+	return seen, fetched, err
 }
 
 // SetSourceState moves a source to `to` only if its current state is one of `from`.

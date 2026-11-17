@@ -159,14 +159,28 @@ func (s *Tx) RequeueJob(ctx context.Context, id int64, notBefore time.Time) erro
 	return err
 }
 
-// RecoverRunning re-queues jobs left running by a crashed or killed daemon.
+// CodeCrashed is the last_error of a job that was running when the daemon died.
+const CodeCrashed = "crashed"
+
+// RecoverRunning re-queues jobs left running by a crashed or killed daemon. Unlike RequeueJob
+// (clean shutdown) the attempt counts: a job that kills the process (OOM, SIGKILL on a huge
+// page) must not crash-loop the daemon, re-fetching the same page on every restart. A job with
+// no attempts left is failed instead.
 func (s *Tx) RecoverRunning(ctx context.Context) (int64, error) {
-	res, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), updated_at = ?
-		WHERE state = 'running'`, s.unix())
+	now := s.unix()
+	failed, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'failed', last_error = ?, finished_at = ?, updated_at = ?
+		WHERE state = 'running' AND attempts >= max_attempts`, CodeCrashed, now, now)
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	requeued, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', last_error = ?, updated_at = ?
+		WHERE state = 'running'`, CodeCrashed, now)
+	if err != nil {
+		return 0, err
+	}
+	nf, _ := failed.RowsAffected()
+	nq, _ := requeued.RowsAffected()
+	return nf + nq, nil
 }
 
 func (s *ReadTx) GetJob(ctx context.Context, id int64) (Job, error) {

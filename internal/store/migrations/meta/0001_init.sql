@@ -171,6 +171,19 @@ CREATE TABLE sources (
     UNIQUE (kind, target, filters_json)
 );
 
+-- Listing sources added from the CLI wait here until the daemon fetches their page 1 (the
+-- daemon is the only process that talks to AO3). The add_source job targets the row id, so no
+-- names reach the jobs table. The row is deleted when the source is created or the add fails.
+CREATE TABLE source_adds (
+    id              INTEGER PRIMARY KEY,
+    url             TEXT NOT NULL,                 -- the AO3 URL as given: may hold names
+    backfill_order  TEXT NOT NULL DEFAULT '',      -- '' = sources.default_backfill_order
+    priority        INTEGER NOT NULL DEFAULT 0,
+    poll_interval_s INTEGER NOT NULL DEFAULT 0,    -- 0 = sources.poll_interval
+    confirm         INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL
+);
+
 CREATE TABLE source_works (
     source_id  INTEGER NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
     work_id    INTEGER NOT NULL REFERENCES works (id) ON DELETE CASCADE,

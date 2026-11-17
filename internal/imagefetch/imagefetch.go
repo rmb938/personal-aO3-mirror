@@ -3,7 +3,9 @@
 // Images live on external hosts (AO3 does not host images). Every request carries the same
 // User-Agent as the AO3 client, honours each host's robots.txt, waits PerHostInterval between
 // requests to the same host, runs one request at a time, accepts only image/* up to MaxBytes, and
-// refuses private/loopback/link-local addresses (fanwork HTML is untrusted input).
+// refuses private/loopback/link-local addresses (fanwork HTML is untrusted input). The client
+// comes from httpx.NewExternalClient and never follows redirects itself: the worker follows up
+// to three, checking each hop like a first request (never AO3, robots.txt, host interval).
 //
 // Files are content-addressed: <dir>/ab/cd/<sha256>.<ext>. Logs carry image ids and hashed
 // hosts only (image URLs can contain names).
@@ -106,9 +108,12 @@ type Options struct {
 	MaxBytes        int64
 	Logger          *slog.Logger
 	Now             func() time.Time
-	Idle            time.Duration // poll interval when nothing is due (default 30s)
-	AllowLoopback   bool          // tests only
-	MaxAttempts     int           // default 5
+	// Sleep waits out a redirect target's host interval mid-image (default: a real,
+	// cancellable sleep; tests fake it).
+	Sleep         func(ctx context.Context, d time.Duration) error
+	Idle          time.Duration // poll interval when nothing is due (default 30s)
+	AllowLoopback bool          // tests only
+	MaxAttempts   int           // default 5
 }
 
 type Worker struct {
@@ -121,9 +126,6 @@ type Worker struct {
 }
 
 var errBlockedAddr = errors.New("imagefetch: refusing non-public address")
-
-// errRedirectAO3 refuses an image redirect to an AO3 host.
-var errRedirectAO3 = errors.New("imagefetch: refusing redirect to AO3")
 
 func New(o Options) (*Worker, error) {
 	if o.Logger == nil {
@@ -141,7 +143,10 @@ func New(o Options) (*Worker, error) {
 	if o.PerHostInterval < time.Second {
 		o.PerHostInterval = time.Second
 	}
-	dialer := &net.Dialer{Timeout: 15 * time.Second, Control: func(network, address string, _ syscall.RawConn) error {
+	if o.Sleep == nil {
+		o.Sleep = sleep
+	}
+	client, err := httpx.NewExternalClient(httpx.ExternalOptions{UserAgent: o.UserAgent, DialControl: func(network, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {
 			return err
@@ -158,33 +163,23 @@ func New(o Options) (*Worker, error) {
 			return errBlockedAddr
 		}
 		return nil
-	}}
-	base := &http.Transport{
-		Proxy:                 nil, // direct only: the address check must see the real target
-		DialContext:           dialer.DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		MaxIdleConnsPerHost:   1,
-	}
-	rt, err := httpx.NewUATransport(o.UserAgent, base)
+	}})
 	if err != nil {
 		return nil, err
 	}
 	return &Worker{o: o, log: o.Logger.With("component", "imagefetch"), nextHost: map[string]time.Time{}, robots: map[string]*httpx.Robots{},
-		client: &http.Client{Transport: rt, Timeout: 2 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return errors.New("too many redirects")
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return errors.New("bad redirect scheme")
-			}
-			// Same rule as the queue: the image worker never talks to AO3, even via a redirect
-			// (that request would bypass the AO3 pacer).
-			if isAO3(req.URL.Hostname()) {
-				return errRedirectAO3
-			}
-			return nil
-		}}}, nil
+		client: client}, nil
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // Run downloads queued images until ctx is cancelled.
@@ -273,45 +268,16 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "bad_url")
 		return
 	}
-	allowed, fetchedRobots, retry, err := w.robotsAllowed(ctx, u, log)
-	switch {
-	case err != nil && errors.Is(err, errBlockedAddr):
-		log.Warn("image host resolves to a non-public address; skipped")
-		_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "non_public_address")
-		return
-	case err != nil && retry:
-		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "robots:"+short(err), w.o.MaxAttempts)
-		return
-	case err != nil:
-		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "robots:"+short(err))
-		return
-	case !allowed:
-		log.Info("image disallowed by host robots.txt")
-		_ = st.ImageFinal(ctx, r.ID, store.ImageDisallowed, "robots")
-		return
-	case fetchedRobots:
-		// Just spent a request on this host's robots.txt: the image waits for the host interval.
+	proceed, fetchedRobots := w.robotsGate(ctx, r, u, log)
+	if !proceed || fetchedRobots {
+		// Refused, or just spent a request on this host's robots.txt: the image waits for the
+		// host interval (a later step).
 		return
 	}
 
 	start := time.Now()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
-	req.Header.Set("Accept", "image/*")
-	resp, err := w.client.Do(req)
-	w.hostDone(r.Host)
-	if err != nil {
-		if errors.Is(err, errBlockedAddr) {
-			log.Warn("image host resolves to a non-public address; skipped")
-			_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "non_public_address")
-			return
-		}
-		if errors.Is(err, errRedirectAO3) {
-			log.Info("image redirects to an AO3 host; skipped")
-			_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "ao3_redirect")
-			return
-		}
-		log.Warn("image request failed", "err", short(err))
-		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "transport:"+short(err), w.o.MaxAttempts)
+	resp, ok := w.follow(ctx, r, u, log)
+	if !ok {
 		return
 	}
 	defer resp.Body.Close()
@@ -361,6 +327,105 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 		return
 	}
 	log.Info("image stored", "bytes", len(body), "content_type", ct, "ms", time.Since(start).Milliseconds())
+}
+
+// maxRedirects caps the hops followed for one image.
+const maxRedirects = 3
+
+// follow requests u and follows redirects itself (the client never does), so every hop gets
+// the checks the first request got: never an AO3 host, the hop host's robots.txt, and its
+// per-host interval. When it returns ok=false the image's outcome is already recorded (or, on
+// shutdown, the image is left queued).
+func (w *Worker) follow(ctx context.Context, r store.ImageRow, u *url.URL, log *slog.Logger) (*http.Response, bool) {
+	st := w.images()
+	for hop := 0; ; hop++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		req.Header.Set("Accept", "image/*")
+		resp, err := w.client.Do(req)
+		w.hostDone(strings.ToLower(u.Hostname()))
+		if err != nil {
+			if errors.Is(err, errBlockedAddr) {
+				log.Warn("image host resolves to a non-public address; skipped", "hop", hop)
+				_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "non_public_address")
+				return nil, false
+			}
+			log.Warn("image request failed", "hop", hop, "err", short(err))
+			_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "transport:"+short(err), w.o.MaxAttempts)
+			return nil, false
+		}
+		if !isRedirect(resp.StatusCode) {
+			return resp, true
+		}
+		loc, lerr := u.Parse(resp.Header.Get("Location"))
+		resp.Body.Close()
+		switch {
+		case lerr != nil || (loc.Scheme != "http" && loc.Scheme != "https") || loc.Host == "":
+			log.Info("image redirect unusable; failed", "hop", hop)
+			_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "bad_redirect")
+		case hop >= maxRedirects:
+			log.Info("too many image redirects; failed", "hop", hop)
+			_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "too_many_redirects")
+		case isAO3(loc.Hostname()):
+			// The image worker never talks to AO3 (that request would bypass the AO3 pacer).
+			log.Info("image redirects to an AO3 host; skipped", "hop", hop)
+			_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "ao3_redirect")
+		default:
+			host := strings.ToLower(loc.Hostname())
+			log.Debug("following image redirect", "hop", hop+1, "to_host", httpx.Hash(host))
+			if w.waitHost(ctx, host) != nil {
+				return nil, false
+			}
+			proceed, fetchedRobots := w.robotsGate(ctx, r, loc, log)
+			if !proceed || (fetchedRobots && w.waitHost(ctx, host) != nil) {
+				return nil, false
+			}
+			u = loc
+			continue
+		}
+		return nil, false
+	}
+}
+
+func isRedirect(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
+}
+
+// waitHost waits until host's per-host interval has passed (a redirect target, mid-image).
+func (w *Worker) waitHost(ctx context.Context, host string) error {
+	w.mu.Lock()
+	free := w.nextHost[host]
+	w.mu.Unlock()
+	if d := free.Sub(w.o.Now()); d > 0 {
+		return w.o.Sleep(ctx, d)
+	}
+	return nil
+}
+
+// robotsGate checks u's host robots.txt for image r. proceed=false means the image's outcome
+// is recorded (disallowed, refused, or retry later); fetched=true means a robots.txt request
+// was just made to that host.
+func (w *Worker) robotsGate(ctx context.Context, r store.ImageRow, u *url.URL, log *slog.Logger) (proceed, fetched bool) {
+	st := w.images()
+	allowed, fetched, retry, err := w.robotsAllowed(ctx, u, log)
+	switch {
+	case err != nil && errors.Is(err, errBlockedAddr):
+		log.Warn("image host resolves to a non-public address; skipped")
+		_ = st.ImageFinal(ctx, r.ID, store.ImageSkipped, "non_public_address")
+	case err != nil && retry:
+		_ = st.ImageRetry(ctx, r.ID, w.o.Now().Add(w.backoff(r.Attempts)), "robots:"+short(err), w.o.MaxAttempts)
+	case err != nil:
+		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, "robots:"+short(err))
+	case !allowed:
+		log.Info("image disallowed by host robots.txt")
+		_ = st.ImageFinal(ctx, r.ID, store.ImageDisallowed, "robots")
+	default:
+		return true, fetched
+	}
+	return false, fetched
 }
 
 // imageStore is the worker's store access. Each image outcome is a single statement, so each

@@ -55,6 +55,12 @@ type env struct {
 // business options); the scheduler itself has nothing worth tuning in tests.
 func newEnv(t *testing.T, works int, opts func(*controllers.Options)) *env {
 	t.Helper()
+	return newEnvWith(t, works, opts, nil)
+}
+
+// newEnvWith is newEnv with the AO3 client's options tunable too (e.g. MaxBody).
+func newEnvWith(t *testing.T, works int, opts func(*controllers.Options), clientOpts func(*httpx.Options)) *env {
+	t.Helper()
 	e := &env{t: t, srv: fakeao3.New(), clk: &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}, logs: &bytes.Buffer{}}
 	t.Cleanup(e.srv.Close)
 	// A transaction-rule violation inside a job only surfaces as a retried job; fail loudly instead.
@@ -65,7 +71,11 @@ func newEnv(t *testing.T, works int, opts func(*controllers.Options)) *env {
 	e.srv.SetSite(e.site)
 	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var err error
-	e.cl, err = httpx.New(httpx.Options{BaseURL: e.srv.URL, UserAgent: testUA, Interval: 10 * time.Second, Clock: e.clk, Rand: rand.NewPCG(7, 7), Logger: log})
+	co := httpx.Options{BaseURL: e.srv.URL, UserAgent: testUA, Interval: 10 * time.Second, Clock: e.clk, Rand: rand.NewPCG(7, 7), Logger: log}
+	if clientOpts != nil {
+		clientOpts(&co)
+	}
+	e.cl, err = httpx.New(co)
 	require.NoError(t, err)
 	dataDir := t.TempDir()
 	e.st, err = store.Open(context.Background(), dataDir, store.Options{Now: e.clk.Now, Logger: log})

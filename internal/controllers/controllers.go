@@ -117,7 +117,12 @@ func (c *Controllers) get(ctx context.Context, kind httpx.Kind, path string) (*h
 	if c.options.Client == nil {
 		return nil, ErrOffline
 	}
-	return c.options.Client.Get(ctx, kind, path)
+	resp, err := c.options.Client.Get(ctx, kind, path)
+	if errors.Is(err, httpx.ErrTooLarge) {
+		// The size will not change on a retry: fail for good (no 5 more full downloads).
+		return nil, PermanentError{Code: CodeTooLarge}
+	}
+	return resp, err
 }
 
 // ---- outcomes ----
@@ -141,6 +146,7 @@ const (
 	CodeRestricted ErrorCode = ErrorCode(httpx.ClassRestricted)
 	CodeHidden     ErrorCode = ErrorCode(httpx.ClassHidden)
 	CodeAdultGate  ErrorCode = ErrorCode(httpx.ClassAdultGate)
+	CodeTooLarge   ErrorCode = "too_large" // body over the httpx client's MaxBody
 
 	// Bad input or state.
 	CodeBadSource   ErrorCode = "bad_source"

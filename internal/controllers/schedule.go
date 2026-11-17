@@ -19,14 +19,12 @@ import (
 // scheduler round is cheap and idempotent.
 func (c *Controllers) ScheduleSources(ctx context.Context, now time.Time) error {
 	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		rows, err := tx.ListSources(ctx)
+		// Without member counts: this runs before every job pick, holding the write lock.
+		rows, err := tx.SchedulableSources(ctx)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
-			if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
-				continue
-			}
 			if err := c.scheduleSource(ctx, tx, r, now, c.logger(ctx).With("source_id", r.ID, "source_kind", r.Kind)); err != nil {
 				return err
 			}
@@ -107,7 +105,11 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Cursor
 	if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 		return err
 	}
-	log.Info("source walk complete", "works_seen", r.MemberWorks, "works_fetched", r.FetchedWorks, "verify_jobs", verify)
+	seen, fetched, err := tx.SourceWorkCounts(ctx, r.ID) // once per walk, so the counts are affordable here
+	if err != nil {
+		return err
+	}
+	log.Info("source walk complete", "works_seen", seen, "works_fetched", fetched, "verify_jobs", verify)
 	return nil
 }
 
@@ -135,28 +137,26 @@ func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r stor
 	return nil
 }
 
-// scheduleWorkSource fetches a single-work source once, then refreshes it every poll interval.
+// scheduleWorkSource fetches a single-work source once (on demand), then every poll interval.
+// The decision is when a fetch was last scheduled, never how it went: a work that is deleted,
+// hidden, unparseable or failing is retried once per poll interval, not every round.
 func (c *Controllers) scheduleWorkSource(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
 	id, _ := strconv.ParseInt(r.Target, 10, 64)
-	_, exists, err := tx.WorkStatus(ctx, id)
+	class := jobs.ClassPoll
+	switch {
+	case r.LastPollAt.IsZero():
+		class = jobs.ClassOnDemand // first fetch
+	case r.NextPollAt.After(now):
+		return nil
+	}
+	_, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, class)
 	if err != nil {
 		return err
 	}
-	if !exists || r.FetchedWorks == 0 {
-		// Not fetched yet: keep an on-demand job queued (deduped), don't touch the poll timer.
-		_, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassOnDemand)
-		if created {
-			log.Info("work source fetch scheduled", "work_id", id)
-		}
-		return err
+	if created {
+		log.Info("work source fetch scheduled", "work_id", id, "first", class == jobs.ClassOnDemand)
 	}
-	if r.NextPollAt.After(now) {
-		return nil
-	}
-	if _, _, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassPoll); err != nil {
-		return err
-	}
-	r.NextPollAt = now.Add(r.PollInterval)
+	r.LastPollAt, r.NextPollAt = now, now.Add(r.PollInterval)
 	return tx.UpdateSourceProgress(ctx, r)
 }
 

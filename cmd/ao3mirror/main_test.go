@@ -102,13 +102,33 @@ func TestSourceCLI(t *testing.T) {
 	c := newCLI(t, "sources: {auto_confirm_max: 100}\n")
 	c.srv.Handle("/tags/Fixture%20Fandom/works", fakeao3.Reply{Body: fixture(t, "listing_tag.html")})
 
+	// Without a daemon the add is only queued: the CLI never talks to AO3.
 	code, out, errOut := c.run("source", "add", "/tags/Fixture%20Fandom/works", "--order", "hits_desc")
+	require.Equal(t, 0, code, "add: %s", errOut)
+	assert.Contains(t, out, "no daemon running", "add output")
+	assert.Empty(t, c.srv.Requests(), "source add made a request without the daemon")
+	_, out, _ = c.run("source", "add", "/tags/Fixture%20Fandom/works")
+	assert.Contains(t, out, "already queued", "second add of a queued source")
+
+	// With a daemon running, add waits for it and prints the result.
+	cfg, err := config.Load(c.cfg)
+	require.NoError(t, err)
+	a, err := openApp(context.Background(), cfg, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(a.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int)
+	go func() { done <- runDaemon(ctx, a, io.Discard) }()
+	require.Eventually(t, func() bool { r, _ := daemonRunning(cfg.DataDir); return r }, 10*time.Second, 50*time.Millisecond)
+	code, out, errOut = c.run("source", "add", "/tags/Fixture%20Fandom/works", "--order", "hits_desc", "--wait", "60s")
 	require.Equal(t, 0, code, "add: %s", errOut)
 	for _, want := range []string{"source 1 added", "state=pending_confirm", "order=hits_desc", "1,234 works", "62 listing pages", "source confirm 1", "page 1: 2 works stored"} {
 		assert.Contains(t, out, want, "add output")
 	}
 	assert.NotContains(t, out, "Fixture", "add output leaked the tag name without --names")
 	assert.Contains(t, out, httpx.Hash("Fixture Fandom"), "add output should show the hashed target")
+	cancel()
+	require.Equal(t, 0, <-done, "daemon exit code")
 
 	code, _, errOut = c.run("source", "add", "/tags/Fixture%20Fandom")
 	assert.Equal(t, 1, code, "duplicate add")

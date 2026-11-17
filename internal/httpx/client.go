@@ -30,6 +30,8 @@ var (
 	ErrForeign    = errors.New("httpx: URL is not on the configured AO3 host")
 	ErrTooLarge   = errors.New("httpx: response body exceeds limit")
 	ErrNoUA       = errors.New("httpx: user agent is required")
+
+	errNoDialControl = errors.New("httpx: external client needs a DialControl")
 )
 
 const (
@@ -131,8 +133,8 @@ func (t *uaTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.next.RoundTrip(r2)
 }
 
-// NewUATransport wraps next so every request carries ua. Image fetchers use this too.
-func NewUATransport(ua string, next http.RoundTripper) (http.RoundTripper, error) {
+// newUATransport wraps next so every request carries ua (AO3 and external clients alike).
+func newUATransport(ua string, next http.RoundTripper) (http.RoundTripper, error) {
 	if strings.TrimSpace(ua) == "" || !strings.Contains(ua, "contact:") {
 		return nil, ErrNoUA
 	}
@@ -162,7 +164,7 @@ func New(o Options) (*Client, error) {
 	if err != nil || base.Host == "" {
 		return nil, fmt.Errorf("httpx: bad base URL %q", o.BaseURL)
 	}
-	rt, err := NewUATransport(o.UserAgent, o.Transport)
+	rt, err := newUATransport(o.UserAgent, o.Transport)
 	if err != nil {
 		return nil, err
 	}
@@ -281,26 +283,48 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 	safe := SafePath(u)
 
 	hr, err := c.http.Do(req)
+	if err != nil && ctx.Err() != nil {
+		// We cancelled it (shutdown, Ctrl-C): not an AO3 failure, so no backoff or breaker count.
+		st := c.pacer.Finished()
+		log.Info("request cancelled", "path", safe, "hop", hop, "wait_ms", waited.Milliseconds(), "consec_fails", st.ConsecFails)
+		c.record(RequestRecord{ReqID: reqID, Time: start, Kind: kind, SafePath: safe, Class: ClassUnavailable,
+			Reason: "transport:canceled", Duration: c.clock.Now().Sub(start), Waited: waited, Hop: hop, JobID: jobIDFrom(ctx)})
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		st := c.pacer.Report(ClassUnavailable, 0)
 		log.Warn("request failed", "path", safe, "hop", hop, "err", errClass(err), "wait_ms", waited.Milliseconds(),
 			"consec_fails", st.ConsecFails, "backoff_until", st.BackoffTill, "breaker_open", st.BreakerOpen)
 		c.record(RequestRecord{ReqID: reqID, Time: start, Kind: kind, SafePath: safe, Class: ClassUnavailable,
 			Reason: "transport:" + errClass(err), Duration: c.clock.Now().Sub(start), Waited: waited, Hop: hop, JobID: jobIDFrom(ctx)})
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 		return &Response{ReqID: reqID, Kind: kind, URL: u, Class: ClassUnavailable, Reason: "transport:" + errClass(err), Header: http.Header{}}, nil
 	}
-	body, rerr := io.ReadAll(io.LimitReader(hr.Body, c.maxBody+1))
+	var body []byte
+	var rerr error
+	if hr.ContentLength > c.maxBody {
+		rerr = ErrTooLarge // declared too large: don't download it
+	} else {
+		body, rerr = io.ReadAll(io.LimitReader(hr.Body, c.maxBody+1))
+		if rerr == nil && int64(len(body)) > c.maxBody {
+			rerr = ErrTooLarge
+		}
+	}
 	hr.Body.Close()
 	total := c.clock.Now().Sub(start)
-	if rerr == nil && int64(len(body)) > c.maxBody {
-		rerr = ErrTooLarge
+	if rerr != nil && ctx.Err() != nil {
+		rerr = ctx.Err() // cancelled mid-body
 	}
 
 	var v Verdict
+	tooLarge := errors.Is(rerr, ErrTooLarge)
+	cancelled := rerr != nil && ctx.Err() != nil
 	switch {
+	case tooLarge && hr.StatusCode >= 400:
+		v = classify(kind, hr.StatusCode, nil) // an error page is still an error (429/5xx back off)
+	case tooLarge:
+		v = Verdict{ClassUnexpected, "too_large"}
+	case cancelled:
+		v = Verdict{ClassUnavailable, "read:canceled"}
 	case rerr != nil:
 		v = Verdict{ClassUnavailable, "read:" + errClass(rerr)}
 	case hr.StatusCode >= 300 && hr.StatusCode < 400:
@@ -309,7 +333,13 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 		v = classify(kind, hr.StatusCode, body)
 	}
 	retryAfter := parseRetryAfter(hr.Header.Get("Retry-After"), c.clock.Now())
-	st := c.pacer.Report(v.Class, retryAfter)
+	var st PacerState
+	if (tooLarge && hr.StatusCode < 400) || cancelled {
+		// AO3 answered fine (we refused the size) or we gave up: neither is AO3 failing.
+		st = c.pacer.Finished()
+	} else {
+		st = c.pacer.Report(v.Class, retryAfter)
+	}
 
 	level := slog.LevelInfo
 	switch v.Class {
@@ -329,8 +359,14 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 	)
 	c.record(RequestRecord{ReqID: reqID, Time: start, Kind: kind, SafePath: safe, Status: hr.StatusCode,
 		Class: v.Class, Reason: v.Reason, Bytes: len(body), Duration: total, Waited: waited, Hop: hop, JobID: jobIDFrom(ctx)})
-	if rerr != nil && errors.Is(rerr, ErrTooLarge) {
+	if cancelled {
+		return nil, ctx.Err()
+	}
+	if tooLarge && hr.StatusCode < 400 {
 		return nil, fmt.Errorf("%w (%d bytes) %s", ErrTooLarge, c.maxBody, safe)
+	}
+	if tooLarge {
+		body = nil // classified by status alone
 	}
 	return &Response{ReqID: reqID, Kind: kind, URL: u, Status: hr.StatusCode, Header: hr.Header, Body: body,
 		Class: v.Class, Reason: v.Reason}, nil

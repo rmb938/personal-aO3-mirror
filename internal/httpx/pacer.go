@@ -227,6 +227,19 @@ func (p *Pacer) Report(class Class, retryAfter time.Duration) PacerState {
 	return p.stateLocked(now)
 }
 
+// Finished records that a request ended without saying anything about AO3's health (we
+// cancelled it, or refused an oversized body): the next request still waits a full interval
+// from now, but failures and backoff are left alone.
+func (p *Pacer) Finished() PacerState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.clock.Now()
+	if now.After(p.last) {
+		p.last = now
+	}
+	return p.stateLocked(now)
+}
+
 func (p *Pacer) setBackoff(t time.Time) {
 	if t.After(p.backoffTill) {
 		p.backoffTill = t

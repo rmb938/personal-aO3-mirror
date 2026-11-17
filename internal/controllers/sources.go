@@ -34,6 +34,8 @@ type AddSourceOptions struct {
 	Priority     int           // higher is picked first within a class
 	PollInterval time.Duration // update poll interval
 	Confirm      bool          // skip the auto_confirm_max gate
+
+	queuedAdd int64 // source_adds row to drop in the same commit (AddQueuedSource)
 }
 
 // Estimate is the projected cost of a full backfill. It contains no names.
@@ -61,6 +63,9 @@ type AddSourceResult struct {
 //
 // Everything after the fetch is one transaction: a failure leaves no source and no page-1 data
 // behind.
+//
+// For a listing source this makes an AO3 request, so it only runs in the daemon (the
+// add_source job, see AddQueuedSource); the CLI queues adds with QueueSourceAdd.
 func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceOptions) (AddSourceResult, error) {
 	src, err := ao3url.Parse(rawURL)
 	if err != nil {
@@ -151,6 +156,11 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 			return err
 		}
 		row.ID = id
+		if o.queuedAdd > 0 {
+			if err := tx.DeleteSourceAdd(ctx, o.queuedAdd); err != nil {
+				return err
+			}
+		}
 		if len(blurbs.ids) > 0 {
 			n, err := linkAndQueue(ctx, tx, id, blurbs, jobs.ClassBackfill)
 			if err != nil {

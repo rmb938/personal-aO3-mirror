@@ -33,15 +33,19 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64) (Detail, error
 	skelID := strconv.FormatInt(id, 10)
 	detail := Detail{"tag_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
 	if resp.Class == httpx.ClassNotFound {
-		return detail, update(store.TagInfoUpdate{Missing: true})
+		return detail, update(store.TagInfoUpdate{AttemptOnly: true})
 	}
 	if err := outcome(resp); err != nil {
+		if _, retry := errors.AsType[RetryError](err); retry {
+			return detail, err // AO3 busy: the scheduler retries after its backoff
+		}
 		if resp.Class == httpx.ClassUnexpected {
 			c.saveSkeleton(ctx, "tag", skelID, resp.Body)
-			// Mark attempted so the next try waits for tags.info_ttl instead of looping.
-			if uerr := update(store.TagInfoUpdate{Missing: true}); uerr != nil {
-				return detail, uerr
-			}
+		}
+		// Permanent (restricted, hidden, adult gate, unexpected): mark attempted so the next try
+		// waits for tags.info_ttl instead of being queued again every minute.
+		if uerr := update(store.TagInfoUpdate{AttemptOnly: true}); uerr != nil {
+			return detail, uerr
 		}
 		return detail, err
 	}
@@ -49,7 +53,7 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64) (Detail, error
 	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "tag_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		c.saveSkeleton(ctx, "tag", skelID, resp.Body)
-		if uerr := update(store.TagInfoUpdate{Missing: true}); uerr != nil {
+		if uerr := update(store.TagInfoUpdate{AttemptOnly: true}); uerr != nil {
 			return detail, uerr
 		}
 		return detail, parseUnexpected(rep.Missing)

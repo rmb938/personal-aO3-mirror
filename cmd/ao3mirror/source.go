@@ -19,11 +19,13 @@ import (
 
 const sourceUsage = `usage: ao3mirror source <command> [flags]
 
-  add URL [--order kudos_desc] [--priority N] [--poll 6h] [--confirm]
-        add an AO3 tag/user/pseud/bookmarks/series/collection/work URL. Fetches page 1 once
-        (1 request) to estimate the backfill. Sources over sources.auto_confirm_max works wait
-        for 'confirm' unless --confirm. --order: <field>_<asc|desc>, field one of
-        author,bookmarks,comments,created,hits,kudos,revised,title,words.
+  add URL [--order kudos_desc] [--priority N] [--poll 6h] [--confirm] [--wait 2m]
+        add an AO3 tag/user/pseud/bookmarks/series/collection/work URL. The daemon fetches
+        page 1 once (1 request) to estimate the backfill; with a daemon running, add waits up
+        to --wait for it, otherwise the add stays queued for 'ao3mirror run'. Sources over
+        sources.auto_confirm_max works wait for 'confirm' unless --confirm. --order:
+        <field>_<asc|desc>, field one of author,bookmarks,comments,created,hits,kudos,revised,
+        title,words.
   list [--names]           list sources
   show ID [--names]        one source in detail
   confirm ID               start a pending (large) source
@@ -36,6 +38,76 @@ const sourceUsage = `usage: ao3mirror source <command> [flags]
 
 Tag/user/collection names are hidden (shown as hashes) unless --names is given.
 `
+
+// waitSourceAdd follows a queued add: with a daemon running it waits up to wait for page 1 and
+// prints the result; otherwise the add stays queued for the next `ao3mirror run`.
+func waitSourceAdd(ctx context.Context, a *app, q controllers.QueuedSourceAdd, wait time.Duration, names bool, out, errOut io.Writer) int {
+	verb := "queued"
+	if !q.Created {
+		verb = "already queued"
+	}
+	fmt.Fprintf(out, "source add %s as job %d (see: ao3mirror debug job %d)\n", verb, q.JobID, q.JobID)
+	running, err := daemonRunning(a.cfg.DataDir)
+	if err != nil {
+		fmt.Fprintf(errOut, "add: checking for a running daemon: %v\n", err)
+		return 1
+	}
+	if !running {
+		fmt.Fprintf(out, "no daemon running: 'ao3mirror run' fetches page 1 (1 request) and adds the source\n")
+		return 0
+	}
+	if wait <= 0 {
+		return 0
+	}
+	fmt.Fprintf(out, "waiting for the daemon to fetch page 1...\n")
+	deadline := time.Now().Add(wait)
+	for {
+		o, err := a.ctl.SourceAddOutcome(ctx, q.JobID)
+		if err != nil {
+			fmt.Fprintf(errOut, "add: %v\n", err)
+			return 1
+		}
+		switch o.State {
+		case store.JobDone:
+			printAdded(out, a, *o.Result, names)
+			return 0
+		case store.JobFailed, store.JobCancelled:
+			if id, ok := strings.CutPrefix(o.Error, string(controllers.CodeSourceExists)+":"); ok {
+				fmt.Fprintf(errOut, "already added as source %s (see: ao3mirror source show %s)\n", id, id)
+				return 1
+			}
+			fmt.Fprintf(errOut, "add failed: %s\n", dash(o.Error))
+			return 1
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintf(out, "still %s after %s (AO3 busy or a long queue); the daemon adds the source when it gets to it\n", o.State, wait)
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(out, "stopped waiting; the add stays queued\n")
+			return 0
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func printAdded(out io.Writer, a *app, res controllers.AddSourceResult, names bool) {
+	s, e := res.Source, res.Estimate
+	fmt.Fprintf(out, "source %d added: kind=%s target=%s state=%s order=%s\n", s.ID, s.Kind, target(s, names), s.State, s.BackfillOrder)
+	fmt.Fprintf(out, "estimate: %s works, %s listing pages; ~%s requests (~%s at %s/request), ~%s on disk\n",
+		comma(e.Total), comma(e.Pages), comma(e.Requests), human(e.Duration), a.cfg.Rate.Interval, mb(e.DiskBytes))
+	if e.Windowed {
+		fmt.Fprintf(out, "note: over 100,000 works; backfill will be sliced into date windows\n")
+	}
+	if res.Blurbs > 0 {
+		fmt.Fprintf(out, "page 1: %d works stored\n", res.Blurbs)
+	}
+	if s.State == store.SourcePendingConfirm {
+		fmt.Fprintf(out, "pending: more than sources.auto_confirm_max (%d) works. Start it with 'ao3mirror source confirm %d',\nor remove it and re-add a narrower URL (filters on the tag page).\n",
+			a.cfg.Sources.AutoConfirmMax, s.ID)
+	}
+}
 
 func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -53,12 +125,13 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 		poll := fs.Duration("poll", 0, "update poll interval (default sources.poll_interval)")
 		confirm := fs.Bool("confirm", false, "skip the auto_confirm_max gate")
 		names := fs.Bool("names", false, "show tag/user names")
+		wait := fs.Duration("wait", 2*time.Minute, "how long to wait for a running daemon to fetch page 1 (0: don't wait)")
 		u, ok := parseWithPositional(fs, rest)
 		if !ok {
 			fmt.Fprint(errOut, sourceUsage)
 			return 2
 		}
-		res, err := svc.AddSource(ctx, u, controllers.AddSourceOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
+		q, err := svc.QueueSourceAdd(ctx, u, controllers.AddSourceOptions{Order: *order, Priority: *prio, PollInterval: *poll, Confirm: *confirm})
 		if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
 			fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", ex.ID, ex.ID)
 			return 1
@@ -67,21 +140,11 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprintf(errOut, "add failed: %v\n", err)
 			return 1
 		}
-		s, e := res.Source, res.Estimate
-		fmt.Fprintf(out, "source %d added: kind=%s target=%s state=%s order=%s\n", s.ID, s.Kind, target(s, *names), s.State, s.BackfillOrder)
-		fmt.Fprintf(out, "estimate: %s works, %s listing pages; ~%s requests (~%s at %s/request), ~%s on disk\n",
-			comma(e.Total), comma(e.Pages), comma(e.Requests), human(e.Duration), a.cfg.Rate.Interval, mb(e.DiskBytes))
-		if e.Windowed {
-			fmt.Fprintf(out, "note: over 100,000 works; backfill will be sliced into date windows\n")
+		if q.Added != nil {
+			printAdded(out, a, *q.Added, *names)
+			return 0
 		}
-		if res.Blurbs > 0 {
-			fmt.Fprintf(out, "page 1: %d works stored\n", res.Blurbs)
-		}
-		if s.State == store.SourcePendingConfirm {
-			fmt.Fprintf(out, "pending: more than sources.auto_confirm_max (%d) works. Start it with 'ao3mirror source confirm %d',\nor remove it and re-add a narrower URL (filters on the tag page).\n",
-				a.cfg.Sources.AutoConfirmMax, s.ID)
-		}
-		return 0
+		return waitSourceAdd(ctx, a, q, *wait, *names, out, errOut)
 	case "list":
 		fs := flag.NewFlagSet("source list", flag.ContinueOnError)
 		fs.SetOutput(errOut)

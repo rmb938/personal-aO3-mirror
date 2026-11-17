@@ -46,6 +46,17 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 	log := c.logger(ctx)
 	path := ao3url.WorkPath(strconv.FormatInt(id, 10))
 	resp, err := c.get(ctx, httpx.KindWork, path)
+	if pe, ok := errors.AsType[PermanentError](err); ok && pe.Code == CodeTooLarge {
+		// Mark it like a parse failure so listings don't queue another huge download until the
+		// work changes on AO3.
+		if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			return tx.MarkWorkParseFailed(ctx, id)
+		}); err != nil {
+			return nil, err
+		}
+		log.Warn("work page over max body; not retrying until it changes", "work_id", id)
+		return Detail{"work_id": id}, pe
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +73,13 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 		detail["status"] = string(status)
 		log.Info("work unavailable on AO3; local copy kept", "work_id", id, "status", string(status))
 		return detail, nil
-	case httpx.ClassUnexpected, httpx.ClassAdultGate:
+	case httpx.ClassAdultGate:
+		// A cookie/session problem, not this page's structure: store nothing and don't mark the
+		// work fetched, so it is queued again by the next listing poll or rescan once the
+		// interstitial stops (which a reparse of the interstitial never could).
+		log.Warn("adult interstitial despite view_adult cookie; work left unfetched", "work_id", id, "req_id", resp.ReqID)
+		return detail, PermanentError{Code: CodeAdultGate, Detail: resp.Reason}
+	case httpx.ClassUnexpected:
 		return detail, c.workParseFailed(ctx, id, path, resp, PermanentError{Code: ErrorCode(resp.Class), Detail: resp.Reason})
 	}
 	if err := outcome(resp); err != nil {

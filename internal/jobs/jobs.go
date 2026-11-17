@@ -21,7 +21,14 @@ const (
 	KindWork     = "work"
 	KindTagInfo  = "tag_info"
 	KindSeries   = "series_info"
+	// KindSourceAdd fetches page 1 of a source added from the CLI and creates it (target: the
+	// source_adds row id).
+	KindSourceAdd = "source_add"
 )
+
+// SourceAddKey is the dedupe key for adding one source; hash is a content-free hash of its
+// kind, target and filters.
+func SourceAddKey(hash string) string { return "source_add:" + hash }
 
 // TagKey is the dedupe key for fetching a tag's info page.
 func TagKey(id int64) string { return "tag:" + strconv.FormatInt(id, 10) }

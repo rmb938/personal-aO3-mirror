@@ -133,6 +133,11 @@ Dependencies are pure Go, so there is no cgo and the result is a static binary:
   - `work`: `/works/<id>`
 - **URL input:** `ao3url.Parse(anyAO3URL)` turns any pasted AO3 URL into a Source. This is what the future UI/API "mirror this URL" button uses. A filtered `/works?tag_id=X&work_search[...]` URL is rewritten to the allowed `/tags/X/works?work_search[...]` form.
 - **Add flow:**
+  0. `source add` only validates the URL and queues an `add_source` job (the URL waits in
+     `source_adds`; the job targets that row id). Only the daemon talks to AO3, so page 1 goes
+     through its one paced client like every other request. With a daemon running, the CLI waits
+     (`--wait`, default 2m) and prints the result; otherwise the add runs at the next `run`.
+     Single-work sources need no request and are added at once.
   1. Fetch page 1 (1 request). It gives the total count and its blurbs are stored at once.
   2. Compute an estimate: listing pages + work fetches + days at the current rate + approximate disk.
   3. If the count is at or below `sources.auto_confirm_max` (default 2000), the source goes `active`. Otherwise it waits in `pending_confirm` until `source confirm <id>` or a narrowed re-add.

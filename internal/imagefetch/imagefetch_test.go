@@ -179,3 +179,60 @@ func TestBlocksNonPublicAddresses(t *testing.T) {
 	require.Equal(t, 1, counts["skipped"], "loopback image must be refused")
 	require.Empty(t, h.seen, "loopback image must be refused before connecting")
 }
+
+// A redirect to another host is checked like a first request: that host's robots.txt is
+// fetched and obeyed, and its per-host interval is waited out.
+func TestRedirectChecksTargetHostRobots(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	clk := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clk }
+	var slept time.Duration
+	fakeSleep := func(_ context.Context, d time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		clk, slept = clk.Add(d), slept+d
+		return nil
+	}
+	b := newHost(t) // robots.txt disallows /private/
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			w.WriteHeader(http.StatusNotFound)
+		case "/to-private.png":
+			http.Redirect(w, r, b.URL+"/private/b.png", http.StatusFound)
+		case "/to-ok.png":
+			http.Redirect(w, r, b.URL+"/a.png", http.StatusFound)
+		case "/loop.png":
+			http.Redirect(w, r, "/loop.png", http.StatusFound)
+		}
+	}))
+	t.Cleanup(a.Close)
+	st := openStore(t, t.TempDir(), now)
+	db := st.AutoCommitForTestOnly()
+	_, err := db.QueueImages(ctx, 1, []string{a.URL + "/to-private.png", a.URL + "/to-ok.png", a.URL + "/loop.png"})
+	require.NoError(t, err)
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), PerHostInterval: 3 * time.Second,
+		MaxBytes: 1000, Now: now, Sleep: fakeSleep, AllowLoopback: true})
+	require.NoError(t, err)
+	for range 50 {
+		ran, wait, err := w.Step(ctx)
+		require.NoError(t, err)
+		if !ran {
+			next, err := db.NextImageDueForTestOnly(ctx)
+			require.NoError(t, err)
+			if next.IsZero() {
+				break
+			}
+			require.NoError(t, fakeSleep(ctx, max(wait, time.Second)))
+		}
+	}
+	counts, _, err := db.ImageCounts(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"ok": 1, "disallowed": 1, "failed": 1}, counts)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	require.Contains(t, b.seen, "/robots.txt", "redirect target's robots.txt not checked")
+	require.NotContains(t, b.seen, "/private/b.png", "redirect followed into a robots-disallowed path")
+	require.Positive(t, slept, "redirect hops did not wait for the host interval")
+}

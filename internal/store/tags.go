@@ -108,7 +108,9 @@ type TagInfoUpdate struct {
 	Parents   []string
 	MetaTags  []string
 	Synonyms  []string // linked as mergers of this tag
-	Missing   bool     // tag page 404: only info_fetched_at is updated
+	// AttemptOnly records a fetch that yielded no info (404, restricted, unparseable): only
+	// info_fetched_at is updated, so the tag waits for tags.info_ttl before the next try.
+	AttemptOnly bool
 }
 
 // UpdateTagInfo records wrangling info for a tag (canonical, synonym-of, parents, metatags).
@@ -120,7 +122,7 @@ type TagInfoUpdate struct {
 func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) error {
 	tx := s.meta
 	now := s.unix()
-	if u.Missing {
+	if u.AttemptOnly {
 		_, err := tx.ExecContext(ctx, `UPDATE tags SET info_fetched_at = ? WHERE id = ?`, now, tagID)
 		return err
 	}

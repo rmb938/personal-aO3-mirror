@@ -84,6 +84,9 @@ func New(opts Options) *Scheduler {
 		jobs.KindSeries: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target))
 		},
+		jobs.KindSourceAdd: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.AddQueuedSource(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
+		},
 	}
 	for k := range s.handlers {
 		s.kinds = append(s.kinds, k)
