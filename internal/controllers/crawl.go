@@ -73,7 +73,7 @@ func day(t time.Time) string { return t.UTC().Format("2006-01-02") }
 // permanent; other store errors are returned as-is (retried).
 func (c *Controllers) readSource(ctx context.Context, sourceID int64) (store.SourceRow, ao3url.Source, error) {
 	r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
-		return tx.GetSource(ctx, sourceID)
+		return tx.GetSourceRow(ctx, sourceID)
 	})
 	if errors.Is(err, store.ErrNoSource) {
 		return r, ao3url.Source{}, PermanentError{Code: CodeNoSource}
@@ -111,6 +111,25 @@ func (c *Controllers) fetchSourcePage(ctx context.Context, sourceID int64, src a
 	return p, resp.ReqID, nil
 }
 
+// recordPageFailure records a failed listing page on its source in one transaction: LastError,
+// plus whatever update changes on the freshly read row (a cursor block, the poll time). update
+// decides itself whether the cursor moved during the fetch. A source removed meanwhile is not
+// an error: there is nothing left to record.
+func (c *Controllers) recordPageFailure(ctx context.Context, sourceID int64, msg string, update func(fresh *store.SourceRow)) error {
+	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		fresh, err := tx.GetSourceRow(ctx, sourceID)
+		if errors.Is(err, store.ErrNoSource) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		update(&fresh)
+		fresh.LastError = msg
+		return tx.UpdateSourceProgress(ctx, fresh)
+	})
+}
+
 // PollSourcePage walks one page of a source newest-revised-first, and queues the next page until a
 // page has nothing new or changed.
 //
@@ -123,17 +142,23 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 	if err != nil {
 		return nil, err
 	}
+	// Once per poll (page 1): find member works that still need a fetch (an earlier fetch failed
+	// or never ran, e.g. daemon down). The walk stops at the first unchanged page, so works
+	// deeper in the listing would otherwise wait for the full rescan. Zero requests; read here,
+	// before the write transaction, because it scans all of the source's memberships.
+	var stale []int64
+	if page == 1 {
+		if stale, err = store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]int64, error) {
+			return tx.SourceWorksNeedingFetch(ctx, sourceID, 500)
+		}); err != nil {
+			return nil, err
+		}
+	}
 	p, reqID, err := c.fetchSourcePage(ctx, r.ID, src, page, ao3url.UpdateOrder, nil)
 	if IsParseFailure(err) {
 		// No retry: the next poll is a full poll_interval away.
-		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-			fresh, err2 := tx.GetSource(ctx, sourceID)
-			if err2 != nil {
-				return err2
-			}
-			fresh.LastError = "poll page " + strconv.Itoa(page) + ": " + err.Error()
+		uerr := c.recordPageFailure(ctx, sourceID, "poll page "+strconv.Itoa(page)+": "+err.Error(), func(fresh *store.SourceRow) {
 			fresh.LastPollAt = c.options.Now()
-			return tx.UpdateSourceProgress(ctx, fresh)
 		})
 		return nil, errors.Join(err, uerr)
 	}
@@ -142,7 +167,7 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 	}
 	var detail Detail
 	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		fresh, err := tx.GetSource(ctx, sourceID)
+		fresh, err := tx.GetSourceRow(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
 			return PermanentError{Code: CodeNoSource} // removed during the fetch
 		}
@@ -153,40 +178,34 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 		if err != nil {
 			return err
 		}
-		enqueued, err := linkAndQueueBlurbs(ctx, tx, fresh.ID, blurbs, jobs.ClassPollFetch)
+		enqueued, err := linkAndQueueBlurbs(ctx, tx, fresh.ID, &blurbs, jobs.ClassPollFetch)
 		if err != nil {
 			return err
 		}
 		fresh.LastError = ""
-		// Once per poll (page 1): re-queue member works that still need a fetch (an earlier
-		// fetch failed or never ran, e.g. daemon down). The walk below stops at the first
-		// unchanged page, so works deeper in the listing would otherwise wait for the full
-		// rescan. Zero requests.
 		requeued := 0
-		if page == 1 {
-			ids, err := tx.SourceWorksNeedingFetch(ctx, fresh.ID, 500)
-			if err != nil {
+		for _, wid := range stale { // deduplicated: a fetch queued meanwhile is not doubled
+			if _, created, err := enqueueWorkFetch(ctx, tx, wid, fresh.ID, jobs.ClassPollFetch); err != nil {
 				return err
-			}
-			for _, wid := range ids {
-				if _, created, err := enqueueWorkFetch(ctx, tx, wid, fresh.ID, jobs.ClassPollFetch); err != nil {
-					return err
-				} else if created {
-					requeued++
-				}
+			} else if created {
+				requeued++
 			}
 		}
 		l := p.listing
 		pg := l.Pagination
 		more := pg.Current < pg.Last && page < c.options.MaxPollPages
+		// What is new *to this source*: new or changed works, and works another source (or a
+		// single fetch) already mirrored but this source had not seen. Otherwise a source that
+		// shares works with one polled first would stop on page 1.
+		news := blurbs.newWorks + blurbs.changed + blurbs.newLinks
 		switch {
 		case src.Kind == ao3url.KindSeries:
 			// Series pages are in part order; new parts can be anywhere, so walk them all.
-		case blurbs.newWorks+blurbs.changed == 0:
+		case news == 0:
 			more = false // newest-first: an unchanged page means older pages are unchanged too
 		}
 		if capped := pg.Current < pg.Last && page >= c.options.MaxPollPages &&
-			(src.Kind == ao3url.KindSeries || blurbs.newWorks+blurbs.changed > 0); capped {
+			(src.Kind == ao3url.KindSeries || news > 0); capped {
 			log.Warn("poll page cap reached; later changes wait for the full rescan (consider source set --poll with a shorter interval)",
 				"source_id", fresh.ID, "max_poll_pages", c.options.MaxPollPages, "page", page, "last_page", pg.Last)
 		}
@@ -236,7 +255,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 	}
 
 	// Enter windowed mode when the source is larger than AO3's result window.
-	if cur.WindowTo == "" && src.Kind.Sortable() && r.TotalWorks > c.options.MaxResults {
+	if cur.WindowTo == "" && c.needsWindows(src.Kind, r.TotalWorks) {
 		to := c.options.Now().UTC()
 		cur.SpanDays = c.options.WindowDays
 		cur.WindowTo, cur.WindowFrom = day(to), day(to.AddDate(0, 0, -cur.SpanDays+1))
@@ -256,20 +275,15 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 		fetchClass = jobs.ClassMaintenance
 	}
 	p, reqID, err := c.fetchSourcePage(ctx, r.ID, src, page, order, win)
+	msg := func() string { return "backfill page " + strconv.Itoa(page) + ": " + err.Error() }
 	if IsParseFailure(err) {
 		// The same page will parse the same way: stop this source's backfill here until a new
 		// parser version ships (it then resumes automatically).
-		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-			fresh, err2 := tx.GetSource(ctx, sourceID)
-			if err2 != nil {
-				return err2
-			}
+		uerr := c.recordPageFailure(ctx, sourceID, msg(), func(fresh *store.SourceRow) {
 			if fresh.BackfillCursor == r.BackfillCursor { // not moved during the fetch
 				cur.BlockedParser = parse.Version
 				fresh.BackfillCursor = cur.JSON()
 			}
-			fresh.LastError = "backfill page " + strconv.Itoa(page) + ": " + err.Error()
-			return tx.UpdateSourceProgress(ctx, fresh)
 		})
 		log.Warn("backfill blocked on parse failure until parser update", "page", page, "parser_version", parse.Version)
 		return Detail{"page": page, "blocked_parser": parse.Version}, errors.Join(err, uerr)
@@ -278,17 +292,11 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 		// Not the page structure, but retrying now would get the same answer: hold this page
 		// back for a poll interval instead of re-queueing it every round.
 		retryAt := c.options.Now().Add(r.PollInterval)
-		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-			fresh, err2 := tx.GetSource(ctx, sourceID)
-			if err2 != nil {
-				return err2
-			}
+		uerr := c.recordPageFailure(ctx, sourceID, msg(), func(fresh *store.SourceRow) {
 			if fresh.BackfillCursor == r.BackfillCursor {
 				cur.RetryAt = retryAt.Unix()
 				fresh.BackfillCursor = cur.JSON()
 			}
-			fresh.LastError = "backfill page " + strconv.Itoa(page) + ": " + err.Error()
-			return tx.UpdateSourceProgress(ctx, fresh)
 		})
 		log.Warn("backfill page failed; held back", "page", page, "error", err.Error(), "retry_at", retryAt)
 		return Detail{"page": page, "retry_at": retryAt.Unix()}, errors.Join(err, uerr)
@@ -299,7 +307,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 
 	var detail Detail
 	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		fresh, err := tx.GetSource(ctx, sourceID)
+		fresh, err := tx.GetSourceRow(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
 			return PermanentError{Code: CodeNoSource} // removed during the fetch
 		}
@@ -310,7 +318,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 		if err != nil {
 			return err
 		}
-		enqueued, err := linkAndQueueBlurbs(ctx, tx, fresh.ID, blurbs, fetchClass)
+		enqueued, err := linkAndQueueBlurbs(ctx, tx, fresh.ID, &blurbs, fetchClass)
 		if err != nil {
 			return err
 		}

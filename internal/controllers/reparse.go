@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
@@ -81,48 +82,59 @@ const (
 	reparseFailed
 )
 
-// reparseOne reparses a single work in one transaction (reads, parse, writes; no requests;
-// parsing holds the write lock for milliseconds). Parse failures are counted (and
-// skeletonized), not returned. Counters change only after the transaction committed.
+// reparseOne reparses a single work (no requests). Steps: read the page (read transaction),
+// parse it with no transaction open (a big page takes a while, and holding the write lock would
+// stall the daemon), then write in one short transaction that re-checks the stored page did not
+// change meanwhile (a fetch may have stored a newer one: that one wins, and is skipped here).
+// Parse failures are counted (and skeletonized), not returned. Counters change only after the
+// write committed.
 func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64, force bool, res *ReparseResult) error {
-	outcome := reparseSkipped
-	images := 0
-	err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	type stored struct {
+		page []byte
+		at   time.Time
+		ok   bool
+	}
+	cur, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (stored, error) {
 		if !force {
 			v, err := tx.WorkParserVersion(ctx, id)
-			if err != nil {
-				return err
-			}
-			if v >= parse.Version {
-				return nil
+			if err != nil || v >= parse.Version {
+				return stored{}, err
 			}
 		}
 		page, at, err := tx.LatestRawPage(ctx, id)
 		if errors.Is(err, store.ErrNoRawPage) {
-			return nil
+			return stored{}, nil
 		}
-		if err != nil {
-			return err
-		}
-		w, rep, err := parse.ParseWork(id, page)
-		log.Debug("parse report", append([]any{"work_id", id}, rep.Attrs()...)...)
-		if err != nil {
-			outcome = reparseFailed
-			// Counted, not returned: one bad page must not stop the run. The parse error names a
-			// CSS path only (content-free).
-			log.Warn("reparse failed", "work_id", id, "err", err.Error(), "missing", rep.Missing)
-			c.saveSkeleton(logx.With(ctx, log, "work_id", id), "work", strconv.FormatInt(id, 10), page)
-			return nil
-		}
-		sw, err := c.storeWork(ctx, tx, w, true, at)
-		if err != nil {
-			return err
-		}
-		outcome, images = reparseDone, sw.images
-		return nil
+		return stored{page: page, at: at, ok: err == nil}, err
 	})
 	if err != nil {
 		return err
+	}
+	outcome := reparseSkipped
+	images := 0
+	if cur.ok {
+		w, rep, perr := parse.ParseWork(id, cur.page)
+		log.Debug("parse report", append([]any{"work_id", id}, rep.Attrs()...)...)
+		if perr != nil {
+			outcome = reparseFailed
+			// Counted, not returned: one bad page must not stop the run. The parse error names a
+			// CSS path only (content-free).
+			log.Warn("reparse failed", "work_id", id, "err", perr.Error(), "missing", rep.Missing)
+			c.saveSkeleton(logx.With(ctx, log, "work_id", id), "work", strconv.FormatInt(id, 10), cur.page)
+		} else if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			_, at, err := tx.LatestRawPage(ctx, id)
+			if err != nil || !at.Equal(cur.at) {
+				return err // a newer page was stored while we parsed: leave it to that fetch
+			}
+			sw, err := c.storeWork(ctx, tx, w, true, cur.at)
+			if err != nil {
+				return err
+			}
+			outcome, images = reparseDone, sw.images
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	res.Seen++
 	switch outcome {

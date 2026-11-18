@@ -21,6 +21,7 @@ type SiteWork struct {
 	Chapters int // posted
 	Expected int // 0 = "?"
 	Deleted  bool
+	Untagged bool // no longer in the tag's listing, but its work page still loads
 }
 
 // Site is a synthetic AO3 with one tag. It supports the listing params the scraper uses:
@@ -108,7 +109,7 @@ func (s *Site) listing(w http.ResponseWriter, q url.Values) {
 	from, _ := time.Parse("2006-01-02", q.Get("work_search[date_from]"))
 	to, _ := time.Parse("2006-01-02", q.Get("work_search[date_to]"))
 	for _, sw := range s.Works {
-		if sw.Deleted || (!from.IsZero() && sw.Revised.Before(from)) || (!to.IsZero() && sw.Revised.After(to.Add(24*time.Hour-time.Second))) {
+		if sw.Deleted || sw.Untagged || (!from.IsZero() && sw.Revised.Before(from)) || (!to.IsZero() && sw.Revised.After(to.Add(24*time.Hour-time.Second))) {
 			continue
 		}
 		list = append(list, sw)

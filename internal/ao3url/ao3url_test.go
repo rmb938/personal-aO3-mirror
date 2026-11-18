@@ -62,6 +62,25 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+// Errors end up in job last_error and logs, so they never repeat names from the URL.
+func TestErrorsAreContentFree(t *testing.T) {
+	const sentinel = "SentinelFixtureName"
+	for _, in := range []string{
+		host + "/tags/" + sentinel + "%zz/works",
+		host + "/users/" + sentinel + "%zz",
+		host + "/users/x/pseuds/" + sentinel + "%zz",
+		host + "/collections/" + sentinel + "%zz",
+		"http://[" + sentinel,
+	} {
+		_, err := Parse(in)
+		require.Error(t, err, in)
+		require.NotContains(t, err.Error(), sentinel, "Parse error leaked the URL")
+	}
+	_, err := BasePath(Source{Kind: KindPseud, Target: sentinel})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), sentinel, "BasePath error leaked the target")
+}
+
 func TestListingPathsAllowedByRobots(t *testing.T) {
 	data, err := robotstxt.FromString(fakeao3.Robots)
 	require.NoError(t, err)

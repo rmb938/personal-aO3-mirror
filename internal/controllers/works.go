@@ -29,11 +29,41 @@ func (c *Controllers) EnqueueWorkFetch(ctx context.Context, workID, sourceID int
 	return jobID, created, err
 }
 
-// enqueueWorkFetch is EnqueueWorkFetch inside the caller's transaction: the one place that
-// builds work-fetch jobs.
+// enqueueWorkFetch is EnqueueWorkFetch inside the caller's transaction.
 func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64, class int) (int64, bool, error) {
-	return tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: sourceID,
+	return enqueueWorkJob(ctx, tx, jobs.KindWork, workID, sourceID, class)
+}
+
+// enqueueWorkJob is the one place that builds work-fetch jobs (KindWork or KindWorkVerify).
+// Both kinds share the work's dedupe key: one fetch per work at a time.
+func enqueueWorkJob(ctx context.Context, tx *store.Tx, kind string, workID, sourceID int64, class int) (int64, bool, error) {
+	return tx.EnqueueJob(ctx, store.Job{Kind: kind, SourceID: sourceID,
 		Target: strconv.FormatInt(workID, 10), Priority: class, DedupeKey: jobs.WorkKey(workID)})
+}
+
+// VerifySourceWork re-fetches a work a rescan of sourceID did not see (the work_verify job,
+// queued at since). If AO3 still has it, it left the source: its membership is dropped (unless
+// a listing showed it there again after since), so later rescans don't verify it forever. A
+// deleted, hidden or restricted work keeps its membership, so the mirror still lists it under
+// the source.
+func (c *Controllers) VerifySourceWork(ctx context.Context, id, sourceID int64, since time.Time) (Detail, error) {
+	detail, err := c.FetchWork(ctx, id, sourceID)
+	if err != nil {
+		return detail, err
+	}
+	if _, gone := detail["status"]; gone || sourceID <= 0 {
+		return detail, nil // deleted/hidden/restricted: keep it listed under the source
+	}
+	var dropped bool
+	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		dropped, err = tx.RemoveSourceWorkNotSeenSince(ctx, sourceID, id, since)
+		return err
+	}); err != nil {
+		return detail, err
+	}
+	detail["left_source"] = dropped
+	return detail, nil
 }
 
 // FetchWork fetches one full work page and stores the raw page, chapter bodies and metadata in
@@ -121,7 +151,9 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 		if err != nil || !exists {
 			return err
 		}
-		return tx.LinkSourceWorks(ctx, sourceID, []int64{id})
+		// A membership, but not a listing sighting: last_seen is left alone, so a rescan's
+		// verification fetch never keeps a work that left the source.
+		return tx.AddSourceWork(ctx, sourceID, id)
 	}); err != nil {
 		return detail, err
 	}

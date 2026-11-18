@@ -63,6 +63,7 @@ type blurbsResult struct {
 	needFetch []int64 // works that need a full page fetch
 	newWorks  int
 	changed   int
+	newLinks  int // works this source had not listed before (set by linkAndQueueBlurbs)
 }
 
 // storeListing stores a parsed page: the series metadata (if any) and the blurbs (metadata and
@@ -95,10 +96,12 @@ func (c *Controllers) storeListing(ctx context.Context, tx *store.Tx, p parsedLi
 	return res, nil
 }
 
-// linkAndQueueBlurbs records the blurbs as members of a source and queues the fetches they need. It
-// returns how many fetch jobs were newly created.
-func linkAndQueueBlurbs(ctx context.Context, tx *store.Tx, sourceID int64, res blurbsResult, class int) (int, error) {
-	if err := tx.LinkSourceWorks(ctx, sourceID, res.ids); err != nil {
+// linkAndQueueBlurbs records the blurbs as members of a source (setting res.newLinks to how
+// many were new to it) and queues the fetches they need. It returns how many fetch jobs were
+// newly created.
+func linkAndQueueBlurbs(ctx context.Context, tx *store.Tx, sourceID int64, res *blurbsResult, class int) (int, error) {
+	var err error
+	if res.newLinks, err = tx.LinkSourceWorks(ctx, sourceID, res.ids); err != nil {
 		return 0, err
 	}
 	enqueued := 0

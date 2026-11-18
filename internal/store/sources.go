@@ -144,6 +144,17 @@ func (s *ReadTx) ListSources(ctx context.Context) ([]SourceRow, error) {
 	return out, rows.Err()
 }
 
+// GetSourceRow is GetSource without the member counts (MemberWorks and FetchedWorks are 0),
+// for crawl and settings paths that run on every page: the counts scan all of the source's
+// memberships.
+func (s *ReadTx) GetSourceRow(ctx context.Context, id int64) (SourceRow, error) {
+	r, err := scanSourceRow(s.meta.QueryRowContext(ctx, `SELECT `+sourceBaseCols+` FROM sources WHERE id = ?`, id), false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, ErrNoSource
+	}
+	return r, err
+}
+
 // SourceExists reports whether a source row exists (any state), without the member counts.
 func (s *ReadTx) SourceExists(ctx context.Context, id int64) (bool, error) {
 	var n int
@@ -241,19 +252,52 @@ func (s *Tx) DeleteSource(ctx context.Context, id int64) error {
 	return nil
 }
 
-// LinkSourceWorks records that works appeared in a source's listing.
-func (s *Tx) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []int64) error {
-	if len(workIDs) == 0 {
-		return nil
-	}
+// LinkSourceWorks records that works appeared in a source's listing: new memberships are
+// added and every one's last_seen is set to now. It returns how many were new to the source.
+// Only listing sightings call it; a work fetch uses AddSourceWork, which never refreshes
+// last_seen (so rescans can tell a work that left the source).
+func (s *Tx) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []int64) (int, error) {
 	now := s.unix()
+	added := 0
 	for _, w := range workIDs {
-		if _, err := s.meta.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
-			ON CONFLICT (source_id, work_id) DO UPDATE SET last_seen = excluded.last_seen`, sourceID, w, now, now); err != nil {
-			return err
+		res, err := s.meta.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
+			ON CONFLICT (source_id, work_id) DO NOTHING`, sourceID, w, now, now)
+		if err != nil {
+			return added, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			added++
+			continue
+		}
+		if _, err := s.meta.ExecContext(ctx, `UPDATE source_works SET last_seen = ? WHERE source_id = ? AND work_id = ?`,
+			now, sourceID, w); err != nil {
+			return added, err
 		}
 	}
-	return nil
+	return added, nil
+}
+
+// AddSourceWork makes a work a member of a source if it is not one yet (a fetch for that
+// source, e.g. a single-work source). An existing membership is left alone: last_seen only
+// moves on listing sightings.
+func (s *Tx) AddSourceWork(ctx context.Context, sourceID, workID int64) error {
+	now := s.unix()
+	_, err := s.meta.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
+		ON CONFLICT (source_id, work_id) DO NOTHING`, sourceID, workID, now, now)
+	return err
+}
+
+// RemoveSourceWorkNotSeenSince drops a work's membership in a source if no listing has shown
+// it there since since (it left the source). The work itself is kept. It reports whether the
+// membership was dropped.
+func (s *Tx) RemoveSourceWorkNotSeenSince(ctx context.Context, sourceID, workID int64, since time.Time) (bool, error) {
+	res, err := s.meta.ExecContext(ctx, `DELETE FROM source_works WHERE source_id = ? AND work_id = ? AND last_seen < ?`,
+		sourceID, workID, since.Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or

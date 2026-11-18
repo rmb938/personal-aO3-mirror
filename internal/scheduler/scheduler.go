@@ -78,6 +78,9 @@ func New(opts Options) *Scheduler {
 		jobs.KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)
 		},
+		jobs.KindWorkVerify: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+			return s.controllers.VerifySourceWork(ctx, atoi64(j.Target), j.SourceID, j.CreatedAt)
+		},
 		jobs.KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
@@ -316,20 +319,13 @@ func (s *Scheduler) maybePrune(ctx context.Context) {
 		return
 	}
 	s.lastPrune = now
-	var jobs, reqs int64
-	if err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		var err error
-		if jobs, err = tx.PruneJobs(ctx, 7*24*time.Hour, 30*24*time.Hour); err != nil {
-			return err
-		}
-		reqs, err = tx.PruneRequests(ctx, 30*24*time.Hour)
-		return err
-	}); err != nil {
+	res, err := s.controllers.PruneHistory(ctx)
+	if err != nil {
 		s.log.Warn("prune failed", "err", err.Error())
 		return
 	}
-	if jobs+reqs > 0 {
-		s.log.Info("pruned", "jobs", jobs, "requests", reqs)
+	if res.Jobs+res.Requests > 0 {
+		s.log.Info("pruned", "jobs", res.Jobs, "requests", res.Requests)
 	}
 }
 

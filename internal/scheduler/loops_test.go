@@ -122,6 +122,62 @@ func TestTooLargeWorkFailsOnce(t *testing.T) {
 	require.Equal(t, 1, countRequests(e, uri), "oversized page re-queued by the next poll")
 }
 
+// A work that left the source (still on AO3) is verified once after a rescan and then dropped
+// from the source, not re-verified on every rescan; a deleted one stays listed under it.
+func TestRescanDropsWorkThatLeftSource(t *testing.T) {
+	e := newEnv(t, 5, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour })
+	id := e.add(e.site.TagPath())
+	e.drain(50)
+	e.site.Update(5002, func(w *fakeao3.SiteWork) { w.Untagged = true })
+	e.site.Update(5003, func(w *fakeao3.SiteWork) { w.Deleted = true })
+	for range 3 { // three rescans
+		e.clk.Advance(25 * time.Hour)
+		e.drain(100)
+	}
+	require.Equal(t, 2, countRequests(e, "/works/5002?view_full_work=true"), "initial + one verification")
+	require.Zero(t, e.diag(5002).Sources, "work that left the source still a member")
+	require.Equal(t, 1, e.diag(5003).Sources, "deleted work dropped from the source")
+	require.Equal(t, 4, e.source(id).MemberWorks)
+}
+
+// `source refresh --full` on a corrupt cursor restarts the walk, like the scheduler does; it
+// must not mark a half-walked backfill as done.
+func TestRefreshFullCorruptCursorRestartsWalk(t *testing.T) {
+	e := newEnv(t, 45, nil)
+	ctx := context.Background()
+	id := e.add(e.site.TagPath())
+	r := e.source(id)
+	r.BackfillCursor = "{not json"
+	require.NoError(t, e.db.UpdateSourceProgress(ctx, r))
+	_, err := e.ctl.RefreshSource(ctx, id, true)
+	require.NoError(t, err)
+	cur, err := controllers.ParseSourceCursor(e.source(id).BackfillCursor)
+	require.NoError(t, err)
+	require.Equal(t, 1, cur.NextPage, "corrupt cursor reset to done")
+	e.drain(200)
+	require.Equal(t, 45, e.source(id).MemberWorks, "backfill did not walk the whole listing")
+}
+
+// A poll keeps walking past a page whose works are already mirrored (by another source or a
+// direct fetch) but new to this source.
+func TestPollContinuesForWorksNewToSource(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	id := e.add(e.site.TagPath())
+	e.drain(50)
+	// 25 new works (more than one page) appear, and all are mirrored directly, not via the source.
+	newest := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+	for i := range 25 {
+		wid := int64(6000 + i)
+		e.site.Add(fakeao3.SiteWork{ID: wid, Revised: newest.Add(-time.Duration(i) * time.Hour), Words: 500, Chapters: 1, Expected: 1})
+		_, err := e.ctl.FetchWork(ctx, wid, 0)
+		require.NoError(t, err)
+	}
+	e.clk.Advance(7 * time.Hour) // next poll
+	e.drain(100)
+	require.Equal(t, 28, e.source(id).MemberWorks, "poll stopped on page 1: works on page 2 not linked")
+}
+
 // A mirrored work that later grows past the body limit keeps its parser version, so `reparse`
 // leaves it alone and doesn't roll its fetched revision back (which would queue the oversized
 // download again on the next poll).

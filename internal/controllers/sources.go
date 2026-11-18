@@ -130,9 +130,8 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 				return err
 			}
 			res.Blurbs = len(blurbs.ids)
-			// Same rule as BackfillSourcePage: over the result window, sortable sources are walked
-			// in date windows (covering every work); others only reach the first MaxResults.
-			windowed := src.Kind.Sortable() && total > c.options.MaxResults
+			// Windowed walks cover every work; others only reach the first MaxResults.
+			windowed := c.needsWindows(src.Kind, total)
 			reachable := total
 			if !windowed {
 				reachable = min(total, c.options.MaxResults)
@@ -170,7 +169,7 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 			}
 		}
 		if len(blurbs.ids) > 0 {
-			n, err := linkAndQueueBlurbs(ctx, tx, id, blurbs, jobs.ClassBackfill)
+			n, err := linkAndQueueBlurbs(ctx, tx, id, &blurbs, jobs.ClassBackfill)
 			if err != nil {
 				return err
 			}
@@ -236,10 +235,21 @@ func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order
 	return p, total, nil
 }
 
-// skeletonAddID names the debug skeleton of a source's page 1 at add time (no source id yet):
-// a content-free hash of the source.
-func skeletonAddID(src ao3url.Source) string {
-	return "add-" + httpx.Hash(string(src.Kind)+"\x00"+src.Target+"\x00"+ao3url.FiltersJSON(src.Filters)) + "-p1"
+// skeletonAddID names the debug skeleton of a source's page 1 at add time (no source id yet).
+func skeletonAddID(src ao3url.Source) string { return "add-" + sourceHash(src) + "-p1" }
+
+// sourceHash is a content-free identity of a source (kind, target and filters, the same triple
+// sources are unique on), used where no source id exists yet: the add dedupe key and debug
+// skeleton names.
+func sourceHash(src ao3url.Source) string {
+	return httpx.Hash(string(src.Kind) + "\x00" + src.Target + "\x00" + ao3url.FiltersJSON(src.Filters))
+}
+
+// needsWindows is the one rule for walking a source in date windows: AO3 only serves the first
+// MaxResults of a listing, so a sortable source bigger than that is walked window by window.
+// The add estimate and the backfill both use it.
+func (c *Controllers) needsWindows(kind ao3url.Kind, total int) bool {
+	return kind.Sortable() && total > c.options.MaxResults
 }
 
 // ConfirmSource activates a pending source.
@@ -318,7 +328,7 @@ func (c *Controllers) RefreshSource(ctx context.Context, id int64, full bool) (R
 
 func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64, full bool) (RefreshSourceResult, error) {
 	var res RefreshSourceResult
-	r, err := tx.GetSource(ctx, id)
+	r, err := tx.GetSourceRow(ctx, id)
 	if err != nil {
 		return res, err
 	}
@@ -331,7 +341,8 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 	if full {
 		cur, err := ParseSourceCursor(r.BackfillCursor)
 		if err != nil {
-			cur = SourceCursor{Order: r.BackfillOrder}
+			// Same fallback as scheduleSource: restart the walk (NextPage 0 would mean "done").
+			cur = SourceCursor{NextPage: 1, Order: r.BackfillOrder}
 		}
 		if cur.BlockedParser != 0 {
 			cur.BlockedParser = 0
@@ -377,7 +388,7 @@ func (c *Controllers) setSourceSettings(ctx context.Context, tx *store.Tx, id in
 	if poll != 0 && poll < 10*time.Minute {
 		return fmt.Errorf("sources: poll interval %s must be >= 10m", poll)
 	}
-	r, err := tx.GetSource(ctx, id)
+	r, err := tx.GetSourceRow(ctx, id)
 	if err != nil {
 		return err
 	}

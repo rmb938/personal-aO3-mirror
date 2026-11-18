@@ -53,12 +53,19 @@ const MaxResults = 100000
 
 var hosts = map[string]bool{"archiveofourown.org": true, "www.archiveofourown.org": true, "ao3.org": true, "www.ao3.org": true}
 
+// errMalformed reports a URL that could not be parsed or unescaped. The underlying error is
+// dropped on purpose: url.Error and url.EscapeError quote the input, which holds tag/user names
+// and ends up in job errors and logs. Only its type is kept.
+func errMalformed(err error) error {
+	return fmt.Errorf("%w: malformed URL (%T)", ErrUnsupported, err)
+}
+
 // Parse turns any AO3 URL (or bare path) into a Source.
 func Parse(raw string) (Source, error) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
+		return Source{}, errMalformed(err)
 	}
 	if u.Host != "" && !hosts[strings.ToLower(u.Hostname())] {
 		return Source{}, ErrNotAO3
@@ -89,13 +96,13 @@ func Parse(raw string) (Source, error) {
 	case len(segs) >= 2 && segs[0] == "users":
 		login, err := url.PathUnescape(segs[1])
 		if err != nil {
-			return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
+			return Source{}, errMalformed(err)
 		}
 		switch {
 		case len(segs) >= 4 && segs[2] == "pseuds":
 			pseud, err := url.PathUnescape(segs[3])
 			if err != nil {
-				return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
+				return Source{}, errMalformed(err)
 			}
 			if len(segs) > 4 && segs[4] == "bookmarks" {
 				return Source{}, fmt.Errorf("%w: pseud bookmarks; use /users/<login>/bookmarks", ErrUnsupported)
@@ -109,7 +116,7 @@ func Parse(raw string) (Source, error) {
 	case len(segs) >= 2 && segs[0] == "collections":
 		name, err := url.PathUnescape(segs[1])
 		if err != nil {
-			return Source{}, fmt.Errorf("%w: %w", ErrUnsupported, err)
+			return Source{}, errMalformed(err)
 		}
 		if len(segs) > 2 && segs[2] != "works" {
 			return Source{}, fmt.Errorf("%w: only /collections/<name> and /collections/<name>/works are supported", ErrUnsupported)
@@ -145,7 +152,7 @@ var tagParam = strings.NewReplacer("/", "*s*", "&", "*a*", ".", "*d*", "?", "*q*
 func decodeTag(seg string) (string, error) {
 	dec, err := url.PathUnescape(seg)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrUnsupported, err)
+		return "", errMalformed(err)
 	}
 	return TagFromParam(dec), nil
 }
@@ -281,7 +288,7 @@ func BasePath(s Source) (string, error) {
 	case KindPseud:
 		login, pseud, ok := strings.Cut(s.Target, "/")
 		if !ok {
-			return "", fmt.Errorf("pseud target %q: want login/pseud", s.Target)
+			return "", errors.New("ao3url: pseud target: want login/pseud") // target not quoted: it is a name
 		}
 		return "/users/" + url.PathEscape(login) + "/pseuds/" + url.PathEscape(pseud) + "/works", nil
 	case KindUserBookmarks:

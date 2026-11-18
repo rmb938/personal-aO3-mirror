@@ -66,7 +66,7 @@ func (c *Controllers) QueueSourceAdd(ctx context.Context, rawURL string, o AddSo
 		if err != nil {
 			return err
 		}
-		key := jobs.SourceAddKey(httpx.Hash(string(src.Kind) + "\x00" + src.Target + "\x00" + filters))
+		key := jobs.SourceAddKey(sourceHash(src))
 		if q.JobID, q.Created, err = tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindSourceAdd, Target: strconv.FormatInt(addID, 10),
 			Priority: jobs.ClassOnDemand, DedupeKey: key}); err != nil {
 			return err

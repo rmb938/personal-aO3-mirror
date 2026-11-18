@@ -95,7 +95,7 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Source
 			return err
 		}
 		for _, id := range missing {
-			if _, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassMaintenance); err != nil {
+			if _, created, err := enqueueWorkJob(ctx, tx, jobs.KindWorkVerify, id, r.ID, jobs.ClassMaintenance); err != nil {
 				return err
 			} else if created {
 				verify++
