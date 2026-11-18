@@ -262,13 +262,17 @@ func (c *Client) Get(ctx context.Context, kind Kind, ref string) (*Response, err
 			resp.Class, resp.Reason = ClassUnexpected, "redirect=bad_location"
 			return resp, nil
 		}
-		if v, ok := classifyRedirect(loc); ok {
-			resp.Class, resp.Reason = v.Class, v.Reason
-			return resp, nil
-		}
 		// Same host and scheme only (as Resolve requires for the first request): a downgrade to
-		// plain http would drop the Secure view_adult cookie and could be tampered with.
+		// plain http would drop the Secure view_adult cookie and could be tampered with. Checked
+		// before classifyRedirect, which looks at the path only: a redirect to another host's
+		// root or login page says nothing about the work, so it must not mark it hidden.
 		foreign, scheme := loc.Host != c.base.Host, loc.Scheme != c.base.Scheme
+		if !foreign && !scheme {
+			if v, ok := classifyRedirect(loc); ok {
+				resp.Class, resp.Reason = v.Class, v.Reason
+				return resp, nil
+			}
+		}
 		if foreign || scheme || hop >= maxRedirects {
 			resp.Class, resp.Reason = ClassUnexpected, fmt.Sprintf("redirect=unfollowed foreign=%t scheme=%t hop=%d", foreign, scheme, hop)
 			return resp, nil

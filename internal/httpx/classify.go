@@ -82,6 +82,12 @@ func classify(kind Kind, status int, body []byte) Verdict {
 		}
 	}
 	cf := strings.Join(cfHits, ",")
+	var missing []string
+	for _, m := range ao3LayoutMarkers {
+		if !bytes.Contains(body, []byte(m)) {
+			missing = append(missing, m)
+		}
+	}
 
 	switch {
 	case status == http.StatusTooManyRequests:
@@ -94,6 +100,11 @@ func classify(kind Kind, status int, body []byte) Verdict {
 		}
 		if len(cfHits) > 0 {
 			return Verdict{ClassUnavailable, "status=404" + cfReason(cf)}
+		}
+		// A 404 marks a work deleted, so only AO3's own 404 page (rendered in the site layout)
+		// counts. A bare 404 from a proxy or a deploy is an outage, not a deletion.
+		if len(missing) > 0 {
+			return Verdict{ClassUnavailable, "status=404 missing_layout=" + strings.Join(missing, ",")}
 		}
 		return Verdict{ClassNotFound, "status=404"}
 	case status == http.StatusForbidden: // Cloudflare blocks and challenges (5xx returned above)
@@ -109,12 +120,6 @@ func classify(kind Kind, status int, body []byte) Verdict {
 			return Verdict{ClassUnavailable, "status=200" + cfReason(cf)}
 		}
 		return Verdict{ClassOK, "status=200"}
-	}
-	var missing []string
-	for _, m := range ao3LayoutMarkers {
-		if !bytes.Contains(body, []byte(m)) {
-			missing = append(missing, m)
-		}
 	}
 	if len(missing) > 0 {
 		// Not an AO3 page: a Cloudflare challenge/waiting room or a maintenance page. Back off
