@@ -178,7 +178,7 @@ func (s *Skeletonizer) Text(t string) string {
 
 // uiPrefixes are AO3 interface sentences that start a text node followed by other text.
 var uiPrefixes = []*regexp.Regexp{
-	regexp.MustCompile(`^This tag belongs to the (Fandom|Character|Relationship|Additional Tags|Rating|Warning|Archive Warning|Category|Media|Unsorted Tag) Category\.`),
+	regexp.MustCompile(`^This tag belongs to the (Fandom|Character|Relationship|Additional Tags|Rating|Archive Warning|Category|Media|Unsorted Tag) Category\.`),
 }
 
 func (s *Skeletonizer) textCore(t string) string {

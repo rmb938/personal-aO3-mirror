@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
 )
@@ -262,14 +261,6 @@ func TestBlurbDates(t *testing.T) {
 			assert.Equal(t, want.date, d, "%q", in)
 			assert.Equal(t, want.approx, approx, "%q approx", in)
 		}
-	}
-}
-
-// AO3 tag hrefs must round-trip with the param ao3url builds for requests.
-func TestTagParamRoundTrip(t *testing.T) {
-	for _, name := range []string{"A/B", "Fandom & Co.", "What?", "Tag #1", "plain", "Star*Trek"} {
-		p := ao3url.TagParam(name)
-		assert.Equal(t, name, tagNameFromHref("/tags/"+p+"/works"), "round trip (param %s)", p)
 	}
 }
 

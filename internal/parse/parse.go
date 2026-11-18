@@ -17,7 +17,6 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
@@ -150,33 +149,16 @@ func innerWithout(s *goquery.Selection, drop string) string {
 	return innerHTML(c)
 }
 
-// tagNameFromHref decodes /tags/<param>/works per Tag.from_param.
-func tagNameFromHref(href string) string {
-	u, err := url.Parse(href)
-	if err != nil {
-		return ""
-	}
-	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(segs) < 2 || segs[0] != "tags" {
-		return ""
-	}
-	return ao3url.TagFromParam(segs[1])
-}
-
-// tagFromLink prefers the link text (display name == name), falling back to the href.
+// tagFromLink reads a tag link's text: link_to_tag renders tag.display_name, which is the name,
+// and tag.rb validates it present and squished, so the text is never blank.
 func tagFromLink(typ model.TagType, a *goquery.Selection) model.Tag {
-	name := clean(a.Text())
-	if name == "" {
-		href, _ := a.Attr("href")
-		name = tagNameFromHref(href)
-	}
-	return model.Tag{Type: typ, Name: name}
+	return model.Tag{Type: typ, Name: clean(a.Text())}
 }
 
 var pseudHref = regexp.MustCompile(`^/users/([^/]+)/pseuds/([^/?#]+)`)
-var userHref = regexp.MustCompile(`^/users/([^/?#]+)`)
 
-// creators extracts a[rel=author] links: /users/<login>/pseuds/<pseud>.
+// creators extracts a[rel=author] links. byline_helper.rb builds every one with user_pseud_url,
+// so they are always /users/<login>/pseuds/<pseud>.
 func creators(s *goquery.Selection) []model.Creator {
 	var out []model.Creator
 	s.Find(`a[rel="author"]`).Each(func(_ int, a *goquery.Selection) {
@@ -188,9 +170,6 @@ func creators(s *goquery.Selection) []model.Creator {
 			user, _ := url.PathUnescape(m[1])
 			pseud, _ := url.PathUnescape(m[2])
 			out = append(out, model.Creator{User: user, Pseud: pseud})
-		} else if m := userHref.FindStringSubmatch(href); m != nil {
-			user, _ := url.PathUnescape(m[1])
-			out = append(out, model.Creator{User: user, Pseud: user})
 		}
 	})
 	return out

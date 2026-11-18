@@ -131,6 +131,16 @@ func TestFiltersJSONCanonical(t *testing.T) {
 	require.Equal(t, "x", back.Get("a"))
 }
 
+// A tag path built for requests must parse back to the same tag.
+func TestTagParamRoundTrip(t *testing.T) {
+	for _, name := range []string{"A/B", "Fandom & Co.", "What?", "Tag #1", "plain", "Star*Trek"} {
+		p := TagParam(name)
+		src, err := Parse("/tags/" + p + "/works")
+		require.NoError(t, err, "param %s", p)
+		assert.Equal(t, name, src.Target, "round trip (param %s)", p)
+	}
+}
+
 func TestParseOrder(t *testing.T) {
 	o, err := ParseOrder("revised_asc")
 	require.NoError(t, err)
