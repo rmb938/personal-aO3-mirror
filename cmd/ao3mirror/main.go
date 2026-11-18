@@ -33,6 +33,8 @@ commands:
   jobs [--state S] [--kind K] [--source ID] [--limit N]
                      list jobs (ids, targets, states, errors); queued jobs in queue order
   debug job|work ID  content-free trace for one job/work
+  serve [--no-reveal]  run the JSON API (api: config); strings are hashed unless a request
+                     asks to reveal; --no-reveal refuses that too (docs/part2-api.md)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
 `
 
@@ -107,6 +109,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			*cfgPath, cfg.DataDir, cfg.UserAgent(version), cfg.Rate.Interval, config.MinInterval)
 		logger.Debug("config checked", "path", *cfgPath, "interval", cfg.Rate.Interval.String())
 		return 0
+	case "serve":
+		return runServe(ctx, cfg, logger, rest[1:], stderr)
 	case "reparse", "jobs":
 		// Offline: opens the store only; no HTTP client is built.
 		st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: logger})

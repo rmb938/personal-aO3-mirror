@@ -6,15 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
 )
 
 // MinInterval is the hard floor between AO3 requests. Config cannot go below it.
@@ -35,7 +39,35 @@ type Config struct {
 	Images          Images  `yaml:"images"`
 	Content         Content `yaml:"content"`
 	Auth            Auth    `yaml:"auth"`
+	API             API     `yaml:"api"`
 }
+
+// API configures `ao3mirror serve` (docs/part2-api.md, "Config").
+type API struct {
+	// Listen is the public TCP listener (host:port); Tailscale Funnel points here.
+	Listen string `yaml:"listen"`
+	// AdminSocket is the admin unix socket, relative to data_dir.
+	AdminSocket string `yaml:"admin_socket"`
+	// TrustedProxies are the CIDR prefixes whose X-Forwarded-For is trusted.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	// RequestTimeout is the per-request context deadline.
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// HashKeyRotation is the in-memory hash key lifetime; 0 means one key per process.
+	HashKeyRotation time.Duration `yaml:"hash_key_rotation"`
+	Rate            APIRate       `yaml:"rate"`
+}
+
+// APIRate holds the per-client rate limits of the public listener (the admin socket's are
+// higher). SearchPerMin and SourceAddPerHour take effect with their routes.
+type APIRate struct {
+	GeneralPerMin    int `yaml:"general_per_min"`
+	SearchPerMin     int `yaml:"search_per_min"`
+	SourceAddPerHour int `yaml:"source_add_per_hour"`
+}
+
+// MaxRequestTimeout caps api.request_timeout below the server's 60s write timeout, so a slow
+// handler gets its 503 out before the connection is cut.
+const MaxRequestTimeout = 50 * time.Second
 
 type Contact struct {
 	Discord string `yaml:"discord"`
@@ -107,6 +139,14 @@ func Default() Config {
 		Series:  Series{Info: true, InfoTTL: 30 * 24 * time.Hour},
 		Images:  Images{Enabled: true, PerHostInterval: 3 * time.Second, MaxBytes: 25 << 20},
 		Content: Content{KeepVersions: 1},
+		API: API{
+			Listen:          "127.0.0.1:8080",
+			AdminSocket:     "api/admin.sock",
+			TrustedProxies:  []string{"127.0.0.1/32", "::1/128"},
+			RequestTimeout:  10 * time.Second,
+			HashKeyRotation: 24 * time.Hour,
+			Rate:            APIRate{GeneralPerMin: 120, SearchPerMin: 30, SourceAddPerHour: 10},
+		},
 	}
 }
 
@@ -201,7 +241,39 @@ func (c Config) Validate() error {
 	if c.Auth.Enabled {
 		add("auth.enabled: login is not implemented yet")
 	}
+	errs = append(errs, c.API.validate()...)
 	return errors.Join(errs...)
+}
+
+func (a API) validate() []error {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	if host, port, err := net.SplitHostPort(a.Listen); err != nil || host == "" || port == "" {
+		add("api.listen %q must be host:port (e.g. 127.0.0.1:8080)", a.Listen)
+	} else if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+		add("api.listen %q: port must be 1-65535", a.Listen)
+	}
+	if !filepath.IsLocal(a.AdminSocket) { // also rejects "", absolute paths and ".." escapes
+		add("api.admin_socket %q must be a relative path inside data_dir", a.AdminSocket)
+	}
+	if len(a.TrustedProxies) == 0 {
+		add("api.trusted_proxies must not be empty (default [127.0.0.1/32, ::1/128])")
+	}
+	for _, p := range a.TrustedProxies {
+		if _, err := netip.ParsePrefix(p); err != nil {
+			add("api.trusted_proxies: %q is not a CIDR prefix", p)
+		}
+	}
+	if a.RequestTimeout < time.Second || a.RequestTimeout > MaxRequestTimeout {
+		add("api.request_timeout %s must be between 1s and %s", a.RequestTimeout, MaxRequestTimeout)
+	}
+	if a.HashKeyRotation < 0 || (a.HashKeyRotation > 0 && a.HashKeyRotation < redact.MinRotation) {
+		add("api.hash_key_rotation %s must be 0 (once per process) or >= %s", a.HashKeyRotation, redact.MinRotation)
+	}
+	if a.Rate.GeneralPerMin < 1 || a.Rate.SearchPerMin < 1 || a.Rate.SourceAddPerHour < 1 {
+		add("api.rate.general_per_min, search_per_min and source_add_per_hour must be >= 1")
+	}
+	return errs
 }
 
 // UserAgent builds the User-Agent sent on every request. It always includes the contact.
