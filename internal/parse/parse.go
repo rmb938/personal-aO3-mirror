@@ -301,9 +301,18 @@ func parsePagination(doc *goquery.Selection, r *Report) Pagination {
 var totalOf = regexp.MustCompile(`of\s+([0-9][0-9,]*)\s+Works?`)
 var totalOnly = regexp.MustCompile(`^\s*([0-9][0-9,]*)\s+Works?`)
 
-// parseTotal reads "1 - 20 of 12,345 Works in ..." / "12 Works in ..." / "1 Work by ...".
+// noBookmarks is search_header's heading for an empty bookmarks listing ("0 Bookmarks by X",
+// or "0 Bookmarked Items" for bookmarkable listings).
+var noBookmarks = regexp.MustCompile(`^\s*0\s+Bookmark(s|ed Items)\b`)
+
+// parseTotal reads "1 - 20 of 12,345 Works in ..." / "12 Works in ..." / "1 Work by ...". A
+// bookmarks heading counts bookmarks, not works, so it gives no total, except an empty one:
+// zero bookmarks are zero works.
 func parseTotal(h2 string) (int, bool) {
 	h2 = clean(h2)
+	if noBookmarks.MatchString(h2) {
+		return 0, true
+	}
 	if m := totalOf.FindStringSubmatch(h2); m != nil {
 		return atoi(m[1]), true
 	}
