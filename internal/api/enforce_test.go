@@ -43,7 +43,7 @@ func TestEnforceUnknownKey(t *testing.T) {
 	for _, target := range []string{"/bad", "/bad" + revealQuery} {
 		w := get(a.public, target)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Equal(t, string(CodeInternal), decodeProblem(t, w).Code)
+		assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
 		assertNoSentinel(t, w, logs)
 	}
 	assert.Contains(t, logs.String(), "api response refused by enforcer")
@@ -59,7 +59,7 @@ func TestEnforceNonJSON(t *testing.T) {
 	w := get(a.public, "/text")
 	require.Equal(t, http.StatusForbidden, w.Code)
 	p := decodeProblem(t, w)
-	assert.Equal(t, string(CodeRevealRequired), p.Code)
+	assert.Equal(t, dto.CodeRevealRequired, p.Code)
 	assert.Empty(t, w.Header().Get("Location"), "a replaced response drops the handler's headers")
 	assertNoSentinel(t, w, logs)
 
@@ -78,7 +78,7 @@ func TestEnforceMissingContentType(t *testing.T) {
 	})
 	w := get(a.public, "/raw")
 	require.Equal(t, http.StatusForbidden, w.Code, "JSON without a JSON content type is not trusted")
-	assert.Equal(t, string(CodeRevealRequired), decodeProblem(t, w).Code)
+	assert.Equal(t, dto.CodeRevealRequired, decodeProblem(t, w).Code)
 }
 
 func TestEnforceInvalidJSON(t *testing.T) {
@@ -89,7 +89,7 @@ func TestEnforceInvalidJSON(t *testing.T) {
 	})
 	w := get(a.public, "/broken")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, string(CodeInternal), decodeProblem(t, w).Code)
+	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
 }
 
 func TestEnforceEmptyBody(t *testing.T) {
@@ -116,7 +116,7 @@ func TestEnforceResponseTooLarge(t *testing.T) {
 	})
 	w := get(a.public, "/huge")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, string(CodeInternal), decodeProblem(t, w).Code)
+	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
 	assert.Contains(t, logs.String(), "response too large")
 }
 
@@ -127,6 +127,7 @@ func TestMiddlewareProblemsAreWellFormed(t *testing.T) {
 		w := get(a.Public(), target)
 		var p map[string]any
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &p))
-		assert.Contains(t, codeInfo, Code(p["code"].(string)))
+		_, known := dto.ProblemCode(p["code"].(string)).Info()
+		assert.True(t, known, p["code"])
 	}
 }

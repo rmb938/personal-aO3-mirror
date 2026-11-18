@@ -12,7 +12,7 @@ func (a *API) healthz(r *http.Request) (any, error) {
 	if _, err := parseQuery(r); err != nil {
 		return nil, err
 	}
-	return dto.Health{Status: healthOK}, nil
+	return dto.Health{Status: dto.HealthOK}, nil
 }
 
 // version is GET /api/v1/version.

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 const (
@@ -56,7 +58,7 @@ func respondError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err 
 		log.LogAttrs(r.Context(), slog.LevelError, "api handler error",
 			slog.String("route", r.Pattern), slog.String("err", err.Error()))
 	}
-	if p.Code == string(CodeUnsupportedMediaType) && r.Method == methodQuery {
+	if p.Code == dto.CodeUnsupportedMediaType && r.Method == methodQuery {
 		w.Header().Set("Accept-Query", contentTypeJSON)
 	}
 	respond(w, r, log, p.Status, contentTypeProblem, p)
@@ -68,7 +70,7 @@ func respond(w http.ResponseWriter, r *http.Request, log *slog.Logger, status in
 	if err != nil {
 		log.LogAttrs(r.Context(), slog.LevelError, "api encode error",
 			slog.String("route", r.Pattern), slog.String("type", typeName(v)))
-		p := errCode(CodeInternal).problem()
+		p := errCode(dto.CodeInternal).problem()
 		body, _ = json.Marshal(p) // a Problem always marshals
 		status, contentType = p.Status, contentTypeProblem
 	}

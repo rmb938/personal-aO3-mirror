@@ -284,7 +284,7 @@ Status: tick when the PR merges.
         store `ErrNo*` sentinels → 404, `ErrStateConflict` → 409 `conflict`, `ErrSourceExists`
         / `controllers.ExistsError` → 409 `exists`, context cancel/deadline → 503
         `unavailable`, anything else → 500 `internal` (logged with the route pattern).
-      - `field` is only ever a name in `knownFields` (else dropped). `code`, `title` and
+      - `field` is only ever a declared name (`knownFields`, now `dto.ParamName`; else dropped). `code`, `title` and
         `field` are registered enums, so problems pass the enforcer unhashed (tested).
       - Handler shape `func(*http.Request) (any, error)`, adapted by `handle`, which caps the
         body (16 KiB) and calls `respond`. A handler returns `*api.Response` for another status
@@ -316,7 +316,7 @@ Status: tick when the PR merges.
         `Retry-After: 1`): chi's `ThrottleBacklog` writes text/plain, which the enforcer would
         turn into a misleading 403. Cross-origin denials are 403 `forbidden` (new code).
       - Access log: method names outside the known set log as `other`; query param names are
-        logged only when in `knownFields`, others only counted (`other_params`), since a client
+        logged only when declared (`dto.ParamName` from 3a-3), others only counted (`other_params`), since a client
         picks them freely. Numeric path params log as `path_<name>`, others as
         `path_<name>_invalid`. A request rejected before routing (429, throttle 503, URL
         limits, cross-origin) gets its route resolved with chi's `Routes.Find` (no handler
@@ -375,7 +375,7 @@ Status: tick when the PR merges.
         validates first, so this is a guard). `Status` still lists every source
         (`limit = math.MaxInt`). The CLI `source list` pages through 100 at a time, the API's
         max `per_page`, so stage 6's client keeps the same loop.
-    - [ ] **3a-3. Refactor: typed enums in the registry** (no change to responses). Today
+    - [x] **3a-3. Refactor: typed enums in the registry** (no change to responses). Today
       every enum is a key → values entry in `api/registry.go`, kept by hand. Nothing ties it
       to the struct: a field that should be an enum is only noticed when its value comes out
       hashed.
@@ -400,6 +400,19 @@ Status: tick when the PR merges.
       - The enforcer still hashes a value outside its type's set (fail safe), and logs a warning
         with the key only. The convert tests (3a-4 on) are what catch a new model value
         missing from a dto type, before it ships.
+      - As built:
+        - `EnumValues` may have a value or pointer receiver (called on a new zero value). An
+          `Enum` type that marshals itself (JSON or text) is also rejected: its JSON need not
+          be its value. A non-string field (e.g. `Problem.Status int`) may share a key with an
+          enum (`Health.Status`): only strings are checked.
+        - `redact.Result.OffEnum` lists the enum keys that held an off-set value (both modes);
+          the enforce middleware logs `api enum value outside its set` at warn with
+          `req_id`, `route` and `keys`.
+        - `dto/problem.go` holds `ProblemCode` (+ constants), `ProblemTitle`, the
+          code → `ProblemInfo{Status, Title}` table (`ProblemCode.Info()`) and `ParamName`
+          (constants + `Known()`, used by `problem()` and the access log). `api.RevealParam`
+          is `string(dto.ParamReveal)`. `api.Error.Code` is a `dto.ProblemCode`; `Field`
+          stays a string (it can hold a client-chosen name, dropped unless `Known`).
     - [ ] **3a-4. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
       `/source-adds/{job_id}`, with mapping in `internal/api/convert`. Design (from a first
       attempt, reworked into 3a-1..4):
@@ -431,7 +444,7 @@ Status: tick when the PR merges.
         value fails a test instead of shipping hashed.
       - `SourceAddOutcome` returns `store.ErrNoJob` (404) for a job that is not a source add.
         A done add whose source was removed since is a 404 too (existing behaviour, kept).
-      - `knownFields` gains `job_id`. OpenAPI gets the paths plus shared `ID`, `Page`,
+      - `dto.ParamName` gains `job_id`. OpenAPI gets the paths plus shared `ID`, `Page`,
         `PerPage` parameters and the schemas.
       - Leak test: `testOptions(t, logs)` opens a temp store and seeds it (`seed_test.go`,
         fixed ids: a tag source with every text field a sentinel, a series source, a done and
