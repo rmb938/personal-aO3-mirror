@@ -122,8 +122,9 @@ func TestTooLargeWorkFailsOnce(t *testing.T) {
 	require.Equal(t, 1, countRequests(e, uri), "oversized page re-queued by the next poll")
 }
 
-// A work that left the source (still on AO3) is verified once after a rescan and then dropped
-// from the source, not re-verified on every rescan; a deleted one stays listed under it.
+// Two strikes: a work that left the source (still on AO3) is fetched once after the first rescan
+// that misses it and dropped from the source after the second, with no further requests; a
+// deleted one stays listed under it.
 func TestRescanDropsWorkThatLeftSource(t *testing.T) {
 	e := newEnv(t, 5, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour })
 	id := e.add(e.site.TagPath())
@@ -134,7 +135,7 @@ func TestRescanDropsWorkThatLeftSource(t *testing.T) {
 		e.clk.Advance(25 * time.Hour)
 		e.drain(100)
 	}
-	require.Equal(t, 2, countRequests(e, "/works/5002?view_full_work=true"), "initial + one verification")
+	require.Equal(t, 2, countRequests(e, "/works/5002?view_full_work=true"), "initial + one check after the first miss")
 	require.Zero(t, e.diag(5002).Sources, "work that left the source still a member")
 	require.Equal(t, 1, e.diag(5003).Sources, "deleted work dropped from the source")
 	require.Equal(t, 4, e.source(id).MemberWorks)
@@ -156,6 +157,25 @@ func TestRefreshFullCorruptCursorRestartsWalk(t *testing.T) {
 	require.Equal(t, 1, cur.NextPage, "corrupt cursor reset to done")
 	e.drain(200)
 	require.Equal(t, 45, e.source(id).MemberWorks, "backfill did not walk the whole listing")
+}
+
+// A member work whose fetch keeps failing (here: the adult gate) is not re-queued by every poll;
+// it waits a day before the stale-member check tries it again.
+func TestFailingWorkNotRequeuedEveryPoll(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	e.srv.Handle("/works/5001", fakeao3.Reply{Body: fakeao3.AdultGate(5001)})
+	e.add(e.site.TagPath())
+	e.drain(50)
+	const uri = "/works/5001?view_full_work=true"
+	require.Equal(t, 1, countRequests(e, uri))
+	for range 3 { // three polls within a day
+		e.clk.Advance(7 * time.Hour)
+		e.drain(50)
+	}
+	require.Equal(t, 1, countRequests(e, uri), "failing work re-queued by every poll")
+	e.clk.Advance(7 * time.Hour) // over a day since the failure
+	e.drain(50)
+	require.Equal(t, 2, countRequests(e, uri), "failing work never retried")
 }
 
 // A poll keeps walking past a page whose works are already mirrored (by another source or a

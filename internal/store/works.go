@@ -37,7 +37,13 @@ type workState struct {
 	fetchedChapters int
 	fetchedWords    int
 	lastListed      int64
+	fetchFailedAt   int64
 }
+
+// FailedFetchBackoff is how long an unchanged work whose full fetch failed is left alone by
+// listings and stale-member re-queueing (its own job retries are unaffected). A failure that
+// keeps happening (adult gate, odd answer) would otherwise cost a request on every poll.
+const FailedFetchBackoff = 24 * time.Hour
 
 // UpsertWork merges a parsed work into meta.db.
 //
@@ -72,9 +78,9 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 	var st workState
 	var res UpsertResult
 	err := tx.QueryRowContext(ctx, `SELECT revised_at, chapters_posted, words, status, last_fetched,
-		fetched_revised, fetched_chapters, fetched_words, last_listed FROM works WHERE id = ?`, w.ID).
+		fetched_revised, fetched_chapters, fetched_words, last_listed, fetch_failed_at FROM works WHERE id = ?`, w.ID).
 		Scan(&st.revised, &st.chapters, &st.words, &st.status, &st.lastFetched,
-			&st.fetchedRevised, &st.fetchedChapters, &st.fetchedWords, &st.lastListed)
+			&st.fetchedRevised, &st.fetchedChapters, &st.fetchedWords, &st.lastListed, &st.fetchFailedAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		res.New = true
@@ -148,6 +154,9 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		}
 		res.NeedsFetch = res.New || st.lastFetched == 0 || (revisedComparable && st.fetchedRevised != w.Revised) ||
 			st.fetchedChapters != w.ChaptersPosted || st.fetchedWords != w.Words
+		if res.NeedsFetch && !res.Changed && st.fetchFailedAt > s.now().Add(-FailedFetchBackoff).Unix() {
+			res.NeedsFetch = false // failed recently and unchanged since: same answer again
+		}
 		if res.NeedsFetch && !res.New {
 			res.FetchReason = []any{"never_fetched", st.lastFetched == 0,
 				"revised_listed", w.Revised, "revised_stored", st.revised, "revised_fetched", st.fetchedRevised,
@@ -169,7 +178,7 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET notes_html = ?, endnotes_html = ?, published = ?,
 			last_fetched = ?, last_checked = ?, fetched_revised = ?, fetched_chapters = ?, fetched_words = ?,
-			parser_version = ? WHERE id = ?`,
+			parser_version = ?, fetch_failed_at = 0 WHERE id = ?`,
 			w.NotesHTML, w.EndNotesHTML, w.Published, now, now, w.Revised, w.ChaptersPosted, w.Words,
 			parserVersion, w.ID); err != nil {
 			return res, err
@@ -517,6 +526,19 @@ func (s *Tx) MarkWorkTooLarge(ctx context.Context, workID int64) error {
 	}
 	s.log.Debug("work too large recorded", "work_id", workID)
 	return nil
+}
+
+// MarkWorkFetchFailed records that a full fetch of a work failed (now), so stale-member
+// re-queueing leaves it alone for a while; it also counts as checked, so a backlog rotates.
+// A later successful fetch clears it. Creates the row if the work is not known yet.
+func (s *Tx) MarkWorkFetchFailed(ctx context.Context, workID int64) error {
+	now := s.unix()
+	if _, err := s.meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
+		ON CONFLICT (id) DO NOTHING`, workID, now, now); err != nil {
+		return err
+	}
+	_, err := s.meta.ExecContext(ctx, `UPDATE works SET fetch_failed_at = ?, last_checked = ? WHERE id = ?`, now, now, workID)
+	return err
 }
 
 // markWorkChecked marks a work fetched at its listed revision without storing a page. extra is

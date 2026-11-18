@@ -19,11 +19,8 @@ const (
 	KindPoll     = "poll"
 	KindBackfill = "backfill"
 	KindWork     = "work"
-	// KindWorkVerify re-fetches a work a rescan did not see in its source: if AO3 still has it,
-	// it left the source and its membership is dropped. Same dedupe key as KindWork.
-	KindWorkVerify = "work_verify"
-	KindTagInfo    = "tag_info"
-	KindSeries     = "series_info"
+	KindTagInfo  = "tag_info"
+	KindSeries   = "series_info"
 	// KindSourceAdd fetches page 1 of a source added from the CLI and creates it (target: the
 	// source_adds row id).
 	KindSourceAdd = "source_add"

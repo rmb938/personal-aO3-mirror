@@ -78,9 +78,6 @@ func New(opts Options) *Scheduler {
 		jobs.KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)
 		},
-		jobs.KindWorkVerify: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
-			return s.controllers.VerifySourceWork(ctx, atoi64(j.Target), j.SourceID, j.CreatedAt)
-		},
 		jobs.KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},

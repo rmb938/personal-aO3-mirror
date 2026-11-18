@@ -90,9 +90,9 @@ const (
 // write committed.
 func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64, force bool, res *ReparseResult) error {
 	type stored struct {
-		page []byte
-		at   time.Time
-		ok   bool
+		page    []byte // nil: nothing to reparse
+		at      time.Time
+		version store.RawPageVersion
 	}
 	cur, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (stored, error) {
 		if !force {
@@ -101,18 +101,22 @@ func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64
 				return stored{}, err
 			}
 		}
-		page, at, err := tx.LatestRawPage(ctx, id)
+		version, err := tx.LatestRawPageVersion(ctx, id)
 		if errors.Is(err, store.ErrNoRawPage) {
 			return stored{}, nil
 		}
-		return stored{page: page, at: at, ok: err == nil}, err
+		if err != nil {
+			return stored{}, err
+		}
+		page, at, err := tx.LatestRawPage(ctx, id) // same snapshot: the same version
+		return stored{page: page, at: at, version: version}, err
 	})
 	if err != nil {
 		return err
 	}
 	outcome := reparseSkipped
 	images := 0
-	if cur.ok {
+	if cur.page != nil {
 		w, rep, perr := parse.ParseWork(id, cur.page)
 		log.Debug("parse report", append([]any{"work_id", id}, rep.Attrs()...)...)
 		if perr != nil {
@@ -122,8 +126,10 @@ func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64
 			log.Warn("reparse failed", "work_id", id, "err", perr.Error(), "missing", rep.Missing)
 			c.saveSkeleton(logx.With(ctx, log, "work_id", id), "work", strconv.FormatInt(id, 10), cur.page)
 		} else if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-			_, at, err := tx.LatestRawPage(ctx, id)
-			if err != nil || !at.Equal(cur.at) {
+			// Version only: re-reading (and decompressing) the page here would hold the write
+			// lock for as long as the parse was meant not to.
+			v, err := tx.LatestRawPageVersion(ctx, id)
+			if err != nil || v != cur.version {
 				return err // a newer page was stored while we parsed: leave it to that fetch
 			}
 			sw, err := c.storeWork(ctx, tx, w, true, cur.at)

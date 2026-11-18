@@ -29,47 +29,31 @@ func (c *Controllers) EnqueueWorkFetch(ctx context.Context, workID, sourceID int
 	return jobID, created, err
 }
 
-// enqueueWorkFetch is EnqueueWorkFetch inside the caller's transaction.
+// enqueueWorkFetch is EnqueueWorkFetch inside the caller's transaction: the one place that
+// builds work-fetch jobs.
 func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64, class int) (int64, bool, error) {
-	return enqueueWorkJob(ctx, tx, jobs.KindWork, workID, sourceID, class)
-}
-
-// enqueueWorkJob is the one place that builds work-fetch jobs (KindWork or KindWorkVerify).
-// Both kinds share the work's dedupe key: one fetch per work at a time.
-func enqueueWorkJob(ctx context.Context, tx *store.Tx, kind string, workID, sourceID int64, class int) (int64, bool, error) {
-	return tx.EnqueueJob(ctx, store.Job{Kind: kind, SourceID: sourceID,
+	return tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: sourceID,
 		Target: strconv.FormatInt(workID, 10), Priority: class, DedupeKey: jobs.WorkKey(workID)})
-}
-
-// VerifySourceWork re-fetches a work a rescan of sourceID did not see (the work_verify job,
-// queued at since). If AO3 still has it, it left the source: its membership is dropped (unless
-// a listing showed it there again after since), so later rescans don't verify it forever. A
-// deleted, hidden or restricted work keeps its membership, so the mirror still lists it under
-// the source.
-func (c *Controllers) VerifySourceWork(ctx context.Context, id, sourceID int64, since time.Time) (Detail, error) {
-	detail, err := c.FetchWork(ctx, id, sourceID)
-	if err != nil {
-		return detail, err
-	}
-	if _, gone := detail["status"]; gone || sourceID <= 0 {
-		return detail, nil // deleted/hidden/restricted: keep it listed under the source
-	}
-	var dropped bool
-	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		var err error
-		dropped, err = tx.RemoveSourceWorkNotSeenSince(ctx, sourceID, id, since)
-		return err
-	}); err != nil {
-		return detail, err
-	}
-	detail["left_source"] = dropped
-	return detail, nil
 }
 
 // FetchWork fetches one full work page and stores the raw page, chapter bodies and metadata in
 // one transaction. A work that is gone, hidden or restricted on AO3 is marked so; the local copy
-// is kept.
+// is kept. A failed fetch (anything but shutdown or a robots wait) records fetch_failed_at, so
+// polls stop re-queueing a work that keeps failing; the job's own retries are unaffected.
 func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail, error) {
+	detail, err := c.fetchWork(ctx, id, sourceID)
+	if err == nil || id <= 0 || ctx.Err() != nil || isWait(err) {
+		return detail, err
+	}
+	if merr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return tx.MarkWorkFetchFailed(ctx, id)
+	}); merr != nil {
+		return detail, errors.Join(err, merr)
+	}
+	return detail, err
+}
+
+func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail, error) {
 	if id <= 0 {
 		return nil, PermanentError{Code: CodeBadWorkID}
 	}

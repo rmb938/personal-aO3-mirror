@@ -88,6 +88,24 @@ func (s *ReadTx) LatestRawPage(ctx context.Context, workID int64) ([]byte, time.
 	return b, time.Unix(at, 0), err
 }
 
+// RawPageVersion identifies a stored raw page version without loading it.
+type RawPageVersion struct {
+	ID        int64
+	FetchedAt int64 // unix seconds; a re-stored identical page moves it
+}
+
+// LatestRawPageVersion returns which raw page version is newest for a work, without reading or
+// decompressing the page (cheap enough for a check inside a write transaction).
+func (s *ReadTx) LatestRawPageVersion(ctx context.Context, workID int64) (RawPageVersion, error) {
+	var v RawPageVersion
+	err := s.content.QueryRowContext(ctx, `SELECT id, fetched_at FROM raw_pages WHERE work_id = ?
+		ORDER BY fetched_at DESC, id DESC LIMIT 1`, workID).Scan(&v.ID, &v.FetchedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return v, ErrNoRawPage
+	}
+	return v, err
+}
+
 // RawPageWorkIDs pages through work ids that have raw pages (for reparse), ascending after afterID.
 func (s *ReadTx) RawPageWorkIDs(ctx context.Context, afterID int64, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.content, `SELECT DISTINCT work_id FROM raw_pages WHERE work_id > ?
