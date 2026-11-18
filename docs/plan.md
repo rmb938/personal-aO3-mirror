@@ -33,8 +33,8 @@ Repo today: only `README.md` and `LICENSE`. Go 1.27 is installed. Greenfield pro
 | Part | Deliverable | Notes |
 |---|---|---|
 | 1 | `ao3mirror run` daemon + source CLI | This plan. Writes `meta.db`, `content.db`, `images/`. |
-| 2 | `ao3mirror serve` JSON API | Go `net/http`. Endpoints mirror AO3: `/works/:id`, `/tags/:name/works` with the same `work_search` filter/sort params, search over FTS5 plus filters, fandom browse by media, creators, series, collections. Also source management: add a URL, see the estimate, confirm, pause, cancel. Calls the same `internal/controllers` package as the CLI. |
-| 3 | AO3-style UI | Server-rendered `html/template`, embedded in the same binary. Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs are rewritten to the local `images/` at render time. "Mirror this URL" box for on-demand scraping. |
+| 2 | `ao3mirror serve` JSON API | **Detailed staged plan: `docs/part2-api.md`.** chi router, separate process from `run`, public TCP listener + admin unix socket. Fanwork strings are hashed by default; `reveal_fanwork` per request reveals them. Browse/read works, tags, series, creators, collections; QUERY-method search; source add/view and job/status views; admin ops on the socket. Calls the same `internal/controllers` package as the CLI. |
+| 3 | AO3-style UI | A JavaScript UI that calls the Part 2 API (requests will need auth, so no plain HTML form posts). Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs point at the API's reveal-only image route. "Mirror this URL" box for on-demand scraping. Design details are decided when Part 3 starts. |
 
 ### Requirement (Part 3): serve mirrored images safely
 

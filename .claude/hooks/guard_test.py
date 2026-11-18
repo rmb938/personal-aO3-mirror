@@ -8,6 +8,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.path.join(HERE, "guard.py")
 HOST = "archiveofourown" + ".org"
+REVEAL = "reveal_" + "fanwork"
 
 CASES = [
     # (expect_blocked, tool_name, tool_input)
@@ -52,6 +53,52 @@ CASES = [
                       "content": f"const base = \"https://{HOST}\" // data/meta.db"}),
     (False, "Grep", {"pattern": "meta.db", "path": "/home/u/proj/internal"}),
     (False, "WebFetch", {"url": "https://github.com/otwcode/otwarchive", "prompt": "p"}),
+    # Part 2 API: the reveal param is never sent by Claude, from any tool, to any host.
+    (True, "Bash", {"command": f"curl 'http://localhost:8080/api/v1/works/1?{REVEAL}=1'"}),
+    (True, "Bash", {"command": f"curl http://example.invalid/x?a=1&{REVEAL.upper()}=0"}),
+    (True, "Bash", {"command": f"curl --unix-socket s http://x/api/v1/works/1?{REVEAL} =1"}),
+    (True, "Bash", {"command": f"curl 'http://127.0.0.1:8080/w?{REVEAL}%3D1'"}),
+    (True, "Bash", {"command": "curl 'http://127.0.0.1:8080/w?reveal%5F" + "fanwork'"}),
+    (True, "Bash", {"command": "wget 'http://h/w?reveal%255F" + "fanwork%253D1'"}),
+    (True, "WebFetch", {"url": f"http://localhost:8080/api/v1/works/1?{REVEAL}=1", "prompt": "p"}),
+    (True, "mcp__claude-in-chrome__navigate", {"url": f"http://localhost:8080/?{REVEAL}=1"}),
+    (True, "mcp__Claude_Browser__navigate", {"url": f"https://{HOST}/works/1"}),
+    (True, "Write", {"file_path": "/home/u/proj/scripts/probe.sh",
+                     "content": f"curl localhost:8080/w?{REVEAL}=1"}),
+    (True, "Edit", {"file_path": "/home/u/proj/internal/api/x_test.go",
+                    "old_string": "a", "new_string": f"u := \"/w?{REVEAL}=1\""}),
+    (True, "MultiEdit", {"file_path": "/home/u/proj/internal/api/x.go",
+                         "edits": [{"old_string": "a", "new_string": f"{REVEAL}=1"}]}),
+    (False, "Bash", {"command": f"grep -rn {REVEAL} internal/ cmd/"}),
+    (False, "Bash", {"command": "curl http://localhost:8080/api/v1/works/1"}),
+    (False, "WebFetch", {"url": "http://localhost:8080/api/v1/works/1", "prompt": "p"}),
+    (False, "mcp__claude-in-chrome__navigate", {"url": "http://localhost:8080/api/v1/works/1"}),
+    (False, "Write", {"file_path": "/home/u/proj/docs/part2-api.md",
+                      "content": f"Reveal with `{REVEAL}=1`."}),
+    (False, "Edit", {"file_path": "/home/u/proj/CLAUDE.md",
+                     "old_string": "a", "new_string": f"never send {REVEAL}=1"}),
+    (False, "Write", {"file_path": "/home/u/proj/internal/api/reveal.go",
+                      "content": f"const RevealParam = \"{REVEAL}\""}),
+    (False, "Edit", {"file_path": "/home/u/proj/internal/api/x_test.go",
+                     "old_string": "a", "new_string": "u := \"/w?\" + api.RevealParam + \"=1\""}),
+    # Any `ao3mirror serve` Claude starts must be hashed-only (--no-reveal).
+    (True, "Bash", {"command": "./ao3mirror --config ao3mirror.local.yaml serve"}),
+    (True, "Bash", {"command": "go run ./cmd/ao3mirror --config c.yaml serve --listen :9000"}),
+    (True, "Bash", {"command": "make build && nohup ./ao3mirror serve > /tmp/s.log 2>&1 &"}),
+    (True, "Bash", {"command": "/usr/local/bin/ao3mirror serve --no-reveal=false"}),
+    (True, "Bash", {"command": "ao3mirror serve; ./ao3mirror serve --no-reveal"}),
+    (False, "Bash", {"command": "./ao3mirror --config ao3mirror.local.yaml serve --no-reveal"}),
+    (False, "Bash", {"command": "go run ./cmd/ao3mirror serve -no-reveal"}),
+    (False, "Bash", {"command": "./ao3mirror serve --no-reveal=true &"}),
+    (False, "Bash", {"command": "go test ./cmd/ao3mirror -run serve"}),
+    (False, "Bash", {"command": "grep -n serve cmd/ao3mirror/main.go"}),
+    (False, "Bash", {"command": "./ao3mirror --config c.yaml status"}),
+    (True, "Bash", {"command": "cd /tmp\n./ao3mirror serve"}),
+    (True, "Bash", {"command": "bash -c './ao3mirror serve'"}),
+    (True, "Bash", {"command": "AO3MIRROR_X=1 timeout 30 ./ao3mirror serve"}),
+    (True, "Bash", {"command": "(./ao3mirror serve &) && sleep 1"}),
+    (False, "Bash", {"command": "git commit -m 'plan the ao3mirror serve API\n\nmore about serve'"}),
+    (False, "Bash", {"command": "echo ao3mirror serve"}),
 ]
 
 
