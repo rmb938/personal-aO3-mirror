@@ -42,6 +42,7 @@ cmd/ao3mirror/serve.go       serve command: flags, listeners, graceful shutdown
 internal/api/                server, router, middleware, handlers (calls controllers only)
 internal/api/redact/         hasher + response enforcer (no HTTP deps; fuzzed)
 internal/api/dto/            response/request types, registered with the enforcer
+internal/api/convert/        model/controller results -> DTOs (from stage 3a-3)
 internal/apiclient/          typed client over the admin socket, used by the CLI
 docs/api/openapi.yaml        hand-written OpenAPI 3.1; a test checks that it matches the route table
 ```
@@ -53,6 +54,17 @@ never uses or imports `controllers`, `store` or `model` types, and never embeds 
 map controller results into DTOs field by field. The API contract then changes only when a DTO
 is edited on purpose, and the enforcer's key registry is exactly the DTO fields. Reviewers check
 this rule, and it is added to CLAUDE.md in stage 0.
+
+**Conversion rule (from stage 3a-3):** the field-by-field mapping lives in
+`internal/api/convert`, not in handlers. It exports one function per model or controller
+result, named after it (`convert.Source(model.Source) dto.Source`, `convert.Job(...)`), and
+keeps every helper (filter/cursor mapping, last_error split, null-for-unknown) unexported, with
+its tests beside it. Handlers parse input, call a controller and return `convert.X(result)`.
+CLAUDE.md's API design rules get this line in 3a-3.
+
+**Pagination rule (from stage 3a-2):** a paged route pages in SQL. The store takes
+offset/limit and has a matching count, and the controller returns the page and the total from
+one `InReadTx` (so they agree). Never fetch every row and slice in the handler.
 
 ### Fanwork protection (the core design)
 1. **Single write path.** Handlers return `(any, error)`. Only `api.respond` encodes JSON.
@@ -327,7 +339,65 @@ Status: tick when the PR merges.
     `/jobs/{id}`, `/status`, `/source-adds/{job_id}`.
   - DTOs are built from the existing controllers (`ListSources`, `GetSource`, `FindJobs`,
     `Status`, `SourceAddOutcome`).
-  - `FindJobs` gets offset paging if needed (store PR in the same stage).
+  - Split into five PRs (the box is ticked by the last one). Each starts from main after the
+    previous merges.
+    - [ ] **3a-1. Refactor: source and job types into `internal/model`** (no behaviour
+      change).
+      - `store.SourceRow` → `model.Source`, `store.SourceState` and its constants →
+        `model.SourceState`; `store.Job` → `model.Job`, and the job state constants
+        (`JobQueued` … `JobCancelled`) move with it.
+      - The store still scans into them. Row-only and query types stay in `store`
+        (`JobFilter`, `JobOrder`, `NewJob`, `RequestRow`, `Counts`, `WorkDiag`, `SourceAdd`, …)
+        until a stage needs them.
+      - Update every caller (store, controllers, scheduler, imagefetch, cmd). Keep the doc
+        comment warning that `Target`/`FiltersJSON` may hold names (never log them).
+    - [ ] **3a-2. Store + controller: paged sources.**
+      - Store: `ListSources` takes offset/limit (the member-count subqueries then only run for
+        the page) and gets a `CountSources`.
+      - Controller: `ListSources(ctx, offset, limit)` returns `(page, total)` from one
+        `InReadTx`. Update the CLI `source list` caller (it can page through, or ask for a
+        large limit) and decide what `Status` passes (all sources today; 3c may cap it).
+      - Store tests for offset/limit/count, ordering stable by id.
+    - [ ] **3a-3. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
+      `/source-adds/{job_id}`, with mapping in `internal/api/convert`. Design (from a first
+      attempt, reworked into 3a-1..3):
+      - `serve` opens the store and builds controllers with no AO3 client
+        (`newControllers(cfg, log, st, nil)`); `api.Options.Controllers` is required. The
+        server owns the store and closes it when `serve` returns (and on a `newServer` error).
+      - `dto.Source`: id, kind, target (hashed), `target_id` (numeric target of series/work
+        sources, omitted otherwise), `filters`, path (hashed), state, order (omitted when
+        empty), poll_interval_s, priority, `total_works`/`est_requests` (`*int`, null when the
+        store has -1), member_works, fetched_works, `backfill`, the `_at` times (UTC, zero ones
+        omitted) and `last_error` (hashed whole: a source's message is "poll page N: code",
+        not code-first).
+      - Filters (stored as a name → values JSON map) become `[{name, values}]` sorted by name,
+        `[]` when none; maps are not allowed in DTOs.
+      - The backfill cursor becomes `backfill` (omitted when empty): next_page, order,
+        `window_start_on`/`window_end_on`, rescan, `rescan_started_at`, blocked_parser,
+        `retry_at`.
+      - `dto.SourceAdd`: job_id, state, `last_error_code`, `last_error_detail`, `result`
+        (source, blurbs, estimate with `duration_s`). A job `last_error` is split at the first
+        `:`.
+      - Enums: `state` (source + job states), `kind` (source kinds via a new `ao3url.Kinds()`;
+        job kinds join in 3b), `order` (new `ao3url.OrderNames()`), `last_error_code` (new
+        `controllers.JobErrorCodes()`: the ErrorCodes, `rate_limited`/`unavailable`,
+        `crashed`, `internal`). A code outside the enum is hashed by the enforcer.
+      - `SourceAddOutcome` returns `store.ErrNoJob` (404) for a job that is not a source add.
+        A done add whose source was removed since is a 404 too (existing behaviour, kept).
+      - `knownFields` gains `job_id`. OpenAPI gets the paths plus shared `ID`, `Page`,
+        `PerPage` parameters and the schemas.
+      - Leak test: `testOptions(t, logs)` opens a temp store and seeds it (`seed_test.go`,
+        fixed ids: a tag source with every text field a sentinel, a series source, a done and
+        a failed source add, a non-add job). Samples gain a `content` flag: those also run
+        revealed and must contain a sentinel (per-route positive control). The serve test
+        checks `/sources` answers on a fresh data dir.
+    - [ ] **3b. Jobs**: store offset/limit + `CountJobs` for `JobFilter`, a controller
+      returning `(page, total)`; `GET /jobs` (state, kind, source_id, page, per_page), and
+      `/jobs/{id}`. `convert.Job` splits `last_error`; job kinds join the `kind` enum.
+    - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
+      becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
+      `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,
+      images, requests by class) become lists of `{key-enum, count}`.
 - [ ] **4. Add source (public)**
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.
