@@ -43,7 +43,9 @@ func ParseListing(page []byte, fetchedAt time.Time) (Listing, *Report, error) {
 	}
 	r.num("total", l.Total)
 	l.Pagination = parsePagination(main, r)
-	l.Blurbs, l.Skipped = parseBlurbs(main, fetchedAt, r)
+	if l.Blurbs, l.Skipped, err = parseBlurbs(main, fetchedAt, r); err != nil {
+		return l, r, err
+	}
 	// Neither a "N Works" total nor any blurb: the page structure changed (a real empty listing
 	// still says "0 Works"). Fail instead of silently treating it as empty.
 	if l.Total < 0 && len(l.Blurbs) == 0 && l.Skipped == 0 {
@@ -53,24 +55,53 @@ func ParseListing(page []byte, fetchedAt time.Time) (Listing, *Report, error) {
 	return l, r, nil
 }
 
+// minBlurbsForSectionCheck is how many work blurbs a page needs before a section missing from
+// all of them fails the parse. Below it, one odd work on a short last page could block a walk.
+const minBlurbsForSectionCheck = 5
+
 // parseBlurbs extracts every work blurb under root.
-func parseBlurbs(root *goquery.Selection, fetchedAt time.Time, r *Report) ([]model.Work, int) {
+//
+// A blurb is skipped only when it has no work link. Any other section can be missing from one
+// odd blurb, but when a page of work blurbs has no fandom link in any of them (AO3 requires a
+// fandom on every work: work.rb validates fandom_string), or no stats block in any of them,
+// the markup changed. Storing such blurbs would empty every listed work's tags and series and
+// zero its word count (forcing a refetch of each), so the page fails as unexpected instead.
+func parseBlurbs(root *goquery.Selection, fetchedAt time.Time, r *Report) ([]model.Work, int, error) {
 	var out []model.Work
-	skipped := 0
+	skipped, withFandom, withStats := 0, 0, 0
 	r.sel("li.blurb", root.Find("li.blurb")).Each(func(_ int, li *goquery.Selection) {
 		// Structural hit counts recorded for every blurb (also lets skeletons be validated).
 		r.sel("li.blurb .header.module h4.heading", li.Find("div.header.module h4.heading"))
-		r.sel("li.blurb dl.stats", li.Find("dl.stats"))
+		stats := r.sel("li.blurb dl.stats", li.Find("dl.stats"))
 		w, ok := parseBlurb(li, fetchedAt, r)
 		if !ok {
 			skipped++
 			return
 		}
+		if stats.Length() > 0 {
+			withStats++
+		}
+		if li.Find("div.header.module h5.fandoms a.tag").Length() > 0 {
+			withFandom++
+		}
 		out = append(out, w)
 	})
 	r.Counts["blurbs"] = len(out)
 	r.Counts["blurbs_skipped"] = skipped
-	return out, skipped
+	r.Counts["blurbs_with_fandom"] = withFandom
+	r.Counts["blurbs_with_stats"] = withStats
+	if len(out) >= minBlurbsForSectionCheck {
+		if withFandom == 0 {
+			r.Missing = append(r.Missing, "li.blurb h5.fandoms a.tag")
+		}
+		if withStats == 0 {
+			r.Missing = append(r.Missing, "li.blurb dl.stats")
+		}
+		if withFandom == 0 || withStats == 0 {
+			return out, skipped, unexpected("blurb fandoms or stats")
+		}
+	}
+	return out, skipped, nil
 }
 
 var workLinkPath = regexp.MustCompile(`(?:^|/)works/([0-9]+)$`)

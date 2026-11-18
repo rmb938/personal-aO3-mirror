@@ -63,7 +63,9 @@ func ParseSeries(seriesID int64, page []byte, fetchedAt time.Time) (Series, *Rep
 
 	s.Listing.Total = s.WorksCount
 	s.Listing.Pagination = parsePagination(main, r)
-	s.Listing.Blurbs, s.Listing.Skipped = parseBlurbs(main, fetchedAt, r)
+	if s.Listing.Blurbs, s.Listing.Skipped, err = parseBlurbs(main, fetchedAt, r); err != nil {
+		return s, r, err
+	}
 
 	r.textLen("title", s.Title)
 	r.textLen("summary", s.SummaryHTML)
