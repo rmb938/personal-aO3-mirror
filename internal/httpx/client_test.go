@@ -249,6 +249,10 @@ func TestClassification(t *testing.T) {
 		// Another host's root or login page says nothing about the work: not hidden/restricted.
 		{"/works/27", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/"}}, KindWork, ClassUnexpected},
 		{"/works/28", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/users/login?restricted=true"}}, KindWork, ClassUnexpected},
+		// AO3's "search backend down" status is an outage, for listings and works alike.
+		{"/tags/fixture3/works", fakeao3.Reply{Status: 445}, KindListing, ClassUnavailable},
+		{"/works/29", fakeao3.Reply{Status: 445}, KindWork, ClassUnavailable},
+		{"/works/30", fakeao3.Reply{Status: 444}, KindWork, ClassUnexpected},
 	}
 	for _, c := range cases {
 		h.srv.Handle(c.path, c.reply)

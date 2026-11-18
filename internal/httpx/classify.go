@@ -49,6 +49,11 @@ var ao3LayoutMarkers = []string{`id="outer"`, `id="main"`}
 // no required marker (an empty listing has no blurbs, so the parser decides).
 const workMarker = `id="workskin"`
 
+// statusAO3SearchDown is what AO3 answers when Elasticsearch is unavailable (otwarchive
+// ApplicationController: rescue_from ...ServiceUnavailable { head 445 }), instead of a 503 so
+// it can tell the two apart. For us it is an outage: back off and retry.
+const statusAO3SearchDown = 445
+
 // Verdict is the classifier output with a content-free reason for logs.
 type Verdict struct {
 	Class  Class
@@ -109,6 +114,8 @@ func classify(kind Kind, status int, body []byte) Verdict {
 		return Verdict{ClassNotFound, "status=404"}
 	case status == http.StatusForbidden: // Cloudflare blocks and challenges (5xx returned above)
 		return Verdict{ClassUnavailable, "status=" + strconv.Itoa(status) + cfReason(cf)}
+	case status == statusAO3SearchDown:
+		return Verdict{ClassUnavailable, "status=" + strconv.Itoa(status) + " search_down"}
 	case status >= 400:
 		return Verdict{ClassUnexpected, "status=" + strconv.Itoa(status)}
 	case status < 200 || status >= 300:
