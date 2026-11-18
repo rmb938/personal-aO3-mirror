@@ -31,6 +31,13 @@ type SourceCursor struct {
 	// RescanStarted (unix seconds). Works not seen since then get a verification fetch.
 	Rescan        bool  `json:"rescan,omitempty"`
 	RescanStarted int64 `json:"rescan_started,omitempty"`
+	// RescanListed and RescanSkipped count blurbs stored and blurbs skipped (no work link)
+	// during the rescan (a page redone after a window shrink counts again). RescanTruncated
+	// marks a walk that stopped at AO3's result window with pages left. They show whether the
+	// walk saw the whole source, and so whether its misses count (see rescanSawSource).
+	RescanListed    int  `json:"rescan_listed,omitempty"`
+	RescanSkipped   int  `json:"rescan_skipped,omitempty"`
+	RescanTruncated bool `json:"rescan_truncated,omitempty"`
 	// BlockedParser is set to parse.Version when the NextPage listing failed to parse. Backfill
 	// pauses until the binary ships a different parser version.
 	BlockedParser int `json:"blocked_parser,omitempty"`
@@ -335,6 +342,10 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 			detail["stale_after_fetch"] = true
 			return nil
 		}
+		if cur.Rescan {
+			cur.RescanListed += len(blurbs.ids)
+			cur.RescanSkipped += l.Skipped
+		}
 		c.advanceSourceCursor(&cur, page, win, l, detail, log)
 		if page == 1 && win == nil && l.Total >= 0 {
 			fresh.TotalWorks = l.Total
@@ -368,6 +379,9 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 		cur.NextPage = page + 1
 	case win != nil:
 		// Window done: move to the previous window.
+		if pg.Current < pg.Last {
+			cur.RescanTruncated = cur.Rescan // a one-day window over the result window
+		}
 		from, _ := time.Parse("2006-01-02", cur.WindowFrom)
 		to := from.AddDate(0, 0, -1)
 		if to.Before(dateFloor) {
@@ -382,6 +396,7 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 		}
 	default:
 		if pg.Current < pg.Last {
+			cur.RescanTruncated = cur.Rescan
 			detail["truncated_at_max_results"] = true
 			log.Warn("backfill reached AO3 result window; remaining works only via windows", "page", page)
 		}

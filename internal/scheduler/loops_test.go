@@ -147,6 +147,44 @@ func TestRescanDropsWorkThatLeftSource(t *testing.T) {
 	require.Equal(t, 4, e.source(id).MemberWorks)
 }
 
+// A rescan whose listing parse finds no work link in most blurbs (as after an AO3 markup
+// change) counts no misses: nothing is checked or dropped, however many rescans run.
+func TestRescanWithUnparsedBlurbsDropsNothing(t *testing.T) {
+	e := newEnv(t, 5, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour })
+	id := e.add(e.site.TagPath())
+	e.drain(50)
+	for _, w := range []int64{5001, 5002, 5003} {
+		e.site.Update(w, func(sw *fakeao3.SiteWork) { sw.Unlinked = true })
+	}
+	for range 3 { // three rescans, each storing 2 blurbs and skipping 3
+		e.clk.Advance(25 * time.Hour)
+		e.drain(100)
+	}
+	for _, w := range []string{"5001", "5002", "5003"} {
+		require.Equal(t, 1, countRequests(e, "/works/"+w+"?view_full_work=true"), "work %s checked after a rescan that skipped it", w)
+	}
+	require.Equal(t, 5, e.source(id).MemberWorks, "members dropped after rescans that skipped their blurbs")
+	require.Contains(t, e.logs.String(), "rescan skipped more blurbs than it stored")
+}
+
+// A rescan that lists none of a source's works (here they all left; a blurb selector that no
+// longer matches looks the same) counts no misses either.
+func TestRescanListingNothingDropsNothing(t *testing.T) {
+	e := newEnv(t, 3, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour })
+	id := e.add(e.site.TagPath())
+	e.drain(50)
+	for _, w := range []int64{5000, 5001, 5002} {
+		e.site.Update(w, func(sw *fakeao3.SiteWork) { sw.Untagged = true })
+	}
+	for range 3 {
+		e.clk.Advance(25 * time.Hour)
+		e.drain(100)
+	}
+	require.Equal(t, 3, e.source(id).MemberWorks, "members dropped after rescans that listed nothing")
+	require.Equal(t, 1, countRequests(e, "/works/5000?view_full_work=true"), "work checked after a rescan that listed nothing")
+	require.Contains(t, e.logs.String(), "rescan listed none of the source's works")
+}
+
 // A work that left the source and can't be fetched (here: over the body limit) gets one check
 // after the first miss and is dropped at the second without a request, instead of being
 // downloaded again after every rescan.
