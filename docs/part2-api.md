@@ -295,7 +295,9 @@ Status: tick when the PR merges.
       - Access log: method names outside the known set log as `other`; query param names are
         logged only when in `knownFields`, others only counted (`other_params`), since a client
         picks them freely. Numeric path params log as `path_<name>`, others as
-        `path_<name>_invalid`.
+        `path_<name>_invalid`. A request rejected before routing (429, throttle 503, URL
+        limits, cross-origin) gets its route resolved with chi's `Routes.Find` (no handler
+        runs) and logs `prerouted=true`; an unmatched path logs `route=""`.
       - 405 sets `Allow` by matching the path against each routed method.
       - `docs/api/openapi.yaml` is **OpenAPI 3.2** (native `query` operations). Admin-only
         operations carry `x-admin-only: true`; the coverage test compares both routers.
