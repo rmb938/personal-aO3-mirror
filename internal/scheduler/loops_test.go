@@ -11,6 +11,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -84,7 +85,7 @@ func TestAdultGateLeavesWorkUnfetched(t *testing.T) {
 	_, _, err := e.db.LatestRawPage(ctx, 5001)
 	require.ErrorIs(t, err, store.ErrNoRawPage, "interstitial stored as a raw page")
 	require.True(t, e.diag(5001).LastFetched.IsZero(), "work marked fetched from an interstitial")
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5001", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5001", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, string(controllers.CodeAdultGate))
@@ -106,7 +107,7 @@ func TestTooLargeWorkFailsOnce(t *testing.T) {
 	e.drain(50)
 	const uri = "/works/5001?view_full_work=true"
 	require.Equal(t, 1, countRequests(e, uri), "oversized page retried")
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5001", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5001", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, string(controllers.CodeTooLarge), jobs[0].LastError)
@@ -368,7 +369,7 @@ func TestRobotsOutageWaitsWithoutAttempts(t *testing.T) {
 	before := countRequests(e, "/works/5001?view_full_work=true")
 	for range 3 {
 		e.drain(20)
-		jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupeKey: "work:5001", State: store.JobQueued, Limit: 1})
+		jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupeKey: "work:5001", State: model.JobQueued, Limit: 1})
 		require.NoError(t, err)
 		require.Len(t, jobs, 1, "job not waiting during the robots outage")
 		require.Zero(t, jobs[0].Attempts, "robots outage used up an attempt")
@@ -424,5 +425,5 @@ func TestOddListingResponseHoldsBackfill(t *testing.T) {
 	e.srv.Handle(e.site.TagPath()) // no replies: the synthetic site serves it again
 	e.clk.Advance(7 * time.Hour)
 	e.drain(500)
-	require.Equal(t, store.SourceDoneBackfill, e.source(id).State, "backfill did not resume")
+	require.Equal(t, model.SourceDoneBackfill, e.source(id).State, "backfill did not resume")
 }

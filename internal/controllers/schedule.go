@@ -9,6 +9,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -33,7 +34,7 @@ func (c *Controllers) ScheduleSources(ctx context.Context, now time.Time) error 
 	})
 }
 
-func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
+func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r model.Source, now time.Time, log *slog.Logger) error {
 	if r.Kind == string(ao3url.KindWork) {
 		return c.scheduleWorkSource(ctx, tx, r, now, log)
 	}
@@ -49,7 +50,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 			return err
 		}
 	}
-	if r.State == store.SourceDoneBackfill {
+	if r.State == model.SourceDoneBackfill {
 		return c.maybeStartRescan(ctx, tx, r, now, log)
 	}
 	cur, err := ParseSourceCursor(r.BackfillCursor)
@@ -81,8 +82,8 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 
 // finishWalk completes a backfill or rescan: verifies works not seen during a rescan, then
 // marks the source done_backfill (state, verification jobs and cursor change together).
-func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur SourceCursor, now time.Time, log *slog.Logger) error {
-	if err := tx.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
+func finishWalk(ctx context.Context, tx *store.Tx, r model.Source, cur SourceCursor, now time.Time, log *slog.Logger) error {
+	if err := tx.SetSourceState(ctx, r.ID, model.SourceDoneBackfill, model.SourceActive); err != nil {
 		if errors.Is(err, store.ErrStateConflict) {
 			return nil // not active any more (paused/cancelled); try next round
 		}
@@ -179,7 +180,7 @@ func rescanSawSource(ctx context.Context, tx *store.Tx, sourceID int64, cur Sour
 
 // maybeStartRescan restarts the listing walk of a done source every RescanInterval to refresh
 // stats and find works that disappeared.
-func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
+func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r model.Source, now time.Time, log *slog.Logger) error {
 	if r.LastFullScanAt.IsZero() {
 		r.LastFullScanAt = now
 		return tx.UpdateSourceProgress(ctx, r)
@@ -191,7 +192,7 @@ func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r stor
 	if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 		return err
 	}
-	if err := tx.SetSourceState(ctx, r.ID, store.SourceActive, store.SourceDoneBackfill); err != nil {
+	if err := tx.SetSourceState(ctx, r.ID, model.SourceActive, model.SourceDoneBackfill); err != nil {
 		if errors.Is(err, store.ErrStateConflict) {
 			return nil // paused/cancelled: no rescan
 		}
@@ -204,7 +205,7 @@ func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r stor
 // scheduleWorkSource fetches a single-work source once (on demand), then every poll interval.
 // The decision is when a fetch was last scheduled, never how it went: a work that is deleted,
 // hidden, unparseable or failing is retried once per poll interval, not every round.
-func (c *Controllers) scheduleWorkSource(ctx context.Context, tx *store.Tx, r store.SourceRow, now time.Time, log *slog.Logger) error {
+func (c *Controllers) scheduleWorkSource(ctx context.Context, tx *store.Tx, r model.Source, now time.Time, log *slog.Logger) error {
 	id, _ := strconv.ParseInt(r.Target, 10, 64)
 	class := jobs.ClassPoll
 	switch {

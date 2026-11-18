@@ -22,6 +22,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -40,7 +41,7 @@ type Options struct {
 }
 
 // handler runs one job. Its detail is recorded as the job's event detail (content-free).
-type handler func(ctx context.Context, job store.Job) (controllers.Detail, error)
+type handler func(ctx context.Context, job model.Job) (controllers.Detail, error)
 
 type Scheduler struct {
 	options     Options
@@ -69,22 +70,22 @@ func New(opts Options) *Scheduler {
 	}
 	s := &Scheduler{options: opts, store: opts.Store, controllers: opts.Controllers, log: opts.Logger.With("component", "scheduler")}
 	s.handlers = map[string]handler{
-		jobs.KindPoll: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindPoll: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
 			return s.controllers.PollSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
-		jobs.KindBackfill: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindBackfill: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
 			return s.controllers.BackfillSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
-		jobs.KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindWork: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID, j.Attempts >= j.MaxAttempts)
 		},
-		jobs.KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindTagInfo: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
 			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
-		jobs.KindSeries: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindSeries: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
 			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
-		jobs.KindSourceAdd: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
+		jobs.KindSourceAdd: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
 			return s.controllers.AddQueuedSource(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
 	}
@@ -145,7 +146,7 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("schedule: %w", err)
 	}
 	s.maybePrune(ctx)
-	job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
+	job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (model.Job, error) {
 		return tx.PickJob(ctx, s.kinds, s.options.Now())
 	})
 	if errors.Is(err, store.ErrNoJob) {
@@ -158,7 +159,7 @@ func (s *Scheduler) Step(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (s *Scheduler) execute(ctx context.Context, job store.Job) {
+func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 	log := s.log.With("job_id", job.ID, "job_kind", job.Kind, "source_id", job.SourceID, "class", job.Priority, "attempt", job.Attempts)
 	jctx := httpx.WithJobID(logx.With(ctx, log), job.ID)
 	// Bookkeeping must land even when ctx is cancelled (shutdown) so a job never stays "running".
@@ -208,7 +209,7 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 	switch {
 	case err == nil:
 		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
-		finish("done", store.JobDone, "")
+		finish("done", model.JobDone, "")
 		log.Info("job done", append([]any{"ms", detail["ms"]}, flatten(detail)...)...)
 	case ctx.Err() != nil:
 		book("requeue", func(ctx context.Context, tx *store.Tx) error { return tx.RequeueJob(ctx, job.ID, s.options.Now()) })
@@ -238,7 +239,7 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 		log.Warn("job retry", "error", re.Code, "next_state", state, "not_before", nb)
 	case errors.As(err, &pe):
 		detail["error"] = pe.Error()
-		finish("failed", store.JobFailed, pe.Error())
+		finish("failed", model.JobFailed, pe.Error())
 		log.Warn("job failed", "error", pe.Error())
 	default:
 		// Unexpected (store/transport) errors: retry; the store caps attempts.
@@ -252,7 +253,7 @@ func (s *Scheduler) execute(ctx context.Context, job store.Job) {
 // runHandler runs a job's handler, turning a panic into a permanent failure so one bad page or
 // bug cannot take down the daemon (or crash-loop it via restart recovery). Only the panic's type
 // is logged: its value could carry page content.
-func (s *Scheduler) runHandler(ctx context.Context, job store.Job, log *slog.Logger) (detail controllers.Detail, err error) {
+func (s *Scheduler) runHandler(ctx context.Context, job model.Job, log *slog.Logger) (detail controllers.Detail, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("job handler panicked", "panic_type", fmt.Sprintf("%T", r))
@@ -391,15 +392,15 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 
 // RunJob runs one specific queued job now (used by `fetch-work --now` when no daemon runs).
 // It returns the job's final state.
-func (s *Scheduler) RunJob(ctx context.Context, id int64) (store.Job, error) {
-	job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (store.Job, error) {
+func (s *Scheduler) RunJob(ctx context.Context, id int64) (model.Job, error) {
+	job, err := store.WriteValue(ctx, s.store, func(ctx context.Context, tx *store.Tx) (model.Job, error) {
 		return tx.ClaimJob(ctx, id, s.options.Now())
 	})
 	if err != nil {
-		return store.Job{}, err
+		return model.Job{}, err
 	}
 	s.execute(ctx, job)
-	return store.ReadValue(ctx, s.store, func(ctx context.Context, tx *store.ReadTx) (store.Job, error) {
+	return store.ReadValue(ctx, s.store, func(ctx context.Context, tx *store.ReadTx) (model.Job, error) {
 		return tx.GetJob(ctx, id)
 	})
 }

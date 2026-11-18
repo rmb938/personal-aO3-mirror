@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -34,7 +35,7 @@ func TestRefreshRequeuesFailedWorksAndPollsNow(t *testing.T) {
 		e.clk.Advance(3 * time.Hour)
 	}
 	// Polls every 6h also re-queue it (still unfetched), so there may be several failed jobs.
-	failed, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5002", Limit: 5})
+	failed, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5002", Limit: 5})
 	require.NoError(t, err)
 	require.NotEmpty(t, failed, "expected failed jobs for 5002")
 	e.srv.Handle("/works/5002") // AO3 recovered: the synthetic site serves it again
@@ -62,16 +63,16 @@ func TestRefreshFullAndSet(t *testing.T) {
 	ctx := context.Background()
 	id := e.add(e.site.TagPath())
 	e.drain(50)
-	require.Equal(t, store.SourceDoneBackfill, e.source(id).State)
+	require.Equal(t, model.SourceDoneBackfill, e.source(id).State)
 	res, err := e.ctl.RefreshSource(ctx, id, true)
 	require.NoError(t, err)
 	require.True(t, res.RescanStarted)
-	require.Equal(t, store.SourceActive, e.source(id).State, "full refresh should reactivate")
+	require.Equal(t, model.SourceActive, e.source(id).State, "full refresh should reactivate")
 	e.drain(50)
 	src := e.source(id)
 	cur, err := controllers.ParseSourceCursor(src.BackfillCursor)
 	require.NoError(t, err)
-	require.Equal(t, store.SourceDoneBackfill, src.State, "after full refresh")
+	require.Equal(t, model.SourceDoneBackfill, src.State, "after full refresh")
 	require.False(t, cur.Rescan, "after full refresh")
 
 	// set: shorter poll interval moves the next poll earlier; priority changes.

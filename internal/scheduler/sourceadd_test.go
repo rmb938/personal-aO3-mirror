@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -24,7 +25,7 @@ func TestQueuedSourceAdd(t *testing.T) {
 	e.drain(50)
 	o, err := e.ctl.SourceAddOutcome(ctx, q.JobID)
 	require.NoError(t, err)
-	require.Equal(t, store.JobDone, o.State)
+	require.Equal(t, model.JobDone, o.State)
 	require.NotNil(t, o.Result)
 	require.Equal(t, 3, o.Result.Estimate.Total)
 	require.Equal(t, 3, e.source(o.Result.Source.ID).FetchedWorks, "source not backfilled")
@@ -46,7 +47,7 @@ func TestQueuedSourceAddFailures(t *testing.T) {
 	e.drain(10)
 	o, err := e.ctl.SourceAddOutcome(ctx, q.JobID)
 	require.NoError(t, err)
-	require.Equal(t, store.JobFailed, o.State)
+	require.Equal(t, model.JobFailed, o.State)
 	require.Equal(t, string(controllers.CodeNotFound), o.Error)
 	_, err = e.db.GetSourceAdd(ctx, 1)
 	require.ErrorIs(t, err, store.ErrNoSourceAdd)
@@ -61,7 +62,7 @@ func TestQueuedSourceAddFailures(t *testing.T) {
 	}
 	o, err = e.ctl.SourceAddOutcome(ctx, q.JobID)
 	require.NoError(t, err)
-	require.Equal(t, store.JobFailed, o.State)
+	require.Equal(t, model.JobFailed, o.State)
 	_, err = e.db.GetSourceAdd(ctx, 2)
 	require.ErrorIs(t, err, store.ErrNoSourceAdd, "queued add left behind after its last attempt")
 	busy := 0
@@ -97,7 +98,7 @@ func TestQueuedSourceAddOddResponse(t *testing.T) {
 	e.drain(10)
 	o, err := e.ctl.SourceAddOutcome(ctx, q.JobID)
 	require.NoError(t, err)
-	require.Equal(t, store.JobFailed, o.State)
+	require.Equal(t, model.JobFailed, o.State)
 	require.Contains(t, o.Error, string(controllers.CodeOddResponse))
 	require.NotContains(t, o.Error, string(controllers.CodeParseUnexpected))
 }

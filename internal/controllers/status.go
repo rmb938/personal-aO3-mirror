@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -21,10 +22,10 @@ type StatusReport struct {
 	ImageBytes    int64             // stored image bytes
 	TagInfo       TagInfoProgress
 	Jobs          map[string]map[string]int // kind -> state -> count
-	Sources       []store.SourceRow
+	Sources       []model.Source
 	PartialSeries []store.PartialSeries
 	RequestErrors []store.RequestRow // most recent non-ok requests
-	FailedJobs    []store.Job        // most recent failed jobs
+	FailedJobs    []model.Job        // most recent failed jobs
 }
 
 // TagInfoProgress counts tags qualifying for tag info (configured types, used by a mirrored work).
@@ -64,7 +65,7 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 		if r.RequestErrors, err = tx.RecentRequests(ctx, true, 0, "", 10); err != nil {
 			return err
 		}
-		r.FailedJobs, err = tx.FindJobs(ctx, store.JobFilter{State: store.JobFailed, Limit: 10})
+		r.FailedJobs, err = tx.FindJobs(ctx, store.JobFilter{State: model.JobFailed, Limit: 10})
 		return err
 	})
 	return r, err
@@ -72,7 +73,7 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 
 // JobDebug is the content-free trace of one job.
 type JobDebug struct {
-	Job      store.Job
+	Job      model.Job
 	Events   []store.JobEventRow
 	Requests []store.RequestRow
 }
@@ -97,7 +98,7 @@ func (c *Controllers) DebugJob(ctx context.Context, id int64) (JobDebug, error) 
 // WorkDebug is the content-free state of one work with its fetch jobs and requests.
 type WorkDebug struct {
 	Diag     store.WorkDiag
-	Jobs     []store.Job
+	Jobs     []model.Job
 	Requests []store.RequestRow
 }
 
@@ -119,22 +120,22 @@ func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error
 }
 
 // ListSources returns every source with its progress counts.
-func (c *Controllers) ListSources(ctx context.Context) ([]store.SourceRow, error) {
-	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]store.SourceRow, error) {
+func (c *Controllers) ListSources(ctx context.Context) ([]model.Source, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Source, error) {
 		return tx.ListSources(ctx)
 	})
 }
 
 // GetSource returns one source, or store.ErrNoSource.
-func (c *Controllers) GetSource(ctx context.Context, id int64) (store.SourceRow, error) {
-	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
+func (c *Controllers) GetSource(ctx context.Context, id int64) (model.Source, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (model.Source, error) {
 		return tx.GetSource(ctx, id)
 	})
 }
 
 // FindJobs lists jobs matching f.
-func (c *Controllers) FindJobs(ctx context.Context, f store.JobFilter) ([]store.Job, error) {
-	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]store.Job, error) {
+func (c *Controllers) FindJobs(ctx context.Context, f store.JobFilter) ([]model.Job, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Job, error) {
 		return tx.FindJobs(ctx, f)
 	})
 }

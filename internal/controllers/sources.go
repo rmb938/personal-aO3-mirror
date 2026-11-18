@@ -10,6 +10,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -51,7 +52,7 @@ type Estimate struct {
 }
 
 type AddSourceResult struct {
-	Source   store.SourceRow
+	Source   model.Source
 	Estimate Estimate
 	Blurbs   int // blurbs stored from page 1
 }
@@ -110,7 +111,7 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 		page1, total = &p, t
 	}
 
-	row := store.SourceRow{
+	row := model.Source{
 		Kind: string(src.Kind), Target: src.Target, FiltersJSON: filters, Path: base,
 		BackfillOrder: orderName, PollInterval: poll, Priority: o.Priority,
 		NextPollAt: c.options.Now().Add(poll),
@@ -121,7 +122,7 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 		if page1 == nil {
 			// Single work: no listing; the scheduler fetches it (1 request).
 			res.Estimate = c.estimate(1, 0, 1, false)
-			row.State = store.SourceActive
+			row.State = model.SourceActive
 			row.TotalWorks, row.EstRequests = 1, res.Estimate.Requests
 			row.BackfillCursor = SourceCursor{NextPage: 0, Order: orderName}.JSON()
 		} else {
@@ -149,9 +150,9 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 			}
 			row.BackfillCursor = SourceCursor{NextPage: next, Order: orderName}.JSON()
 			if o.Confirm || total <= c.options.Sources.AutoConfirmMax {
-				row.State = store.SourceActive
+				row.State = model.SourceActive
 			} else {
-				row.State = store.SourcePendingConfirm
+				row.State = model.SourcePendingConfirm
 			}
 		}
 		id, err := tx.InsertSource(ctx, row)
@@ -255,7 +256,7 @@ func (c *Controllers) ConfirmSource(ctx context.Context, id int64) error {
 }
 
 func confirmSource(ctx context.Context, tx *store.Tx, id int64) error {
-	return tx.SetSourceState(ctx, id, store.SourceActive, store.SourcePendingConfirm)
+	return tx.SetSourceState(ctx, id, model.SourceActive, model.SourcePendingConfirm)
 }
 
 // PauseSource stops scheduling for a source; queued jobs stay queued but are not picked.
@@ -264,7 +265,7 @@ func (c *Controllers) PauseSource(ctx context.Context, id int64) error {
 }
 
 func pauseSource(ctx context.Context, tx *store.Tx, id int64) error {
-	return tx.SetSourceState(ctx, id, store.SourcePaused, store.SourceActive, store.SourceDoneBackfill, store.SourcePendingConfirm)
+	return tx.SetSourceState(ctx, id, model.SourcePaused, model.SourceActive, model.SourceDoneBackfill, model.SourcePendingConfirm)
 }
 
 // ResumeSource re-activates a paused source.
@@ -273,7 +274,7 @@ func (c *Controllers) ResumeSource(ctx context.Context, id int64) error {
 }
 
 func resumeSource(ctx context.Context, tx *store.Tx, id int64) error {
-	return tx.SetSourceState(ctx, id, store.SourceActive, store.SourcePaused)
+	return tx.SetSourceState(ctx, id, model.SourceActive, model.SourcePaused)
 }
 
 // CancelSource stops a source for good and drops its queued jobs. Mirrored works are kept. It
@@ -289,8 +290,8 @@ func (c *Controllers) CancelSource(ctx context.Context, id int64) (int64, error)
 }
 
 func cancelSource(ctx context.Context, tx *store.Tx, id int64) (int64, error) {
-	if err := tx.SetSourceState(ctx, id, store.SourceCancelled,
-		store.SourcePendingConfirm, store.SourceActive, store.SourcePaused, store.SourceDoneBackfill); err != nil {
+	if err := tx.SetSourceState(ctx, id, model.SourceCancelled,
+		model.SourcePendingConfirm, model.SourceActive, model.SourcePaused, model.SourceDoneBackfill); err != nil {
 		return 0, err
 	}
 	return tx.CancelSourceJobs(ctx, id)
@@ -329,7 +330,7 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 	if err != nil {
 		return res, err
 	}
-	if r.State != store.SourceActive && r.State != store.SourceDoneBackfill {
+	if r.State != model.SourceActive && r.State != model.SourceDoneBackfill {
 		return res, fmt.Errorf("sources: source %d is %s; only active or done_backfill sources can be refreshed", id, r.State)
 	}
 	now := c.options.Now()
@@ -346,7 +347,7 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 			res.UnblockedParser = true
 		}
 		cur.RetryAt = 0
-		if r.State == store.SourceDoneBackfill && r.Kind != string(ao3url.KindWork) {
+		if r.State == model.SourceDoneBackfill && r.Kind != string(ao3url.KindWork) {
 			cur = rescanSourceCursor(r.BackfillOrder, now)
 			res.RescanStarted = true
 		}
@@ -356,7 +357,7 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 		return res, err
 	}
 	if res.RescanStarted {
-		if err := tx.SetSourceState(ctx, id, store.SourceActive, store.SourceDoneBackfill); err != nil {
+		if err := tx.SetSourceState(ctx, id, model.SourceActive, model.SourceDoneBackfill); err != nil {
 			return res, err
 		}
 	}

@@ -347,8 +347,10 @@ Status: tick when the PR merges.
     `Status`, `SourceAddOutcome`).
   - Split into six PRs (the box is ticked by the last one). Each starts from main after the
     previous merges.
-    - [ ] **3a-1. Refactor: source and job types into `internal/model`** (no behaviour
-      change).
+    - [x] **3a-1. Refactor: source and job types into `internal/model`** (no behaviour
+      change). As built: `model/source.go` and `model/job.go`; the job state constants stay
+      untyped strings (`Job.State` is a `string`). Store methods keep their names
+      (`GetSourceRow` still means "without member counts").
       - `store.SourceRow` → `model.Source`, `store.SourceState` and its constants →
         `model.SourceState`; `store.Job` → `model.Job`, and the job state constants
         (`JobQueued` … `JobCancelled`) move with it.

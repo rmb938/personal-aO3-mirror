@@ -13,7 +13,7 @@ import (
 // markSeriesSource turns series 77 into a series source (sources are created as tags by addSource).
 func markSeriesSource(t *testing.T, s *testStore) {
 	t.Helper()
-	addSource(t, s, "77", SourceActive, 0)
+	addSource(t, s, "77", model.SourceActive, 0)
 	_, err := s.meta.Exec(`UPDATE sources SET kind = 'series' WHERE target = '77'`)
 	require.NoError(t, err)
 }

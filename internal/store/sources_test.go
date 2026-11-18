@@ -13,8 +13,8 @@ import (
 func TestSourcesLifecycle(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	row := SourceRow{Kind: "tag", Target: "Fixture Fandom", FiltersJSON: "{}", Path: "/tags/Fixture%20Fandom/works",
-		State: SourceActive, BackfillOrder: "kudos_desc", PollInterval: 6 * time.Hour, TotalWorks: 3, EstRequests: 4, BackfillCursor: "{}"}
+	row := model.Source{Kind: "tag", Target: "Fixture Fandom", FiltersJSON: "{}", Path: "/tags/Fixture%20Fandom/works",
+		State: model.SourceActive, BackfillOrder: "kudos_desc", PollInterval: 6 * time.Hour, TotalWorks: 3, EstRequests: 4, BackfillCursor: "{}"}
 	id, err := s.InsertSource(ctx, row)
 	require.NoError(t, err)
 	_, err = s.InsertSource(ctx, row)
@@ -93,8 +93,8 @@ func TestSourcesLifecycle(t *testing.T) {
 			VALUES ('listing_page', ?, '/x', 4, ?, ?, ?, ?)`, id, st, st+time.Now().String(), now, now)
 		require.NoError(t, err)
 	}
-	require.NoError(t, s.SetSourceState(ctx, id, SourcePaused, SourceActive))
-	err = s.SetSourceState(ctx, id, SourceActive, SourcePendingConfirm)
+	require.NoError(t, s.SetSourceState(ctx, id, model.SourcePaused, model.SourceActive))
+	err = s.SetSourceState(ctx, id, model.SourceActive, model.SourcePendingConfirm)
 	require.ErrorIs(t, err, ErrStateConflict, "bad transition should fail")
 	require.ErrorContains(t, err, "is paused")
 	n, err := s.CancelSourceJobs(ctx, id)

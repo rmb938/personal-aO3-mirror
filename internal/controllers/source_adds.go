@@ -9,6 +9,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -150,7 +151,7 @@ func (c *Controllers) SourceAddOutcome(ctx context.Context, jobID int64) (Source
 			return err
 		}
 		out.State, out.Error = j.State, j.LastError
-		if j.State != store.JobDone {
+		if j.State != model.JobDone {
 			return nil
 		}
 		evs, err := tx.JobEvents(ctx, jobID)
