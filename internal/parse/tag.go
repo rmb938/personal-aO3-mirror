@@ -21,12 +21,12 @@ type TagInfo struct {
 	MetaTags  []string
 }
 
-// category NAME strings (app/models/*::NAME) to tag types.
+// category NAME strings (app/models/*::NAME, set from config/config.yml *_CATEGORY_NAME) to tag
+// types. Banned, Unsorted Tag and Tag stay TagUnknown.
 var tagCategoryNames = map[string]model.TagType{
 	"Fandom": model.TagFandom, "Character": model.TagCharacter, "Relationship": model.TagRelation,
-	"Additional Tags": model.TagFreeform, "Freeform": model.TagFreeform, "Rating": model.TagRating,
-	"Warning": model.TagWarning, "Archive Warning": model.TagWarning, "Category": model.TagCategory,
-	"Media": model.TagMedia,
+	"Additional Tags": model.TagFreeform, "Rating": model.TagRating, "Archive Warning": model.TagWarning,
+	"Category": model.TagCategory, "Media": model.TagMedia,
 }
 
 var belongsTo = regexp.MustCompile(`This tag belongs to the (.+?) Category`)
