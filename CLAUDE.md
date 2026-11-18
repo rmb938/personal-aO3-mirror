@@ -1,7 +1,8 @@
 # CLAUDE.md — personal-aO3-mirror
 
 Personal offline mirror of selected AO3 works. Go, single binary, SQLite, no external services.
-Full plan: `docs/plan.md`. Part 1 (scraper) is in progress; Part 2 (API) and Part 3 (UI) come later.
+Full plan: `docs/plan.md`. Part 1 (scraper) is done. Part 2 (API) is in progress, stage by stage,
+per `docs/part2-api.md`. Part 3 (UI) comes later.
 
 ## HARD RULE: Claude never reads fanworks
 
@@ -42,6 +43,33 @@ Claude MAY:
 These rules are also enforced by `.claude/settings.json` deny rules and the PreToolUse hook
 `.claude/hooks/guard.py`. Do not weaken, bypass or disable them. Changes to the guard need explicit
 user approval. Keep `data_dir` at the default `./data` so the guard covers it.
+
+## API rules (Part 2, `ao3mirror serve`)
+
+The API hashes every fanwork string by default. Only the per-request query param
+`reveal_fanwork` (value 1) returns real content; nothing reveals globally. Details:
+`docs/part2-api.md` "Fanwork protection".
+
+Claude must NOT:
+- Send the reveal param to any host, by any tool (curl, WebFetch, browser tools, scripts, Go
+  one-offs). The guard blocks the literal in Bash, WebFetch and MCP inputs, and in written
+  files outside `docs/`, `CLAUDE.md` and `.claude/hooks/`. Go code and tests use the constant
+  `api.RevealParam`, never the literal.
+- Start `ao3mirror serve` without `--no-reveal` (the guard enforces this). That flag makes the
+  server refuse reveal, so any server Claude runs is hashed-only.
+- Probe the real data with guessed free text (search terms, tag/creator names). Hashed mode
+  rejects free text anyway; test search with synthetic fixtures in Go tests.
+- Weaken the response enforcer (`internal/api/redact`), bypass it, or add a route outside it.
+  Every route needs a sample request in the all-routes leak test.
+
+Design rules for API code:
+- Handlers call controllers (see Layering) and return values; only `api.respond` writes JSON.
+- `internal/api/dto` imports only the standard library. It never uses, imports or embeds
+  `controllers`, `store` or `model` types; handlers map controller results into DTOs field by
+  field.
+- Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
+  query param allowlists. Logs carry route patterns and param names, never query values or
+  bodies.
 
 ## Politeness rules for scraper code
 
