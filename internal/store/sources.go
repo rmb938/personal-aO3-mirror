@@ -6,17 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
-)
 
-// SourceState values match the sources.state CHECK constraint.
-type SourceState string
-
-const (
-	SourcePendingConfirm SourceState = "pending_confirm"
-	SourceActive         SourceState = "active"
-	SourcePaused         SourceState = "paused"
-	SourceCancelled      SourceState = "cancelled"
-	SourceDoneBackfill   SourceState = "done_backfill"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
 var ErrNoSource = errors.New("store: no such source")
@@ -24,31 +15,6 @@ var ErrNoSource = errors.New("store: no such source")
 // ErrStateConflict means a source was not in one of the required states (e.g. it was paused or
 // cancelled concurrently). Callers racing with the CLI can treat it as "try again later".
 var ErrStateConflict = errors.New("store: source state conflict")
-
-// SourceRow is one sources row. Target and FiltersJSON may hold tag/user names: never log them.
-type SourceRow struct {
-	ID             int64
-	Kind           string
-	Target         string
-	FiltersJSON    string
-	Path           string
-	State          SourceState
-	BackfillOrder  string
-	PollInterval   time.Duration
-	Priority       int
-	TotalWorks     int // -1 unknown
-	EstRequests    int // -1 unknown
-	BackfillCursor string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastPollAt     time.Time
-	NextPollAt     time.Time
-	LastFullScanAt time.Time
-	BackfillDoneAt time.Time
-	LastError      string
-	MemberWorks    int // works linked via source_works (filled by Get/List)
-	FetchedWorks   int // of those, fetched at least once
-}
 
 // sourceBaseCols are the sources columns; sourceCols adds the member counts, which scan every
 // membership of the source (fine for status and show, too slow for every scheduler round).
@@ -62,12 +28,12 @@ const (
 	sourceCols = sourceBaseCols + `, ` + sourceCountCols
 )
 
-func scanSource(row interface{ Scan(...any) error }) (SourceRow, error) {
+func scanSource(row interface{ Scan(...any) error }) (model.Source, error) {
 	return scanSourceRow(row, true)
 }
 
-func scanSourceRow(row interface{ Scan(...any) error }, counts bool) (SourceRow, error) {
-	var r SourceRow
+func scanSourceRow(row interface{ Scan(...any) error }, counts bool) (model.Source, error) {
+	var r model.Source
 	var poll, created, updated, lastPoll, nextPoll, lastScan, done int64
 	dest := []any{&r.ID, &r.Kind, &r.Target, &r.FiltersJSON, &r.Path, &r.State, &r.BackfillOrder, &poll,
 		&r.Priority, &r.TotalWorks, &r.EstRequests, &r.BackfillCursor, &created, &updated, &lastPoll, &nextPoll,
@@ -89,7 +55,7 @@ func scanSourceRow(row interface{ Scan(...any) error }, counts bool) (SourceRow,
 // InsertSource creates a source. It fails with ErrSourceExists if (kind,target,filters) exists.
 var ErrSourceExists = errors.New("store: source already exists")
 
-func (s *Tx) InsertSource(ctx context.Context, r SourceRow) (int64, error) {
+func (s *Tx) InsertSource(ctx context.Context, r model.Source) (int64, error) {
 	now := s.unix()
 	res, err := s.meta.ExecContext(ctx, `INSERT INTO sources (kind, target, filters_json, path, state,
 		backfill_order, poll_interval_s, priority, total_works, est_requests, backfill_cursor, created_at,
@@ -119,7 +85,7 @@ func (s *ReadTx) FindSource(ctx context.Context, kind, target, filtersJSON strin
 	return id, err
 }
 
-func (s *ReadTx) GetSource(ctx context.Context, id int64) (SourceRow, error) {
+func (s *ReadTx) GetSource(ctx context.Context, id int64) (model.Source, error) {
 	r, err := scanSource(s.meta.QueryRowContext(ctx, `SELECT `+sourceCols+` FROM sources WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNoSource
@@ -127,13 +93,13 @@ func (s *ReadTx) GetSource(ctx context.Context, id int64) (SourceRow, error) {
 	return r, err
 }
 
-func (s *ReadTx) ListSources(ctx context.Context) ([]SourceRow, error) {
+func (s *ReadTx) ListSources(ctx context.Context) ([]model.Source, error) {
 	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceCols+` FROM sources ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SourceRow
+	var out []model.Source
 	for rows.Next() {
 		r, err := scanSource(rows)
 		if err != nil {
@@ -147,7 +113,7 @@ func (s *ReadTx) ListSources(ctx context.Context) ([]SourceRow, error) {
 // GetSourceRow is GetSource without the member counts (MemberWorks and FetchedWorks are 0),
 // for crawl and settings paths that run on every page: the counts scan all of the source's
 // memberships.
-func (s *ReadTx) GetSourceRow(ctx context.Context, id int64) (SourceRow, error) {
+func (s *ReadTx) GetSourceRow(ctx context.Context, id int64) (model.Source, error) {
 	r, err := scanSourceRow(s.meta.QueryRowContext(ctx, `SELECT `+sourceBaseCols+` FROM sources WHERE id = ?`, id), false)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNoSource
@@ -164,14 +130,14 @@ func (s *ReadTx) SourceExists(ctx context.Context, id int64) (bool, error) {
 
 // SchedulableSources returns the active and done_backfill sources without member counts
 // (MemberWorks and FetchedWorks are 0): the scheduler reads them before every job pick.
-func (s *ReadTx) SchedulableSources(ctx context.Context) ([]SourceRow, error) {
+func (s *ReadTx) SchedulableSources(ctx context.Context) ([]model.Source, error) {
 	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceBaseCols+` FROM sources
 		WHERE state IN ('active','done_backfill') ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SourceRow
+	var out []model.Source
 	for rows.Next() {
 		r, err := scanSourceRow(rows, false)
 		if err != nil {
@@ -189,7 +155,7 @@ func (s *ReadTx) SourceWorkCounts(ctx context.Context, id int64) (seen, fetched 
 }
 
 // SetSourceState moves a source to `to` only if its current state is one of `from`.
-func (s *Tx) SetSourceState(ctx context.Context, id int64, to SourceState, from ...SourceState) error {
+func (s *Tx) SetSourceState(ctx context.Context, id int64, to model.SourceState, from ...model.SourceState) error {
 	q := `UPDATE sources SET state = ?, updated_at = ? WHERE id = ?`
 	args := []any{string(to), s.unix(), id}
 	if len(from) > 0 {
@@ -214,7 +180,7 @@ func (s *Tx) SetSourceState(ctx context.Context, id int64, to SourceState, from 
 }
 
 // UpdateSourceProgress records totals/cursor/error after listing work. Zero values are written.
-func (s *Tx) UpdateSourceProgress(ctx context.Context, r SourceRow) error {
+func (s *Tx) UpdateSourceProgress(ctx context.Context, r model.Source) error {
 	_, err := s.meta.ExecContext(ctx, `UPDATE sources SET total_works = ?, est_requests = ?, backfill_cursor = ?,
 		last_poll_at = ?, next_poll_at = ?, last_full_scan_at = ?, backfill_done_at = ?, last_error = ?, updated_at = ?
 		WHERE id = ?`, r.TotalWorks, r.EstRequests, r.BackfillCursor, zeroUnix(r.LastPollAt), zeroUnix(r.NextPollAt),

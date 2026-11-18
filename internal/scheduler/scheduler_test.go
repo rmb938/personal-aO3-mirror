@@ -113,7 +113,7 @@ func (e *env) add(url string) int64 {
 	return res.Source.ID
 }
 
-func (e *env) source(id int64) store.SourceRow {
+func (e *env) source(id int64) model.Source {
 	e.t.Helper()
 	src, err := e.db.GetSource(context.Background(), id)
 	require.NoError(e.t, err)
@@ -177,7 +177,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 		e.drain(200)
 		e.clk.Advance(3 * time.Hour)
 	}
-	failed, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5000", Limit: 5})
+	failed, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5000", Limit: 5})
 	require.NoError(t, err)
 	require.NotEmpty(t, failed, "expected failed jobs for 5000")
 	e.srv.Handle("/works/5000") // AO3 recovered
@@ -190,12 +190,12 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 func TestHandlerPanicFailsJob(t *testing.T) {
 	e := newEnv(t, 1, nil)
 	ctx := context.Background()
-	e.sch.handlers[jobs.KindWork] = func(context.Context, store.Job) (controllers.Detail, error) {
+	e.sch.handlers[jobs.KindWork] = func(context.Context, model.Job) (controllers.Detail, error) {
 		panic("fixture panic value")
 	}
 	e.queueWork(5000)
 	e.drain(5) // must not panic out of Step
-	js, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5000", Limit: 1})
+	js, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5000", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, "panic", js[0].LastError, "panicking job should fail with code panic")
@@ -205,7 +205,7 @@ func TestHandlerPanicFailsJob(t *testing.T) {
 func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	e := newEnv(t, 1, nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	e.sch.handlers[jobs.KindWork] = func(context.Context, store.Job) (controllers.Detail, error) {
+	e.sch.handlers[jobs.KindWork] = func(context.Context, model.Job) (controllers.Detail, error) {
 		cancel() // shutdown arrives just as the job succeeds
 		return nil, nil
 	}
@@ -215,7 +215,7 @@ func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	js, err := e.db.FindJobs(context.Background(), store.JobFilter{DedupePrefix: "work:5000", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, js, 1)
-	require.Equal(t, store.JobDone, js[0].State, "job that succeeded during shutdown should be done")
+	require.Equal(t, model.JobDone, js[0].State, "job that succeeded during shutdown should be done")
 }
 
 func TestPollPageCapWarns(t *testing.T) {
@@ -240,7 +240,7 @@ func TestBackfillThenPoll(t *testing.T) {
 	e.drain(500)
 
 	src := e.source(id)
-	require.Equal(t, store.SourceDoneBackfill, src.State)
+	require.Equal(t, model.SourceDoneBackfill, src.State)
 	require.Equal(t, 45, src.MemberWorks)
 	require.Equal(t, 45, src.FetchedWorks)
 	require.Equal(t, 45, e.fetchedCount())
@@ -342,7 +342,7 @@ func TestPauseCancelAndRecover(t *testing.T) {
 	require.NoError(t, e.sch.Run(cctx)) // recovers running jobs, then stops immediately
 	got, err := e.db.GetJob(ctx, j.ID)
 	require.NoError(t, err)
-	require.Equal(t, store.JobQueued, got.State, "crashed job not recovered")
+	require.Equal(t, model.JobQueued, got.State, "crashed job not recovered")
 	n, err := e.ctl.CancelSource(ctx, id)
 	require.NoError(t, err)
 	require.NotZero(t, n, "cancel should drop queued jobs")
@@ -358,7 +358,7 @@ func TestUnavailableRetriesWithBackoff(t *testing.T) {
 	jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupePrefix: "work:5000", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
-	require.Equal(t, store.JobQueued, jobs[0].State)
+	require.Equal(t, model.JobQueued, jobs[0].State)
 	require.True(t, jobs[0].NotBefore.After(e.clk.Now()), "retry must wait for the backoff")
 	require.Equal(t, "unavailable", jobs[0].LastError)
 	require.True(t, e.diag(5000).FetchFailedAt.IsZero(), "retryable failure with retries left marked as failed")
@@ -403,7 +403,7 @@ func TestWindowedBackfill(t *testing.T) {
 	src := e.source(id)
 	require.Equal(t, 90, src.MemberWorks)
 	require.Equal(t, 90, src.FetchedWorks)
-	require.Equal(t, store.SourceDoneBackfill, src.State)
+	require.Equal(t, model.SourceDoneBackfill, src.State)
 	windowed := 0
 	for _, r := range e.srv.Requests() {
 		if strings.Contains(r.URI, "date_from") {
@@ -458,7 +458,7 @@ func TestRescanVerifiesMissingWorks(t *testing.T) {
 	id := e.add(e.site.TagPath())
 	e.drain(50)
 	src := e.source(id)
-	require.Equal(t, store.SourceDoneBackfill, src.State)
+	require.Equal(t, model.SourceDoneBackfill, src.State)
 	require.False(t, src.LastFullScanAt.IsZero())
 	e.site.Update(5003, func(w *fakeao3.SiteWork) { w.Deleted = true })
 	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Kudos = 9999 }) // stats-only change
@@ -479,7 +479,7 @@ func TestRescanVerifiesMissingWorks(t *testing.T) {
 	src = e.source(id)
 	cur, err := controllers.ParseSourceCursor(src.BackfillCursor)
 	require.NoError(t, err)
-	require.Equal(t, store.SourceDoneBackfill, src.State)
+	require.Equal(t, model.SourceDoneBackfill, src.State)
 	require.False(t, cur.Rescan)
 	require.True(t, src.LastFullScanAt.After(e.clk.Now().Add(-time.Hour)), "last full scan updated")
 }

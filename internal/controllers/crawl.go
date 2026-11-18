@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -66,7 +67,7 @@ func rescanSourceCursor(order string, now time.Time) SourceCursor {
 	return SourceCursor{NextPage: 1, Order: order, Rescan: true, RescanStarted: now.Unix()}
 }
 
-func sourceOf(r store.SourceRow) (ao3url.Source, error) {
+func sourceOf(r model.Source) (ao3url.Source, error) {
 	f, err := ao3url.ParseFiltersJSON(r.FiltersJSON)
 	if err != nil {
 		return ao3url.Source{}, err
@@ -78,8 +79,8 @@ func day(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
 // readSource loads a source and its listing description for a crawl step. A missing source is
 // permanent; other store errors are returned as-is (retried).
-func (c *Controllers) readSource(ctx context.Context, sourceID int64) (store.SourceRow, ao3url.Source, error) {
-	r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceRow, error) {
+func (c *Controllers) readSource(ctx context.Context, sourceID int64) (model.Source, ao3url.Source, error) {
+	r, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (model.Source, error) {
 		return tx.GetSourceRow(ctx, sourceID)
 	})
 	if errors.Is(err, store.ErrNoSource) {
@@ -119,7 +120,7 @@ func (c *Controllers) fetchSourcePage(ctx context.Context, sourceID int64, src a
 // plus whatever update changes on the freshly read row (a cursor block, the poll time). update
 // decides itself whether the cursor moved during the fetch. A source removed meanwhile is not
 // an error: there is nothing left to record.
-func (c *Controllers) recordPageFailure(ctx context.Context, sourceID int64, msg string, update func(fresh *store.SourceRow)) error {
+func (c *Controllers) recordPageFailure(ctx context.Context, sourceID int64, msg string, update func(fresh *model.Source)) error {
 	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		fresh, err := tx.GetSourceRow(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
@@ -163,7 +164,7 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 	p, reqID, err := c.fetchSourcePage(ctx, r.ID, src, page, ao3url.UpdateOrder, nil)
 	if IsParseFailure(err) {
 		// No retry: the next poll is a full poll_interval away.
-		uerr := c.recordPageFailure(ctx, sourceID, "poll page "+strconv.Itoa(page)+": "+err.Error(), func(fresh *store.SourceRow) {
+		uerr := c.recordPageFailure(ctx, sourceID, "poll page "+strconv.Itoa(page)+": "+err.Error(), func(fresh *model.Source) {
 			fresh.LastPollAt = c.options.Now()
 		})
 		return nil, errors.Join(err, uerr)
@@ -285,7 +286,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 	if IsParseFailure(err) {
 		// The same page will parse the same way: stop this source's backfill here until a new
 		// parser version ships (it then resumes automatically).
-		uerr := c.recordPageFailure(ctx, sourceID, msg(), func(fresh *store.SourceRow) {
+		uerr := c.recordPageFailure(ctx, sourceID, msg(), func(fresh *model.Source) {
 			if fresh.BackfillCursor == r.BackfillCursor { // not moved during the fetch
 				cur.BlockedParser = parse.Version
 				fresh.BackfillCursor = cur.JSON()
@@ -298,7 +299,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 		// Not the page structure, but retrying now would get the same answer: hold this page
 		// back for a poll interval instead of re-queueing it every round.
 		retryAt := c.options.Now().Add(r.PollInterval)
-		uerr := c.recordPageFailure(ctx, sourceID, msg(), func(fresh *store.SourceRow) {
+		uerr := c.recordPageFailure(ctx, sourceID, msg(), func(fresh *model.Source) {
 			if fresh.BackfillCursor == r.BackfillCursor {
 				cur.RetryAt = retryAt.Unix()
 				fresh.BackfillCursor = cur.JSON()

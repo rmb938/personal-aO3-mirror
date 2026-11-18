@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -31,7 +32,7 @@ func runJobs(ctx context.Context, ctl *controllers.Controllers, args []string, o
 		*limit = 50
 	}
 	order := store.JobsNewest
-	if *state == store.JobQueued {
+	if *state == model.JobQueued {
 		order = store.JobsOldest
 	}
 	js, err := ctl.FindJobs(ctx, store.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})

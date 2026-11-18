@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
-func addSource(t *testing.T, s *testStore, target string, state SourceState, prio int) int64 {
+func addSource(t *testing.T, s *testStore, target string, state model.SourceState, prio int) int64 {
 	t.Helper()
-	id, err := s.InsertSource(context.Background(), SourceRow{Kind: "tag", Target: target, FiltersJSON: "{}", Path: "/p",
+	id, err := s.InsertSource(context.Background(), model.Source{Kind: "tag", Target: target, FiltersJSON: "{}", Path: "/p",
 		State: state, BackfillOrder: "kudos_desc", PollInterval: time.Hour, Priority: prio, TotalWorks: -1, EstRequests: -1, BackfillCursor: "{}"})
 	require.NoError(t, err)
 	return id
@@ -30,7 +32,7 @@ func enqueue(t *testing.T, s *testStore, j NewJob) int64 {
 func TestEnqueueTakesOverParkedJob(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	paused := addSource(t, s, "paused", SourcePaused, 0)
+	paused := addSource(t, s, "paused", model.SourcePaused, 0)
 	id := enqueue(t, s, NewJob{Kind: "work", SourceID: paused, Target: "42", Priority: 4, DedupeKey: "work:42"})
 	_, err := s.PickJob(ctx, []string{"work"}, clk.t)
 	require.ErrorIs(t, err, ErrNoJob, "paused source's job must not run")
@@ -59,7 +61,7 @@ func TestEnqueueDedupeAndBump(t *testing.T) {
 	j, err := s.GetJob(ctx, id1)
 	require.NoError(t, err)
 	require.Equal(t, 1, j.Priority, "priority bumped")
-	require.NoError(t, s.FinishJob(ctx, id1, JobDone, ""))
+	require.NoError(t, s.FinishJob(ctx, id1, model.JobDone, ""))
 	_, created, err = s.EnqueueJob(ctx, NewJob{Kind: "work", Target: "1", Priority: 4, DedupeKey: "work:1"})
 	require.NoError(t, err)
 	require.True(t, created, "finished job must not block a new one")
@@ -68,9 +70,9 @@ func TestEnqueueDedupeAndBump(t *testing.T) {
 func TestPickOrderFairnessAndPaused(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	a := addSource(t, s, "a", SourceActive, 0)
-	b := addSource(t, s, "b", SourceActive, 0)
-	p := addSource(t, s, "p", SourcePaused, 0)
+	a := addSource(t, s, "a", model.SourceActive, 0)
+	b := addSource(t, s, "b", model.SourceActive, 0)
+	p := addSource(t, s, "p", model.SourcePaused, 0)
 	// Work 8 is retried an hour out before the others are queued, so it is not due yet.
 	delayed := enqueue(t, s, NewJob{Kind: "work", Target: "8", Priority: 1, DedupeKey: "work:8"})
 	j, err := s.PickJob(ctx, []string{"work"}, clk.t)
@@ -95,7 +97,7 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 		}
 		require.NoError(t, err)
 		order = append(order, j.Kind+":"+strconv.FormatInt(j.SourceID, 10))
-		require.NoError(t, s.FinishJob(ctx, j.ID, JobDone, ""))
+		require.NoError(t, s.FinishJob(ctx, j.ID, model.JobDone, ""))
 	}
 	require.Equal(t, []string{"work:0", "backfill:1", "backfill:2", "backfill:1", "backfill:2", "backfill:1", "backfill:2"}, order)
 
@@ -111,8 +113,8 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 func TestPriorityWithinClass(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	lo := addSource(t, s, "lo", SourceActive, 0)
-	hi := addSource(t, s, "hi", SourceActive, 5)
+	lo := addSource(t, s, "lo", model.SourceActive, 0)
+	hi := addSource(t, s, "hi", model.SourceActive, 5)
 	enqueue(t, s, NewJob{Kind: "backfill", SourceID: lo, Target: "1", Priority: 4, DedupeKey: "lo"})
 	enqueue(t, s, NewJob{Kind: "backfill", SourceID: hi, Target: "1", Priority: 4, DedupeKey: "hi"})
 	j, err := s.PickJob(ctx, []string{"backfill"}, clk.t)
@@ -128,7 +130,7 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	require.NoError(t, err)
 	st, err := s.RetryJob(ctx, j.ID, clk.t.Add(time.Minute), "unavailable")
 	require.NoError(t, err)
-	require.Equal(t, JobQueued, st)
+	require.Equal(t, model.JobQueued, st)
 	_, err = s.PickJob(ctx, []string{"work"}, clk.t)
 	require.ErrorIs(t, err, ErrNoJob, "retry must respect not_before")
 	clk.t = clk.t.Add(2 * time.Minute)
@@ -137,9 +139,9 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 		require.NoError(t, err)
 		st, err = s.RetryJob(ctx, j.ID, clk.t, "unavailable")
 		require.NoError(t, err)
-		want := JobQueued
+		want := model.JobQueued
 		if attempt == DefaultMaxAttempts {
-			want = JobFailed // attempts exhausted
+			want = model.JobFailed // attempts exhausted
 		}
 		require.Equal(t, want, st, "attempt %d", attempt)
 	}
@@ -152,7 +154,7 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	require.EqualValues(t, 1, n, "recovered")
 	j2, err := s.GetJob(ctx, id2)
 	require.NoError(t, err)
-	require.Equal(t, JobQueued, j2.State)
+	require.Equal(t, model.JobQueued, j2.State)
 	require.Equal(t, 1, j2.Attempts, "a crash counts as an attempt")
 	require.Equal(t, CodeCrashed, j2.LastError)
 
@@ -167,7 +169,7 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	}
 	j3, err := s.GetJob(ctx, id3)
 	require.NoError(t, err)
-	require.Equal(t, JobFailed, j3.State, "crash loop must end")
+	require.Equal(t, model.JobFailed, j3.State, "crash loop must end")
 	require.Equal(t, CodeCrashed, j3.LastError)
 
 	require.NoError(t, s.JobEvent(ctx, id, "picked", map[string]any{"class": 3}))

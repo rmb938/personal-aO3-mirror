@@ -9,6 +9,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -41,7 +42,7 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e.drain(50)
 
 	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "initial + one failed update, no retries")
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5001", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5001", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, "parse_")
@@ -93,7 +94,7 @@ func TestWorkPageMissingChaptersKeepsStoredChapters(t *testing.T) {
 	require.Equal(t, 3, d.ChapterRows, "stored chapter rows must be kept")
 	require.Equal(t, 2, d.RawVersions, "good raw page kept next to the refused one")
 	require.False(t, d.FetchFailedAt.IsZero(), "refused page marks the fetch failed")
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5002", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5002", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, "chapters_shrank")
@@ -135,7 +136,7 @@ func TestBackfillBlocksOnParseFailure(t *testing.T) {
 	e.srv.Handle(page2) // remove override: the synthetic site serves it again
 	e.drain(200)
 	src = e.source(id)
-	require.Equal(t, store.SourceDoneBackfill, src.State, "after unblock")
+	require.Equal(t, model.SourceDoneBackfill, src.State, "after unblock")
 	require.Equal(t, 45, src.MemberWorks)
 	require.Empty(t, src.LastError)
 }

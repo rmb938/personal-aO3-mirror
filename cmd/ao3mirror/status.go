@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -163,7 +164,7 @@ func runDebug(ctx context.Context, a *app, args []string, out, errOut io.Writer)
 	return 0
 }
 
-func printJob(out io.Writer, j store.Job) {
+func printJob(out io.Writer, j model.Job) {
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	for _, kv := range [][2]string{
 		{"id", strconv.FormatInt(j.ID, 10)}, {"kind", j.Kind}, {"target", j.Target}, {"source", strconv.FormatInt(j.SourceID, 10)},

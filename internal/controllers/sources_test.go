@@ -15,6 +15,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -69,11 +70,11 @@ func TestAddTagSourceGate(t *testing.T) {
 	for _, c := range []struct {
 		autoMax int
 		confirm bool
-		want    store.SourceState
+		want    model.SourceState
 	}{
-		{5000, false, store.SourceActive},
-		{100, false, store.SourcePendingConfirm},
-		{100, true, store.SourceActive},
+		{5000, false, model.SourceActive},
+		{100, false, model.SourcePendingConfirm},
+		{100, true, model.SourceActive},
 	} {
 		e := newEnv(t, c.autoMax)
 		e.srv.Handle(tagURL, fakeao3.Reply{Body: fixture(t, "listing_tag.html")})
@@ -133,7 +134,7 @@ func TestAddSeriesAndWork(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, res.Estimate.Total)
 	require.Equal(t, 2, res.Blurbs)
-	require.Equal(t, store.SourceActive, res.Source.State)
+	require.Equal(t, model.SourceActive, res.Source.State)
 	require.Equal(t, "hits_desc", res.Source.BackfillOrder)
 	reqs := e.srv.Requests()
 	require.Equal(t, "/series/3001", reqs[len(reqs)-1].URI, "series request must have no sort params")
@@ -153,7 +154,7 @@ func TestStateTransitions(t *testing.T) {
 	res, err := e.svc.AddSource(ctx, tagURL, AddSourceOptions{})
 	require.NoError(t, err)
 	id := res.Source.ID
-	require.Equal(t, store.SourcePendingConfirm, res.Source.State)
+	require.Equal(t, model.SourcePendingConfirm, res.Source.State)
 	require.Error(t, e.svc.ResumeSource(ctx, id), "resume of pending must fail")
 	require.NoError(t, e.svc.ConfirmSource(ctx, id))
 	require.NoError(t, e.svc.PauseSource(ctx, id))

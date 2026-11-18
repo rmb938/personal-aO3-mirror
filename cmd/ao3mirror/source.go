@@ -14,7 +14,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
-	"github.com/rmb938/personal-aO3-mirror/internal/store"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
 const sourceUsage = `usage: ao3mirror source <command> [flags]
@@ -68,10 +68,10 @@ func waitSourceAdd(ctx context.Context, a *app, q controllers.QueuedSourceAdd, w
 			return 1
 		}
 		switch o.State {
-		case store.JobDone:
+		case model.JobDone:
 			printAdded(out, a, *o.Result, names)
 			return 0
-		case store.JobFailed, store.JobCancelled:
+		case model.JobFailed, model.JobCancelled:
 			if id, ok := strings.CutPrefix(o.Error, string(controllers.CodeSourceExists)+":"); ok {
 				fmt.Fprintf(errOut, "already added as source %s (see: ao3mirror source show %s)\n", id, id)
 				return 1
@@ -103,7 +103,7 @@ func printAdded(out io.Writer, a *app, res controllers.AddSourceResult, names bo
 	if res.Blurbs > 0 {
 		fmt.Fprintf(out, "page 1: %d works stored\n", res.Blurbs)
 	}
-	if s.State == store.SourcePendingConfirm {
+	if s.State == model.SourcePendingConfirm {
 		fmt.Fprintf(out, "pending: more than sources.auto_confirm_max (%d) works. Start it with 'ao3mirror source confirm %d',\nor remove it and re-add a narrower URL (filters on the tag page).\n",
 			a.cfg.Sources.AutoConfirmMax, s.ID)
 	}
@@ -313,14 +313,14 @@ func parseWithPositional(fs *flag.FlagSet, args []string) (string, bool) {
 	return pos, true
 }
 
-func target(r store.SourceRow, names bool) string {
+func target(r model.Source, names bool) string {
 	if names || r.Kind == string(ao3url.KindWork) || r.Kind == string(ao3url.KindSeries) {
 		return r.Target // ids are not names
 	}
 	return httpx.Hash(r.Target)
 }
 
-func filtersSummary(r store.SourceRow, names bool) string {
+func filtersSummary(r model.Source, names bool) string {
 	if r.FiltersJSON == "{}" || r.FiltersJSON == "" {
 		return "-"
 	}

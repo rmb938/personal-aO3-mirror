@@ -10,7 +10,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
-	"github.com/rmb938/personal-aO3-mirror/internal/store"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
 // runFetchWork queues one work at the highest priority, or fetches it right away with --now.
@@ -61,7 +61,7 @@ func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Wri
 		return 1
 	}
 	fmt.Fprintf(out, "work %d: job %d %s %s\n", id, jobID, j.State, dash(j.LastError))
-	if j.State != store.JobDone {
+	if j.State != model.JobDone {
 		return 1
 	}
 	return 0

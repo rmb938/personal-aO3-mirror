@@ -6,36 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
-)
 
-// Job states (jobs.state CHECK).
-const (
-	JobQueued    = "queued"
-	JobRunning   = "running"
-	JobDone      = "done"
-	JobFailed    = "failed"
-	JobCancelled = "cancelled"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
 var ErrNoJob = errors.New("store: no job")
-
-// Job is one queued unit of work. Target is content-free (page number, work id, path pattern).
-type Job struct {
-	ID          int64
-	Kind        string
-	SourceID    int64 // 0 = none
-	Target      string
-	Priority    int // class: lower runs first
-	State       string
-	NotBefore   time.Time
-	Attempts    int
-	MaxAttempts int
-	LastError   string
-	DedupeKey   string
-	CreatedAt   time.Time
-	StartedAt   time.Time
-	FinishedAt  time.Time
-}
 
 const jobCols = `id, kind, COALESCE(source_id, 0), target, priority_class, state, not_before, attempts, max_attempts,
 	last_error, dedupe_key, created_at, started_at, finished_at`
@@ -44,8 +19,8 @@ const jobCols = `id, kind, COALESCE(source_id, 0), target, priority_class, state
 const jobColsJ = `j.id, j.kind, COALESCE(j.source_id, 0), j.target, j.priority_class, j.state, j.not_before, j.attempts,
 	j.max_attempts, j.last_error, j.dedupe_key, j.created_at, j.started_at, j.finished_at`
 
-func scanJob(row interface{ Scan(...any) error }) (Job, error) {
-	var j Job
+func scanJob(row interface{ Scan(...any) error }) (model.Job, error) {
+	var j model.Job
 	var nb, created, started, finished int64
 	err := row.Scan(&j.ID, &j.Kind, &j.SourceID, &j.Target, &j.Priority, &j.State, &nb, &j.Attempts, &j.MaxAttempts,
 		&j.LastError, &j.DedupeKey, &created, &started, &finished)
@@ -96,7 +71,7 @@ func (s *Tx) EnqueueJob(ctx context.Context, j NewJob) (int64, bool, error) {
 		j.DedupeKey).Scan(&id, &prio, &state, &parked); err != nil {
 		return 0, false, err
 	}
-	if parked && state == JobQueued {
+	if parked && state == model.JobQueued {
 		// Dedupe keys are global (one fetch per work), so a parked job would swallow every
 		// other source's or the user's request for the same target: hand it to this caller.
 		if _, err := s.meta.ExecContext(ctx, `UPDATE jobs SET source_id = ?, priority_class = MIN(priority_class, ?), updated_at = ?
@@ -118,9 +93,9 @@ func (s *Tx) EnqueueJob(ctx context.Context, j NewJob) (int64, bool, error) {
 // PickJob claims the next runnable job of the given kinds and marks it running.
 // Order: priority class, then source priority (desc), then least recently served source
 // (round-robin fairness), then job id. Jobs of paused/pending/cancelled sources are skipped.
-func (s *Tx) PickJob(ctx context.Context, kinds []string, now time.Time) (Job, error) {
+func (s *Tx) PickJob(ctx context.Context, kinds []string, now time.Time) (model.Job, error) {
 	if len(kinds) == 0 {
-		return Job{}, ErrNoJob
+		return model.Job{}, ErrNoJob
 	}
 	tx := s.meta
 	args := []any{now.Unix()}
@@ -134,21 +109,21 @@ func (s *Tx) PickJob(ctx context.Context, kinds []string, now time.Time) (Job, e
 		ORDER BY j.priority_class, COALESCE(src.priority, 0) DESC, COALESCE(src.last_served_ms, 0), j.id
 		LIMIT 1`, args...))
 	if errors.Is(err, sql.ErrNoRows) {
-		return Job{}, ErrNoJob
+		return model.Job{}, ErrNoJob
 	}
 	if err != nil {
-		return Job{}, err
+		return model.Job{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'running', attempts = attempts + 1, started_at = ?, updated_at = ?
 		WHERE id = ?`, now.Unix(), now.Unix(), j.ID); err != nil {
-		return Job{}, err
+		return model.Job{}, err
 	}
 	if j.SourceID > 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE sources SET last_served_ms = ? WHERE id = ?`, now.UnixMilli(), j.SourceID); err != nil {
-			return Job{}, err
+			return model.Job{}, err
 		}
 	}
-	j.State, j.Attempts, j.StartedAt = JobRunning, j.Attempts+1, now
+	j.State, j.Attempts, j.StartedAt = model.JobRunning, j.Attempts+1, now
 	return j, nil
 }
 
@@ -169,11 +144,11 @@ func (s *Tx) RetryJob(ctx context.Context, id int64, notBefore time.Time, lastEr
 		return "", err
 	}
 	if attempts >= max {
-		return JobFailed, s.FinishJob(ctx, id, JobFailed, lastError)
+		return model.JobFailed, s.FinishJob(ctx, id, model.JobFailed, lastError)
 	}
 	_, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'queued', not_before = ?, last_error = ?, updated_at = ? WHERE id = ?`,
 		notBefore.Unix(), lastError, now, id)
-	return JobQueued, err
+	return model.JobQueued, err
 }
 
 // RequeueJob puts a running job back without counting the attempt (e.g. shutdown, breaker).
@@ -207,7 +182,7 @@ func (s *Tx) RecoverRunning(ctx context.Context) (int64, error) {
 	return nf + nq, nil
 }
 
-func (s *ReadTx) GetJob(ctx context.Context, id int64) (Job, error) {
+func (s *ReadTx) GetJob(ctx context.Context, id int64) (model.Job, error) {
 	j, err := scanJob(s.meta.QueryRowContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return j, ErrNoJob
@@ -237,7 +212,7 @@ const (
 )
 
 // FindJobs returns jobs matching f.
-func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
+func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]model.Job, error) {
 	q := `SELECT ` + jobCols + ` FROM jobs WHERE 1=1`
 	var args []any
 	if f.State != "" {
@@ -277,7 +252,7 @@ func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]Job, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Job
+	var out []model.Job
 	for rows.Next() {
 		j, err := scanJob(rows)
 		if err != nil {
@@ -393,14 +368,14 @@ func (s *Tx) CancelSourceJobs(ctx context.Context, sourceID int64) (int64, error
 }
 
 // ClaimJob marks one specific queued job running (for `fetch-work --now`).
-func (s *Tx) ClaimJob(ctx context.Context, id int64, now time.Time) (Job, error) {
+func (s *Tx) ClaimJob(ctx context.Context, id int64, now time.Time) (model.Job, error) {
 	res, err := s.meta.ExecContext(ctx, `UPDATE jobs SET state = 'running', attempts = attempts + 1, started_at = ?, updated_at = ?
 		WHERE id = ? AND state = 'queued'`, now.Unix(), now.Unix(), id)
 	if err != nil {
-		return Job{}, err
+		return model.Job{}, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return Job{}, ErrNoJob
+		return model.Job{}, ErrNoJob
 	}
 	return s.GetJob(ctx, id)
 }

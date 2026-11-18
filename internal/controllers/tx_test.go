@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -44,7 +45,7 @@ func TestPollKeepsChangesMadeDuringTheFetch(t *testing.T) {
 	require.NoError(t, err)
 	id := res.Source.ID
 
-	var want store.SourceRow
+	var want model.Source
 	ctl := e.withHook(func() {
 		// `source set --poll 30m --priority 7` while the poll page is being fetched.
 		prio := 7
@@ -130,8 +131,8 @@ func TestAddIsAtomic(t *testing.T) {
 	ctl := e.withHook(func() {
 		// The same source is added by someone else while page 1 is fetched: our insert fails.
 		err := e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-			_, err := tx.InsertSource(ctx, store.SourceRow{Kind: "tag", Target: "Fixture Fandom", FiltersJSON: "{}",
-				Path: tagURL, State: store.SourceActive, BackfillOrder: "kudos_desc", PollInterval: time.Hour})
+			_, err := tx.InsertSource(ctx, model.Source{Kind: "tag", Target: "Fixture Fandom", FiltersJSON: "{}",
+				Path: tagURL, State: model.SourceActive, BackfillOrder: "kudos_desc", PollInterval: time.Hour})
 			return err
 		})
 		require.NoError(t, err)
