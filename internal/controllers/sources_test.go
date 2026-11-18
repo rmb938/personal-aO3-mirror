@@ -121,9 +121,10 @@ func TestAddDuplicateAndErrors(t *testing.T) {
 	require.Error(t, err, "search URL must be rejected")
 	_, err = e.svc.AddSource(ctx, tagURL+"x", AddSourceOptions{Order: "bogus"})
 	require.Error(t, err, "bad order must be rejected")
-	list, err := e.svc.ListSources(ctx)
+	list, total, err := e.svc.ListSources(ctx, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, list, 1, "failed adds must not create sources")
+	require.Equal(t, 1, total)
 }
 
 func TestAddSeriesAndWork(t *testing.T) {
