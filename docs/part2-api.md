@@ -254,6 +254,29 @@ Status: tick when the PR merges.
     tests for each middleware (timeouts, limits, 415/413/400 cases, XFF trust).
   - Admin socket listener: same router plus an admin sub-router (empty for now). Its file mode is
     asserted in tests.
+  - Split into three PRs (the box is ticked by the last one):
+    - [x] **2a. API core** (`internal/api`, no server yet). As built:
+      - `dto.Problem{code, title, status, field}`. `api.Error{Code, Field, Status}` is the error
+        handlers return. `problemFor` (`errors.go`) is the single error → problem mapping: the
+        store `ErrNo*` sentinels → 404, `ErrStateConflict` → 409 `conflict`, `ErrSourceExists`
+        / `controllers.ExistsError` → 409 `exists`, context cancel/deadline → 503
+        `unavailable`, anything else → 500 `internal` (logged with the route pattern).
+      - `field` is only ever a name in `knownFields` (else dropped). `code`, `title` and
+        `field` are registered enums, so problems pass the enforcer unhashed (tested).
+      - Handler shape `func(*http.Request) (any, error)`, adapted by `handle`, which caps the
+        body (16 KiB) and calls `respond`. A handler returns `*api.Response` for another status
+        or a `Location`. 415 on QUERY adds `Accept-Query: application/json`.
+      - `parseQuery(r, allowed...)` (≤ 32 values, no repeats, allowlist; `RevealParam` always
+        allowed and stripped), `parseInt`/`parseID` (digits only, ranges), `query.page()`,
+        `checkText`.
+      - `decodeJSON` uses `encoding/json/v2` (GA in Go 1.27): it rejects duplicate keys,
+        trailing data and invalid UTF-8 by default, plus `RejectUnknownMembers`; matching is
+        case-sensitive. Errors never quote the body.
+      - `newEnforcer` builds the redact registry from `responseTypes` and the enums.
+    - [ ] **2b. Router + middleware**: chi router, the full middleware chain, healthz/version,
+      the all-routes leak test and the OpenAPI route-coverage test.
+    - [ ] **2c. `serve`**: `api:` config, the `serve` command (`--no-reveal`), TCP + admin
+      socket listeners, graceful shutdown.
 - [ ] **3. Read-only ops API**
   - `GET /sources`, `/sources/{id}`, `/jobs` (filters: state, kind, source_id, page),
     `/jobs/{id}`, `/status`, `/source-adds/{job_id}`.
