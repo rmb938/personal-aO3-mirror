@@ -127,6 +127,26 @@ func TestParseListingMissingBlurbSections(t *testing.T) {
 	require.Equal(t, 4, r.Counts["blurbs_with_fandom"])
 }
 
+// An empty bookmarks listing says "0 Bookmarks by <login>" (search_header): a real empty
+// listing, not a structure change. Non-empty bookmark headings count bookmarks, not works.
+func TestParseListingBookmarkTotals(t *testing.T) {
+	page := func(h2 string) []byte {
+		return []byte(`<html><body><div id="main"><h2 class="heading">` + h2 + `</h2></div></body></html>`)
+	}
+	for _, h2 := range []string{"0 Bookmarks by fixture_author", "0 Bookmarked Items"} {
+		l, r, err := ParseListing(page(h2), fetchedAt)
+		require.NoError(t, err, "%q: missing %v", h2, r.Missing)
+		require.Equal(t, 0, l.Total, h2)
+		require.Empty(t, l.Blurbs, h2)
+	}
+	for _, h2 := range []string{"3 Bookmarks by fixture_author", "1 - 20 of 30 Bookmarks by fixture_author"} {
+		n, ok := parseTotal(h2)
+		require.False(t, ok, "%q gave total %d", h2, n)
+	}
+	_, _, err := ParseListing(page(""), fetchedAt)
+	require.ErrorIs(t, err, ErrUnexpected, "no total and no blurbs is still unexpected")
+}
+
 func TestParseWorkChaptered(t *testing.T) {
 	w, r, err := ParseWork(1001, fixture(t, "work_chaptered.html"))
 	require.NoError(t, err, "missing: %v", r.Missing)
