@@ -192,7 +192,7 @@ this rule, and it is added to CLAUDE.md in stage 0.
 api:
   listen: 127.0.0.1:8080     # public listener; Funnel points here
   admin_socket: api/admin.sock   # relative to data_dir
-  trusted_proxies: [127.0.0.1/32, ::1/128]
+  trusted_proxies: ["127.0.0.1/32", "::1/128"]   # quoted: bare ::1 breaks a YAML flow list
   request_timeout: 10s
   hash_key_rotation: 24h     # in-memory random key; 0 = once per process; min 1h
   rate: { general_per_min: 120, search_per_min: 30, source_add_per_hour: 10 }
@@ -244,7 +244,7 @@ Status: tick when the PR merges.
     - `NewHasher` enforces the `MinRotation` (1h) rule, which config validation can reuse.
     - `Epoch` values print and log only their ID.
     - Benchmark: about 1 ms (~175 MB/s) for a 186 KB list page in hashed mode.
-- [ ] **2. Server skeleton**
+- [x] **2. Server skeleton**
   - `serve` command (`--no-reveal`), `api:` config, chi router.
   - The full middleware chain above.
   - `respond` / problem+json helpers; param parsing helpers (bounded ints, page, IDs); strict JSON
@@ -304,8 +304,22 @@ Status: tick when the PR merges.
         body), and has a positive control route. Store seeding starts with the first
         store-backed route (stage 3). Body 415/413/400 cases are covered by `body_test.go`
         until a route takes a body.
-    - [ ] **2c. `serve`**: `api:` config, the `serve` command (`--no-reveal`), TCP + admin
-      socket listeners, graceful shutdown.
+    - [x] **2c. `serve`**: `api:` config, the `serve` command (`--no-reveal`), TCP + admin
+      socket listeners, graceful shutdown. As built:
+      - `config.API` validates `listen` (host:port, port 1-65535), `admin_socket` (local path
+        under data_dir), trusted proxies (CIDR, non-empty), `request_timeout` 1s-50s (below the
+        60s write timeout, so the 503 gets out), `hash_key_rotation` via `redact.MinRotation`,
+        and every rate ≥ 1. The search and source-add rates are config-only until their routes.
+      - `serve` opens no store yet (stage 3 adds it) and never builds an `httpx` client.
+      - Admin socket: its directory is created 0700 and **must** not be group/other
+        accessible (else `serve` refuses), so there is no window before the socket's chmod
+        0600. A stale socket (nothing listening) is replaced; a live one or a non-socket file is
+        an error. The path must fit `sun_path` (107 bytes). It is unlinked on shutdown.
+      - If either listener fails, both shut down. `http.Server.ErrorLog` goes to slog at warn.
+      - A non-loopback `listen` logs a warning (no auth yet).
+      - Tests (`cmd/ao3mirror/serve_test.go`): both listeners, `--no-reveal` → 403
+        `reveal_disabled`, socket/dir modes, live/stale/non-socket/unsafe-dir cases, shutdown
+        removes the socket.
 - [ ] **3. Read-only ops API**
   - `GET /sources`, `/sources/{id}`, `/jobs` (filters: state, kind, source_id, page),
     `/jobs/{id}`, `/status`, `/source-adds/{job_id}`.
@@ -391,8 +405,10 @@ Status: tick when the PR merges.
 - `make check` passes (lint, vulncheck, `go test -race ./...`, guard tests). Tests use temp stores
   and synthetic fixtures only.
 - The all-routes leak test passes, and every new route has a sample request in it.
-- Manual: Claude runs `./ao3mirror --config ao3mirror.local.yaml serve --no-reveal` and curls the
-  public port and the admin socket (`curl --unix-socket`). It checks that strings are `h_…` hashes,
+- Manual: `./ao3mirror --config ao3mirror.local.yaml serve --no-reveal`, then curl the public
+  port and the admin socket (`curl --unix-socket data/api/admin.sock`). The guard blocks Claude
+  from naming `data/`, so Claude asks the user to run these commands and share the output, and
+  does not work around it with a scratch data dir. It checks that strings are `h_…` hashes,
   that `X-Fanwork: hashed` is set, that free text gives `reveal_required`, and that rate limits
   return 429. Claude never sends `reveal_fanwork`; the user checks reveal mode themselves.
 - Stage 0: `make guard-test` covers the new guard rules.

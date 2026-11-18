@@ -37,6 +37,37 @@ func TestParseValidAndDefaults(t *testing.T) {
 	assert.Equal(t, "personal-ao3-mirror/0.1.0 (personal offline archive; contact: discord @fixture_user)", cfg.UserAgent("0.1.0"))
 }
 
+func TestAPIDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:8080", cfg.API.Listen)
+	assert.Equal(t, "api/admin.sock", cfg.API.AdminSocket)
+	assert.Equal(t, []string{"127.0.0.1/32", "::1/128"}, cfg.API.TrustedProxies)
+	assert.Equal(t, 24*time.Hour, cfg.API.HashKeyRotation)
+
+	_, err = Parse([]byte("contact: {discord: \"@fixture_user\"}\napi: {hash_key_rotation: 0s}\n"))
+	require.NoError(t, err, "rotation 0 means once per process")
+
+	for yml, want := range map[string]string{
+		"listen: localhost":              "must be host:port",
+		"listen: \":8080\"":              "must be host:port",
+		"listen: 127.0.0.1:99999":        "port must be",
+		"admin_socket: /tmp/a.sock":      "relative path inside data_dir",
+		"admin_socket: ../a.sock":        "relative path inside data_dir",
+		"admin_socket: \"\"":             "relative path inside data_dir",
+		"trusted_proxies: []":            "must not be empty",
+		"trusted_proxies: [10.0.0.1]":    "not a CIDR prefix",
+		"request_timeout: 0s":            "request_timeout",
+		"request_timeout: 2m":            "request_timeout",
+		"hash_key_rotation: 30m":         "hash_key_rotation",
+		"rate: {general_per_min: 0}":     "api.rate",
+		"rate: {source_add_per_hour: 0}": "api.rate",
+	} {
+		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\napi: {" + yml + "}\n"))
+		assert.ErrorContains(t, err, want, yml)
+	}
+}
+
 func TestUserAgentSuffixAppendsOnly(t *testing.T) {
 	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\nuser_agent_suffix: extra\n"))
 	require.NoError(t, err)
