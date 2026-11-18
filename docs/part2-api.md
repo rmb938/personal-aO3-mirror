@@ -42,7 +42,7 @@ cmd/ao3mirror/serve.go       serve command: flags, listeners, graceful shutdown
 internal/api/                server, router, middleware, handlers (calls controllers only)
 internal/api/redact/         hasher + response enforcer (no HTTP deps; fuzzed)
 internal/api/dto/            response/request types, registered with the enforcer
-internal/api/convert/        model/controller results -> DTOs (from stage 3a-3)
+internal/api/convert/        model/controller results -> DTOs (from stage 3a-4)
 internal/apiclient/          typed client over the admin socket, used by the CLI
 docs/api/openapi.yaml        hand-written OpenAPI 3.1; a test checks that it matches the route table
 ```
@@ -55,12 +55,18 @@ map controller results into DTOs field by field. The API contract then changes o
 is edited on purpose, and the enforcer's key registry is exactly the DTO fields. Reviewers check
 this rule, and it is added to CLAUDE.md in stage 0.
 
-**Conversion rule (from stage 3a-3):** the field-by-field mapping lives in
+**Enum rule (from stage 3a-3):** a string field with a closed value set has a named string
+type in `dto` (`dto.SourceState`) with an `EnumValues() []string` method listing its values.
+The registry finds these by reflection and registers the field's key as an enum; nothing else
+lists enums. A plain `string` field is free text and is always hashed. The only exception is
+`version`, whose single value is known at runtime (`RegisterEnum`).
+
+**Conversion rule (from stage 3a-4):** the field-by-field mapping lives in
 `internal/api/convert`, not in handlers. It exports one function per model or controller
 result, named after it (`convert.Source(model.Source) dto.Source`, `convert.Job(...)`), and
 keeps every helper (filter/cursor mapping, last_error split, null-for-unknown) unexported, with
 its tests beside it. Handlers parse input, call a controller and return `convert.X(result)`.
-CLAUDE.md's API design rules get this line in 3a-3.
+CLAUDE.md's API design rules get this line in 3a-4.
 
 **Pagination rule (from stage 3a-2):** a paged route pages in SQL. The store takes
 offset/limit and has a matching count, and the controller returns the page and the total from
@@ -339,7 +345,7 @@ Status: tick when the PR merges.
     `/jobs/{id}`, `/status`, `/source-adds/{job_id}`.
   - DTOs are built from the existing controllers (`ListSources`, `GetSource`, `FindJobs`,
     `Status`, `SourceAddOutcome`).
-  - Split into five PRs (the box is ticked by the last one). Each starts from main after the
+  - Split into six PRs (the box is ticked by the last one). Each starts from main after the
     previous merges.
     - [ ] **3a-1. Refactor: source and job types into `internal/model`** (no behaviour
       change).
@@ -358,9 +364,34 @@ Status: tick when the PR merges.
         `InReadTx`. Update the CLI `source list` caller (it can page through, or ask for a
         large limit) and decide what `Status` passes (all sources today; 3c may cap it).
       - Store tests for offset/limit/count, ordering stable by id.
-    - [ ] **3a-3. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
+    - [ ] **3a-3. Refactor: typed enums in the registry** (no change to responses). Today
+      every enum is a key → values entry in `api/registry.go`, kept by hand. Nothing ties it
+      to the struct: a field that should be an enum is only noticed when its value comes out
+      hashed.
+      - `redact` declares `type Enum interface{ EnumValues() []string }`. `dto` stays
+        standard-library only: its types satisfy the interface structurally and never import
+        `redact`.
+      - `Registry.walk`: when a field's type (after unwrapping pointers, slices and arrays) is
+        a string kind that implements `Enum`, it registers the field's json key with the zero
+        value's `EnumValues()`. The same key on several enum types gets the union (e.g.
+        `state` for sources and jobs).
+      - The registry rejects (startup error, unit tested):
+        - a key that is a typed enum in one field and a plain `string` in another (the plain
+          field would let enum-looking values through);
+        - an enum type with no values or an empty value;
+        - an `Enum` whose kind is not string;
+        - a `RegisterEnum` call on a key that also has a typed enum.
+      - Move the existing enums to types: `dto.ProblemCode` (the `Code` constants move from
+        `api` to `dto`), `dto.ProblemTitle` (the fixed titles; the code → title/status table
+        can live in `dto` as data), `dto.ParamName` (`field`; replaces `knownFields`) and
+        `dto.HealthStatus`. `version` stays on `RegisterEnum` (runtime value).
+      - `api/registry.go` then only lists `responseTypes`, and has no enum map.
+      - The enforcer still hashes a value outside its type's set (fail safe), and logs a warning
+        with the key only. The convert tests (3a-4 on) are what catch a new model value
+        missing from a dto type, before it ships.
+    - [ ] **3a-4. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
       `/source-adds/{job_id}`, with mapping in `internal/api/convert`. Design (from a first
-      attempt, reworked into 3a-1..3):
+      attempt, reworked into 3a-1..4):
       - `serve` opens the store and builds controllers with no AO3 client
         (`newControllers(cfg, log, st, nil)`); `api.Options.Controllers` is required. The
         server owns the store and closes it when `serve` returns (and on a `newServer` error).
@@ -378,10 +409,15 @@ Status: tick when the PR merges.
       - `dto.SourceAdd`: job_id, state, `last_error_code`, `last_error_detail`, `result`
         (source, blurbs, estimate with `duration_s`). A job `last_error` is split at the first
         `:`.
-      - Enums: `state` (source + job states), `kind` (source kinds via a new `ao3url.Kinds()`;
-        job kinds join in 3b), `order` (new `ao3url.OrderNames()`), `last_error_code` (new
-        `controllers.JobErrorCodes()`: the ErrorCodes, `rate_limited`/`unavailable`,
-        `crashed`, `internal`). A code outside the enum is hashed by the enforcer.
+      - Enum types (3a-3 rule): `dto.SourceState` and `dto.JobState` (both on key `state`),
+        `dto.SourceKind` (`kind`; `dto.JobKind` joins in 3b), `dto.Order` (`order`) and
+        `dto.JobErrorCode` (`last_error_code`: the ErrorCodes, `rate_limited`/`unavailable`,
+        `crashed`, `internal`). `convert` casts the model value into the dto type. A code
+        outside the set is hashed by the enforcer.
+      - Convert tests check that every model-side value is in its dto type's set: all
+        `model.SourceState`s, a new `ao3url.Kinds()` and `ao3url.OrderNames()`, and a new
+        `controllers.JobErrorCodes()`. So a value added on the model side without its dto
+        value fails a test instead of shipping hashed.
       - `SourceAddOutcome` returns `store.ErrNoJob` (404) for a job that is not a source add.
         A done add whose source was removed since is a 404 too (existing behaviour, kept).
       - `knownFields` gains `job_id`. OpenAPI gets the paths plus shared `ID`, `Page`,
@@ -393,7 +429,8 @@ Status: tick when the PR merges.
         checks `/sources` answers on a fresh data dir.
     - [ ] **3b. Jobs**: store offset/limit + `CountJobs` for `JobFilter`, a controller
       returning `(page, total)`; `GET /jobs` (state, kind, source_id, page, per_page), and
-      `/jobs/{id}`. `convert.Job` splits `last_error`; job kinds join the `kind` enum.
+      `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
+      convert test against the `jobs.Kind*` constants.
     - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
       becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
       `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,
