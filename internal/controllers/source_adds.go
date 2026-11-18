@@ -104,8 +104,8 @@ func (c *Controllers) AddQueuedSource(ctx context.Context, addID int64, final bo
 			"estimate": res.Estimate}, nil
 	}
 	opErr := sourceAddError(err)
-	if ctx.Err() != nil {
-		return nil, opErr // shutdown: the job is requeued and the add kept
+	if ctx.Err() != nil || isWait(opErr) {
+		return nil, opErr // shutdown or a wait (e.g. robots.txt unreadable): requeued, add kept
 	}
 	if _, permanent := errors.AsType[PermanentError](opErr); !permanent && !final {
 		return nil, opErr // retried after the backoff

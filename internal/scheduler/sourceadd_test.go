@@ -72,3 +72,41 @@ func TestQueuedSourceAddFailures(t *testing.T) {
 	}
 	require.Equal(t, 5, busy, "attempts")
 }
+
+// A robots.txt outage on the add job's last attempt keeps the queued add: nothing was sent, and
+// the scheduler requeues the job.
+func TestQueuedSourceAddKeptOnRobotsOutage(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	e.srv.SetRobots(fakeao3.Reply{Status: 429}, fakeao3.Reply{Body: fakeao3.Robots})
+	_, err := e.ctl.QueueSourceAdd(ctx, e.site.TagPath(), controllers.AddSourceOptions{})
+	require.NoError(t, err)
+	_, err = e.ctl.AddQueuedSource(ctx, 1, true) // as if on its last attempt
+	require.ErrorAs(t, err, &controllers.WaitError{})
+	_, err = e.db.GetSourceAdd(ctx, 1)
+	require.NoError(t, err, "queued add dropped during a robots outage")
+}
+
+// An odd AO3 answer on page 1 is reported as such, not as a parse failure.
+func TestQueuedSourceAddOddResponse(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	e.srv.Handle("/tags/Odd/works", fakeao3.Reply{Status: 410, Body: fakeao3.Page("<p>odd</p>")})
+	q, err := e.ctl.QueueSourceAdd(ctx, "/tags/Odd/works", controllers.AddSourceOptions{})
+	require.NoError(t, err)
+	e.drain(10)
+	o, err := e.ctl.SourceAddOutcome(ctx, q.JobID)
+	require.NoError(t, err)
+	require.Equal(t, store.JobFailed, o.State)
+	require.Contains(t, o.Error, string(controllers.CodeOddResponse))
+	require.NotContains(t, o.Error, string(controllers.CodeParseUnexpected))
+}
+
+// The add estimate decides windowing with the same result limit as the backfill.
+func TestAddEstimateUsesMaxResults(t *testing.T) {
+	e := newEnv(t, 90, func(o *controllers.Options) { o.MaxResults = 40 })
+	res, err := e.ctl.AddSource(context.Background(), e.site.TagPath(), controllers.AddSourceOptions{Confirm: true})
+	require.NoError(t, err)
+	require.True(t, res.Estimate.Windowed, "estimate disagrees with the backfill about windowing")
+	require.Equal(t, 90, res.Estimate.Total)
+}

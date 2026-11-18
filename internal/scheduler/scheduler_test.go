@@ -434,7 +434,7 @@ func TestTagInfoFetched(t *testing.T) {
 	e.srv.Handle("/tags/Fixture%20Tag", fakeao3.Reply{Body: fixtureBody(t, "tag_synonym.html")})
 	e.add(e.site.TagPath())
 	e.drain(50)
-	e.clk.Advance(2 * time.Minute) // tag scheduling is throttled to once a minute
+	e.clk.Advance(infoInterval + time.Minute) // info scheduling is throttled to infoInterval
 	e.drain(50)
 	tag, err := e.db.TagByName(context.Background(), "Fixture Tag")
 	require.NoError(t, err)
@@ -517,7 +517,7 @@ func TestSeriesInfoForNonSourceSeries(t *testing.T) {
 	e.srv.Handle("/series/3001", fakeao3.Reply{Body: fixtureBody(t, "series.html")})
 	e.queueWork(1001)
 	e.drain(5)
-	e.clk.Advance(2 * time.Minute)
+	e.clk.Advance(infoInterval + time.Minute)
 	e.drain(5)
 	ser := e.series(3001)
 	require.Contains(t, ser.SummaryHTML, "series description", "series info stored")
@@ -526,7 +526,7 @@ func TestSeriesInfoForNonSourceSeries(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok, "series info must not add works we do not mirror")
 	// Not refetched again until stale.
-	e.clk.Advance(2 * time.Minute)
+	e.clk.Advance(infoInterval + time.Minute)
 	e.drain(5)
 	n := 0
 	for _, r := range e.srv.Requests() {

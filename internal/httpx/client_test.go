@@ -271,6 +271,20 @@ func TestRobotsUnavailableDisallowsAll(t *testing.T) {
 	require.Equal(t, ClassOK, h.get(t, KindWork, "/works/1").Class, "after robots recovered")
 }
 
+// A redirect that changes the scheme (e.g. a downgrade to plain http) is not followed.
+func TestRedirectSchemeChangeNotFollowed(t *testing.T) {
+	h := newHarness(t, 10*time.Second, 0)
+	// The fake server is plain http, so the scheme change here is to https; the rule is the same.
+	other := strings.Replace(h.srv.URL, "http://", "https://", 1)
+	h.srv.Handle("/works/1", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": other + "/works/2"}})
+	r := h.get(t, KindWork, "/works/1")
+	require.Equal(t, ClassUnexpected, r.Class)
+	require.Contains(t, r.Reason, "scheme=true")
+	for _, rec := range h.srv.Requests() {
+		require.NotEqual(t, "/works/2", rec.URI, "followed a scheme-changing redirect")
+	}
+}
+
 // A rate-limited robots.txt is "busy", not "no robots.txt": nothing is allowed until it is
 // re-read after the short error TTL (it must not become allow-all for a day).
 func TestRobotsRateLimitedDisallowsAll(t *testing.T) {

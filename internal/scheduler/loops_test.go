@@ -63,7 +63,7 @@ func TestRestrictedTagInfoDoesNotLoop(t *testing.T) {
 	e.add(e.site.TagPath())
 	e.drain(50)
 	for range 5 {
-		e.clk.Advance(2 * time.Minute) // tag scheduling runs at most once a minute
+		e.clk.Advance(infoInterval + time.Minute) // past each info scheduling interval
 		e.drain(50)
 	}
 	require.Equal(t, 1, countRequests(e, "/tags/Fixture%20Tag"), "restricted tag re-fetched")
@@ -122,6 +122,45 @@ func TestTooLargeWorkFailsOnce(t *testing.T) {
 	require.Equal(t, 1, countRequests(e, uri), "oversized page re-queued by the next poll")
 }
 
+// A mirrored work that later grows past the body limit keeps its parser version, so `reparse`
+// leaves it alone and doesn't roll its fetched revision back (which would queue the oversized
+// download again on the next poll).
+func TestTooLargeWorkNotReparsed(t *testing.T) {
+	e := newEnvWith(t, 3, nil, func(o *httpx.Options) { o.MaxBody = 128 << 10 })
+	ctx := context.Background()
+	e.add(e.site.TagPath())
+	e.drain(50)
+	before := e.diag(5001).ParserVersion
+	require.NotZero(t, before)
+	e.srv.Handle("/works/5001", fakeao3.Reply{Body: fakeao3.WorkPage(strings.Repeat("x", 256<<10))})
+	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Words += 100; w.Revised = time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC) })
+	e.clk.Advance(7 * time.Hour)
+	e.drain(50)
+	const uri = "/works/5001?view_full_work=true"
+	require.Equal(t, 2, countRequests(e, uri), "initial fetch + one oversized attempt")
+	require.Equal(t, before, e.diag(5001).ParserVersion, "too-large work marked for reparse")
+
+	res, err := e.ctl.Reparse(ctx, controllers.ReparseOptions{})
+	require.NoError(t, err)
+	require.Zero(t, res.Reparsed, "reparse picked up the too-large work")
+	e.clk.Advance(7 * time.Hour)
+	e.drain(50)
+	require.Equal(t, 2, countRequests(e, uri), "oversized download queued again after reparse")
+}
+
+// A work fetched for a source that was removed meanwhile is still stored (the request was
+// spent), just not linked to the gone source.
+func TestFetchWorkForRemovedSourceKeepsPage(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	_, err := e.ctl.FetchWork(ctx, 5001, 999) // source 999 does not exist (removed mid-fetch)
+	require.NoError(t, err)
+	_, _, err = e.db.LatestRawPage(ctx, 5001)
+	require.NoError(t, err, "page rolled back because the source was gone")
+	require.False(t, e.diag(5001).LastFetched.IsZero())
+	require.Zero(t, e.diag(5001).Sources)
+}
+
 // Tag and series info fetches that fail before any page (too large) or keep failing (AO3
 // unavailable through every retry) are marked attempted, not re-queued every minute.
 func TestInfoFetchFailuresDoNotLoop(t *testing.T) {
@@ -132,7 +171,7 @@ func TestInfoFetchFailuresDoNotLoop(t *testing.T) {
 	e.queueWork(1001)
 	e.drain(5)
 	for range 40 {
-		e.clk.Advance(2 * time.Minute) // info scheduling runs at most once a minute
+		e.clk.Advance(infoInterval + time.Minute) // past each info scheduling interval
 		e.drain(20)
 	}
 	require.Equal(t, 1, countRequests(e, "/series/3001"), "oversized series page re-fetched")

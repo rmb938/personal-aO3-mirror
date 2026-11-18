@@ -47,10 +47,10 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 	path := ao3url.WorkPath(strconv.FormatInt(id, 10))
 	resp, err := c.ao3Get(ctx, httpx.KindWork, path)
 	if pe, ok := errors.AsType[PermanentError](err); ok && pe.Code == CodeTooLarge {
-		// Mark it like a parse failure so listings don't queue another huge download until the
-		// work changes on AO3.
+		// Marked fetched so listings don't queue another huge download until the work changes on
+		// AO3 (needs a higher limit, then a refresh).
 		if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-			return tx.MarkWorkParseFailed(ctx, id)
+			return tx.MarkWorkTooLarge(ctx, id)
 		}); err != nil {
 			return nil, err
 		}
@@ -112,10 +112,16 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 		if sw, err = c.storeWork(ctx, tx, w, false, time.Time{}); err != nil {
 			return err
 		}
-		if sourceID > 0 {
-			return tx.LinkSourceWorks(ctx, sourceID, []int64{id})
+		if sourceID <= 0 {
+			return nil
 		}
-		return nil
+		// The source may have been removed while we fetched: keep the page (the request is
+		// spent, and removing a source keeps its mirrored works), just don't link it.
+		exists, err := tx.SourceExists(ctx, sourceID)
+		if err != nil || !exists {
+			return err
+		}
+		return tx.LinkSourceWorks(ctx, sourceID, []int64{id})
 	}); err != nil {
 		return detail, err
 	}

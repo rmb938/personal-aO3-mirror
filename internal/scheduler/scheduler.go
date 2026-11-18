@@ -291,13 +291,17 @@ func flatten(m map[string]any) []any {
 
 // ---- scheduling ----
 
-// schedule asks the controllers to queue due work: info fetches (at most once a minute) and
+// infoInterval is how often tag/series info scheduling runs. Picking what needs info scans tag
+// usage, and it only has to refill small (25-job) queues, so it runs rarely.
+const infoInterval = 10 * time.Minute
+
+// schedule asks the controllers to queue due work: info fetches (at most every infoInterval) and
 // each source's polls and backfill pages. The scheduler's logger rides along in ctx so
 // scheduling logs keep the scheduler component.
 func (s *Scheduler) schedule(ctx context.Context) error {
 	ctx = logx.With(ctx, s.log)
 	now := s.options.Now()
-	if now.Sub(s.lastInfo) >= time.Minute {
+	if now.Sub(s.lastInfo) >= infoInterval {
 		s.lastInfo = now
 		if err := s.controllers.ScheduleInfo(ctx, now); err != nil {
 			return err

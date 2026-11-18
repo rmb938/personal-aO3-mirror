@@ -144,6 +144,13 @@ func (s *ReadTx) ListSources(ctx context.Context) ([]SourceRow, error) {
 	return out, rows.Err()
 }
 
+// SourceExists reports whether a source row exists (any state), without the member counts.
+func (s *ReadTx) SourceExists(ctx context.Context, id int64) (bool, error) {
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
+}
+
 // SchedulableSources returns the active and done_backfill sources without member counts
 // (MemberWorks and FetchedWorks are 0): the scheduler reads them before every job pick.
 func (s *ReadTx) SchedulableSources(ctx context.Context) ([]SourceRow, error) {

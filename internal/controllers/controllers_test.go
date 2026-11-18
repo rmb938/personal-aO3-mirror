@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -8,6 +9,28 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 )
+
+// A WaitError (nothing sent, the job is requeued without an attempt) never counts as giving up,
+// even on the last attempt; a permanent error or the last retryable one does.
+func TestGiveUpInfoIgnoresWait(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		err   error
+		final bool
+		mark  bool
+	}{
+		{WaitError{Code: CodeRobotsUnavailable}, true, false},
+		{WaitError{Code: CodeRobotsUnavailable}, false, false},
+		{RetryError{Code: "unavailable"}, false, false},
+		{RetryError{Code: "unavailable"}, true, true},
+		{PermanentError{Code: CodeTooLarge}, false, true},
+	} {
+		marked := false
+		err := giveUpInfo(ctx, c.err, c.final, func() error { marked = true; return nil })
+		require.ErrorIs(t, err, c.err)
+		require.Equal(t, c.mark, marked, "%v final=%t", c.err, c.final)
+	}
+}
 
 func TestPermanentErrorCodes(t *testing.T) {
 	// Error() is what lands in job last_error: "code" or "code:detail".

@@ -167,67 +167,86 @@ func (c *Controllers) scheduleWorkSource(ctx context.Context, tx *store.Tx, r st
 const maxInfoJobs = 25
 
 // ScheduleInfo keeps small queues of series-page and tag-info fetches (most-used tags first),
-// when enabled. One transaction; no requests.
+// when enabled. No requests. Two steps: picking what needs info scans series and tag usage
+// (slow on a big mirror), so it runs in a read transaction that holds no write lock; only the
+// enqueueing is a (short) write transaction. Enqueueing is deduplicated, so picks that went
+// stale in between are harmless.
 func (c *Controllers) ScheduleInfo(ctx context.Context, now time.Time) error {
-	return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		if err := c.scheduleSeriesInfo(ctx, tx, now); err != nil {
+	var series, tags []int64
+	if err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		var err error
+		if series, err = c.seriesNeedingInfo(ctx, tx, now); err != nil {
 			return err
 		}
-		return c.scheduleTagInfo(ctx, tx, now)
-	})
+		tags, err = c.tagsNeedingInfo(ctx, tx, now)
+		return err
+	}); err != nil {
+		return err
+	}
+	if len(series) == 0 && len(tags) == 0 {
+		return nil
+	}
+	var queuedSeries, queuedTags int
+	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		if queuedSeries, err = enqueueInfo(ctx, tx, jobs.KindSeries, series, jobs.SeriesKey); err != nil {
+			return err
+		}
+		queuedTags, err = enqueueInfo(ctx, tx, jobs.KindTagInfo, tags, jobs.TagKey)
+		return err
+	}); err != nil {
+		return err
+	}
+	if queuedSeries > 0 || queuedTags > 0 {
+		c.logger(ctx).Debug("info scheduled", "series_jobs", queuedSeries, "tag_jobs", queuedTags)
+	}
+	return nil
 }
 
-func (c *Controllers) scheduleTagInfo(ctx context.Context, tx *store.Tx, now time.Time) error {
+// tagsNeedingInfo picks tags to fetch info for (most-used first) while the tag-info queue has room.
+func (c *Controllers) tagsNeedingInfo(ctx context.Context, tx *store.ReadTx, now time.Time) ([]int64, error) {
 	if len(c.options.TagInfoTypes) == 0 {
-		return nil
+		return nil, nil
 	}
 	active, err := tx.CountActiveJobs(ctx, jobs.KindTagInfo)
 	if err != nil || active >= maxInfoJobs {
-		return err
+		return nil, err
 	}
-	tags, err := tx.TagsNeedingInfo(ctx, c.options.TagInfoTypes, now.Add(-c.options.TagInfoTTL), 50)
+	refs, err := tx.TagsNeedingInfo(ctx, c.options.TagInfoTypes, now.Add(-c.options.TagInfoTTL), 50)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	queued := 0
-	for _, t := range tags {
-		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindTagInfo, Target: strconv.FormatInt(t.ID, 10),
-			Priority: jobs.ClassTagInfo, DedupeKey: jobs.TagKey(t.ID)}); err != nil {
-			return err
-		} else if created {
-			queued++
-		}
+	ids := make([]int64, 0, len(refs))
+	for _, t := range refs {
+		ids = append(ids, t.ID)
 	}
-	if queued > 0 {
-		c.logger(ctx).Debug("tag info scheduled", "jobs", queued)
-	}
-	return nil
+	return ids, nil
 }
 
-// scheduleSeriesInfo queues series-page fetches for non-source series.
-func (c *Controllers) scheduleSeriesInfo(ctx context.Context, tx *store.Tx, now time.Time) error {
+// seriesNeedingInfo picks non-source series to fetch while the series-info queue has room.
+func (c *Controllers) seriesNeedingInfo(ctx context.Context, tx *store.ReadTx, now time.Time) ([]int64, error) {
 	if !c.options.SeriesInfo {
-		return nil
+		return nil, nil
 	}
 	active, err := tx.CountActiveJobs(ctx, jobs.KindSeries)
 	if err != nil || active >= maxInfoJobs {
-		return err
+		return nil, err
 	}
-	ids, err := tx.SeriesNeedingInfo(ctx, now.Add(-c.options.SeriesInfoTTL), 50)
-	if err != nil {
-		return err
-	}
+	return tx.SeriesNeedingInfo(ctx, now.Add(-c.options.SeriesInfoTTL), 50)
+}
+
+// enqueueInfo queues info jobs of kind for ids (deduplicated by key) and returns how many are new.
+func enqueueInfo(ctx context.Context, tx *store.Tx, kind string, ids []int64, key func(int64) string) (int, error) {
 	queued := 0
 	for _, id := range ids {
-		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindSeries, Target: strconv.FormatInt(id, 10),
-			Priority: jobs.ClassTagInfo, DedupeKey: jobs.SeriesKey(id)}); err != nil {
-			return err
-		} else if created {
+		_, created, err := tx.EnqueueJob(ctx, store.Job{Kind: kind, Target: strconv.FormatInt(id, 10),
+			Priority: jobs.ClassTagInfo, DedupeKey: key(id)})
+		if err != nil {
+			return queued, err
+		}
+		if created {
 			queued++
 		}
 	}
-	if queued > 0 {
-		c.logger(ctx).Debug("series info scheduled", "jobs", queued)
-	}
-	return nil
+	return queued, nil
 }

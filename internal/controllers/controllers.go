@@ -214,13 +214,20 @@ func outcome(resp *httpx.Response) error {
 // Shutdown leaves it alone. It returns err (joined with any mark error).
 // TODO: give this a better name
 func giveUpInfo(ctx context.Context, err error, final bool, mark func() error) error {
-	if ctx.Err() != nil {
-		return err
+	if ctx.Err() != nil || isWait(err) {
+		return err // shutdown, or nothing was sent (the job is requeued): not an attempt
 	}
 	if _, permanent := errors.AsType[PermanentError](err); !permanent && !final {
 		return err
 	}
 	return errors.Join(err, mark())
+}
+
+// isWait reports whether err is a WaitError: nothing was sent and the scheduler requeues the
+// job without counting the attempt, so it must never be treated as giving up.
+func isWait(err error) bool {
+	_, ok := errors.AsType[WaitError](err)
+	return ok
 }
 
 // parseUnexpected is the error for a page missing required structure (rep.Missing lists it).

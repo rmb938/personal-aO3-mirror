@@ -266,8 +266,11 @@ func (c *Client) Get(ctx context.Context, kind Kind, ref string) (*Response, err
 			resp.Class, resp.Reason = v.Class, v.Reason
 			return resp, nil
 		}
-		if loc.Host != c.base.Host || hop >= maxRedirects {
-			resp.Class, resp.Reason = ClassUnexpected, fmt.Sprintf("redirect=unfollowed foreign=%t hop=%d", loc.Host != c.base.Host, hop)
+		// Same host and scheme only (as Resolve requires for the first request): a downgrade to
+		// plain http would drop the Secure view_adult cookie and could be tampered with.
+		foreign, scheme := loc.Host != c.base.Host, loc.Scheme != c.base.Scheme
+		if foreign || scheme || hop >= maxRedirects {
+			resp.Class, resp.Reason = ClassUnexpected, fmt.Sprintf("redirect=unfollowed foreign=%t scheme=%t hop=%d", foreign, scheme, hop)
 			return resp, nil
 		}
 		log.Debug("following redirect", "hop", hop+1, "from", SafePath(u), "to", SafePath(loc))

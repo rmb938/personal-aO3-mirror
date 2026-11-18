@@ -499,13 +499,35 @@ func (s *ReadTx) WorkParserVersion(ctx context.Context, workID int64) (int, erro
 // parser_version 0 (so `reparse` retries it from the stored raw page after a parser fix).
 // Existing content and metadata are kept.
 func (s *Tx) MarkWorkParseFailed(ctx context.Context, workID int64) error {
+	if err := s.markWorkChecked(ctx, workID, `, parser_version = 0`); err != nil {
+		return err
+	}
+	s.log.Debug("work parse failure recorded", "work_id", workID)
+	return nil
+}
+
+// MarkWorkTooLarge records that a work's page was over the body limit. Like a parse failure
+// the work is marked fetched at its listed revision, so listings stop asking for it until it
+// changes on AO3 (raising the limit and refreshing recovers it). Unlike one, parser_version is
+// left alone: no new page was stored, so `reparse` has nothing to retry, and re-parsing the old
+// page would roll the fetched revision back and queue the oversized download again.
+func (s *Tx) MarkWorkTooLarge(ctx context.Context, workID int64) error {
+	if err := s.markWorkChecked(ctx, workID, ``); err != nil {
+		return err
+	}
+	s.log.Debug("work too large recorded", "work_id", workID)
+	return nil
+}
+
+// markWorkChecked marks a work fetched at its listed revision without storing a page. extra is
+// a constant SET fragment from this file (never caller input).
+func (s *Tx) markWorkChecked(ctx context.Context, workID int64, extra string) error {
 	now := s.unix()
 	if _, err := s.meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
 		ON CONFLICT (id) DO NOTHING`, workID, now, now); err != nil {
 		return err
 	}
 	_, err := s.meta.ExecContext(ctx, `UPDATE works SET last_fetched = ?, last_checked = ?, fetched_revised = revised_at,
-		fetched_chapters = chapters_posted, fetched_words = words, parser_version = 0 WHERE id = ?`, now, now, workID)
-	s.log.Debug("work parse failure recorded", "work_id", workID)
+		fetched_chapters = chapters_posted, fetched_words = words`+extra+` WHERE id = ?`, now, now, workID)
 	return err
 }

@@ -130,11 +130,19 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 				return err
 			}
 			res.Blurbs = len(blurbs.ids)
+			// Same rule as BackfillSourcePage: over the result window, sortable sources are walked
+			// in date windows (covering every work); others only reach the first MaxResults.
+			windowed := src.Kind.Sortable() && total > c.options.MaxResults
+			reachable := total
+			if !windowed {
+				reachable = min(total, c.options.MaxResults)
+			}
 			pages := ao3url.Pages(total)
-			listing := max(pages-1, 0)
+			listing := max(ao3url.Pages(reachable)-1, 0)
 			// Works on page 1 that are already mirrored and unchanged need no fetch.
-			fetches := max(total-(len(blurbs.ids)-len(blurbs.needFetch)), 0)
-			res.Estimate = c.estimate(total, listing, fetches, total > ao3url.MaxResults)
+			fetches := max(reachable-(len(blurbs.ids)-len(blurbs.needFetch)), 0)
+			res.Estimate = c.estimate(total, listing, fetches, windowed)
+			res.Estimate.Pages = ao3url.Pages(reachable)
 			row.TotalWorks, row.EstRequests = total, res.Estimate.Requests
 			next := 2
 			if pages <= 1 {
@@ -206,10 +214,16 @@ func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order
 	case httpx.ClassRateLimited, httpx.ClassUnavailable:
 		return parsedListing{}, 0, fmt.Errorf("%w (%s)", ErrUnavailable, resp.Reason)
 	default:
+		if !pageStructureProblem(resp) {
+			// An odd answer (adult gate, unusual 4xx, unfollowed redirect): not our parser.
+			return parsedListing{}, 0, PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
+		}
+		c.saveSkeleton(ctx, "listing", skeletonAddID(src), resp.Body)
 		return parsedListing{}, 0, fmt.Errorf("%w (%s)", ErrUnexpected, resp.Reason)
 	}
 	p, err := c.parseListing(ctx, src, 1, resp)
 	if err != nil {
+		c.saveSkeleton(ctx, "listing", skeletonAddID(src), resp.Body)
 		return p, 0, fmt.Errorf("%w: %w", ErrUnexpected, err)
 	}
 	total := p.listing.Total
@@ -220,6 +234,12 @@ func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order
 		total = len(p.listing.Blurbs)
 	}
 	return p, total, nil
+}
+
+// skeletonAddID names the debug skeleton of a source's page 1 at add time (no source id yet):
+// a content-free hash of the source.
+func skeletonAddID(src ao3url.Source) string {
+	return "add-" + httpx.Hash(string(src.Kind)+"\x00"+src.Target+"\x00"+ao3url.FiltersJSON(src.Filters)) + "-p1"
 }
 
 // ConfirmSource activates a pending source.
