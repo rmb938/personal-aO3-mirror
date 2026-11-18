@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
-	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -106,10 +105,7 @@ func (c *Controllers) fetchSourcePage(ctx context.Context, sourceID int64, src a
 	}
 	skelID := strconv.FormatInt(sourceID, 10) + "-p" + strconv.Itoa(page)
 	if err := outcome(resp); err != nil {
-		if resp.Class == httpx.ClassUnexpected {
-			c.saveSkeleton(ctx, "listing", skelID, resp.Body)
-		}
-		return parsedListing{}, resp.ReqID, err
+		return parsedListing{}, resp.ReqID, err // an odd answer is not a listing page: no skeleton
 	}
 	p, err := c.parseListing(ctx, src, page, resp)
 	if err != nil {
