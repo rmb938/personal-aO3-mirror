@@ -167,6 +167,27 @@ func TestRescanWithUnparsedBlurbsDropsNothing(t *testing.T) {
 	require.Contains(t, e.logs.String(), "rescan skipped more blurbs than it stored")
 }
 
+// A rescan whose listings lost their pagination nav (as after an AO3 markup change) stops
+// after page 1. The heading's total shows the walk did not reach every work, so no misses are
+// counted: nothing past page 1 is checked or dropped, however many rescans run.
+func TestRescanWithoutPaginationDropsNothing(t *testing.T) {
+	e := newEnv(t, 45, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour }) // 3 pages
+	id := e.add(e.site.TagPath())
+	e.drain(100)
+	require.Equal(t, 45, e.source(id).MemberWorks)
+	before := len(e.srv.Requests())
+	e.site.SetNoPagination(true)
+	for range 3 {
+		e.clk.Advance(25 * time.Hour)
+		e.drain(100)
+	}
+	for _, r := range e.srv.Requests()[before:] {
+		require.False(t, strings.HasPrefix(r.URI, "/works/"), "work checked after a rescan that stopped early: %s", r.URI)
+	}
+	require.Equal(t, 45, e.source(id).MemberWorks, "members dropped after rescans that stopped at page 1")
+	require.Contains(t, e.logs.String(), "listing total is more than the pages walked hold")
+}
+
 // A rescan that lists none of a source's works (here they all left; a blurb selector that no
 // longer matches looks the same) counts no misses either.
 func TestRescanListingNothingDropsNothing(t *testing.T) {
