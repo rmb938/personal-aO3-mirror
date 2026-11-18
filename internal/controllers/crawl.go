@@ -32,12 +32,13 @@ type SourceCursor struct {
 	Rescan        bool  `json:"rescan,omitempty"`
 	RescanStarted int64 `json:"rescan_started,omitempty"`
 	// RescanListed and RescanSkipped count blurbs stored and blurbs skipped (no work link)
-	// during the rescan (a page redone after a window shrink counts again). RescanTruncated
-	// marks a walk that stopped at AO3's result window with pages left. They show whether the
-	// walk saw the whole source, and so whether its misses count (see rescanSawSource).
-	RescanListed    int  `json:"rescan_listed,omitempty"`
-	RescanSkipped   int  `json:"rescan_skipped,omitempty"`
-	RescanTruncated bool `json:"rescan_truncated,omitempty"`
+	// during the rescan (a page redone after a window shrink counts again). RescanIncomplete
+	// marks a walk that ended without reaching every work (see markIncompleteWalk). They show
+	// whether the walk saw the whole source, and so whether its misses count (see
+	// rescanSawSource).
+	RescanListed     int  `json:"rescan_listed,omitempty"`
+	RescanSkipped    int  `json:"rescan_skipped,omitempty"`
+	RescanIncomplete bool `json:"rescan_incomplete,omitempty"`
 	// BlockedParser is set to parse.Version when the NextPage listing failed to parse. Backfill
 	// pauses until the binary ships a different parser version.
 	BlockedParser int `json:"blocked_parser,omitempty"`
@@ -379,9 +380,7 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 		cur.NextPage = page + 1
 	case win != nil:
 		// Window done: move to the previous window.
-		if pg.Current < pg.Last {
-			cur.RescanTruncated = cur.Rescan // a one-day window over the result window
-		}
+		markIncompleteWalk(cur, page, l, detail, log)
 		from, _ := time.Parse("2006-01-02", cur.WindowFrom)
 		to := from.AddDate(0, 0, -1)
 		if to.Before(dateFloor) {
@@ -396,10 +395,29 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 		}
 	default:
 		if pg.Current < pg.Last {
-			cur.RescanTruncated = cur.Rescan
 			detail["truncated_at_max_results"] = true
 			log.Warn("backfill reached AO3 result window; remaining works only via windows", "page", page)
 		}
+		markIncompleteWalk(cur, page, l, detail, log)
 		cur.NextPage = 0
+	}
+}
+
+// markIncompleteWalk is called on the last page of a walk (or of a date window). It marks a
+// rescan incomplete when that page shows the walk did not reach every work: pages were left
+// (AO3's result window), or the heading's total is more than the pages walked can hold (the
+// pagination was not parsed, so the walk stopped early). Listings without a "N Works" total
+// (bookmarks) can only be checked by their pagination.
+func markIncompleteWalk(cur *SourceCursor, page int, l parse.Listing, detail Detail, log *slog.Logger) {
+	pg := l.Pagination
+	short := l.Total >= 0 && l.Total > page*ao3url.PerPage
+	if !cur.Rescan || (pg.Current >= pg.Last && !short) {
+		return
+	}
+	cur.RescanIncomplete = true
+	if short {
+		detail["total_beyond_pages"] = true
+		log.Warn("listing total is more than the pages walked hold; rescan misses will not be counted",
+			"page", page, "page_last", pg.Last, "total", l.Total)
 	}
 }

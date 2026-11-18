@@ -36,6 +36,15 @@ type Site struct {
 	Works      map[int64]*SiteWork
 	MaxResults int // AO3 search window; default 100000
 	PerPage    int // default 20
+	// noPagination leaves the pagination nav out of listings (as if AO3 changed its markup).
+	noPagination bool
+}
+
+// SetNoPagination makes listings render without their pagination nav (or with it again).
+func (s *Site) SetNoPagination(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noPagination = v
 }
 
 // NewSite builds n works with ids start..start+n-1, spread over dates, with varied stats.
@@ -169,7 +178,7 @@ func (s *Site) listing(w http.ResponseWriter, q url.Values) {
 		b.WriteString(s.blurb(sw))
 	}
 	b.WriteString(`</ol>`)
-	if last > 1 {
+	if last > 1 && !s.noPagination {
 		b.WriteString(`<ol class="pagination actions" role="navigation">`)
 		for p := 1; p <= last; p++ {
 			if p == page {

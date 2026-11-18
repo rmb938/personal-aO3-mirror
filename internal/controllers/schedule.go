@@ -100,7 +100,7 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Source
 			}
 		}
 		cur.Rescan, cur.RescanStarted = false, 0
-		cur.RescanListed, cur.RescanSkipped, cur.RescanTruncated = 0, 0, false
+		cur.RescanListed, cur.RescanSkipped, cur.RescanIncomplete = 0, 0, false
 		r.BackfillCursor = cur.JSON()
 	}
 	r.BackfillDoneAt, r.LastFullScanAt = now, now
@@ -145,7 +145,8 @@ func recordRescanMisses(ctx context.Context, tx *store.Tx, sourceID int64, start
 // rescanSawSource reports whether a finished rescan saw the whole source, so that its misses
 // mean the works left. A walk that did not would count works it never reached as missed, and
 // two such walks would drop them from the source. Such a walk counts no misses:
-//   - it stopped at AO3's result window with pages left;
+//   - it ended without reaching every work: pages were left at AO3's result window, or the
+//     listing's total is more than the pages walked hold (pagination not parsed);
 //   - more blurbs were skipped (no work link) than stored: the listing parser most likely no
 //     longer finds work links (real skips, mystery and external works, are a minority);
 //   - it stored no blurb at all while the source has ok members (e.g. the blurb selector no
@@ -156,8 +157,8 @@ func recordRescanMisses(ctx context.Context, tx *store.Tx, sourceID int64, start
 func rescanSawSource(ctx context.Context, tx *store.Tx, sourceID int64, cur SourceCursor, log *slog.Logger) (bool, error) {
 	counts := []any{"listed", cur.RescanListed, "skipped", cur.RescanSkipped}
 	switch {
-	case cur.RescanTruncated:
-		log.Warn("rescan stopped at AO3's result window; missed works not counted", counts...)
+	case cur.RescanIncomplete:
+		log.Warn("rescan did not reach every work; missed works not counted", counts...)
 		return false, nil
 	case cur.RescanSkipped > cur.RescanListed:
 		log.Warn("rescan skipped more blurbs than it stored; missed works not counted", counts...)
