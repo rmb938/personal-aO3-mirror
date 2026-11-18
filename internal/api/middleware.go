@@ -137,12 +137,13 @@ func (a *API) accessLog(listener string) func(http.Handler) http.Handler {
 			if slices.Contains(loggedMethods, r.Method) {
 				method = r.Method
 			}
+			route, rctx, prerouted := loggedRoute(r)
 			attrs := make([]slog.Attr, 0, 16)
 			attrs = append(attrs,
 				slog.String("req_id", st.id),
 				slog.String("listener", listener),
 				slog.String("method", method),
-				slog.String("route", routePattern(r)),
+				slog.String("route", route),
 				slog.Int("status", sw.status),
 				slog.Int("bytes", sw.bytes),
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
@@ -156,11 +157,37 @@ func (a *API) accessLog(listener string) func(http.Handler) http.Handler {
 			if st.clientIDInvalid {
 				attrs = append(attrs, slog.Bool("client_req_id_invalid", true))
 			}
-			attrs = append(attrs, pathIDAttrs(r)...)
+			if prerouted {
+				attrs = append(attrs, slog.Bool("prerouted", true))
+			}
+			attrs = append(attrs, pathIDAttrs(rctx)...)
 			attrs = append(attrs, queryNameAttrs(r.URL.RawQuery)...)
 			a.log.LogAttrs(r.Context(), slog.LevelInfo, "api request", attrs...)
 		})
 	}
+}
+
+// loggedRoute returns the route pattern to log and the route context holding its path params.
+// A request that middleware rejected before routing (rate limit, throttle, URL limits,
+// cross-origin) has no pattern yet, so it is resolved here without running the handler and
+// prerouted is true. A path that matches no route stays "": the raw path may hold names.
+func loggedRoute(r *http.Request) (route string, rctx *chi.Context, prerouted bool) {
+	rctx = chi.RouteContext(r.Context())
+	if rctx == nil {
+		return "", nil, false
+	}
+	if p := rctx.RoutePattern(); p != "" || rctx.Routes == nil {
+		return p, rctx, false
+	}
+	path := r.URL.RawPath // the path chi itself routes on
+	if path == "" {
+		path = r.URL.Path
+	}
+	found := chi.NewRouteContext()
+	if p := rctx.Routes.Find(found, r.Method, path); p != "" {
+		return p, found, true
+	}
+	return "", rctx, false
 }
 
 // routePattern is the matched chi route pattern, or "" when nothing matched.
@@ -173,8 +200,7 @@ func routePattern(r *http.Request) string {
 
 // pathIDAttrs logs numeric path parameters as path_<name>; a non-numeric value is logged only
 // as path_<name>_invalid. The names come from our route patterns.
-func pathIDAttrs(r *http.Request) []slog.Attr {
-	rctx := chi.RouteContext(r.Context())
+func pathIDAttrs(rctx *chi.Context) []slog.Attr {
 	if rctx == nil {
 		return nil
 	}

@@ -122,6 +122,36 @@ func TestAccessLogIsContentFree(t *testing.T) {
 	assert.NotContains(t, logs.String(), sentinel)
 }
 
+// A request rejected before routing (here, rate limited) still logs its route pattern and
+// numeric path IDs, flagged prerouted. An unmatched path logs no route.
+func TestAccessLogPreroutedRoute(t *testing.T) {
+	a, logs := newTestAPI(t, func(o *Options) { o.GeneralPerMin = 1 })
+	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) { return nil, nil }))
+
+	require.Equal(t, http.StatusOK, get(a.public, "/items/1/parts/2").Code)
+	for _, target := range []string{"/items/42/parts/" + sentinel + "part", "/" + sentinel + "nope"} {
+		require.Equal(t, http.StatusTooManyRequests, get(a.public, target).Code, target)
+	}
+	var lines []map[string]any
+	for _, l := range logs.lines(t) {
+		if l["msg"] == "api request" {
+			lines = append(lines, l)
+		}
+	}
+	require.Len(t, lines, 3)
+	assert.Nil(t, lines[0]["prerouted"], "routed request")
+
+	limited := lines[1]
+	assert.Equal(t, "/items/{id}/parts/{part}", limited["route"])
+	assert.Equal(t, true, limited["prerouted"])
+	assert.InDelta(t, 42, limited["path_id"], 0)
+	assert.Equal(t, true, limited["path_part_invalid"])
+
+	assert.Empty(t, lines[2]["route"], "unmatched path")
+	assert.Nil(t, lines[2]["prerouted"])
+	assert.NotContains(t, logs.String(), sentinel)
+}
+
 func TestAccessLogClientMethod(t *testing.T) {
 	a, logs := newTestAPI(t, nil)
 	w := do(a.Public(), httptest.NewRequest("SENTINELMETHOD", "/api/v1/healthz", nil))
