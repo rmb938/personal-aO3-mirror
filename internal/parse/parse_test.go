@@ -78,6 +78,57 @@ func TestParseListing(t *testing.T) {
 	require.Empty(t, tagsOf(b, model.TagCategory), "'No category' must not become a tag")
 }
 
+// syntheticListing builds a hand-written listing page of n fake work blurbs, optionally
+// without their fandom heading or stats block.
+func syntheticListing(n int, fandoms, stats bool) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, `<html><body><div id="outer"><div id="main"><h2 class="heading">%d Works in Fixture Tag</h2><ol class="work index group">`, n)
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, `<li id="work_%d" class="work blurb group" role="article"><div class="header module">`+
+			`<h4 class="heading"><a href="/works/%d">Fixture Work %d</a></h4>`, i, i, i)
+		if fandoms {
+			b.WriteString(`<h5 class="fandoms heading"><a class="tag" href="/tags/Fixture%20Tag/works">Fixture Tag</a></h5>`)
+		}
+		b.WriteString(`<p class="datetime">01 Nov 2026</p></div>` +
+			`<ul class="tags commas"><li class="warnings"><strong><a class="tag" href="/tags/x/works">Fixture Warning</a></strong></li></ul>`)
+		if stats {
+			b.WriteString(`<dl class="stats"><dt class="words">Words:</dt><dd class="words">100</dd>` +
+				`<dt class="chapters">Chapters:</dt><dd class="chapters">1/1</dd></dl>`)
+		}
+		b.WriteString(`</li>`)
+	}
+	b.WriteString(`</ol></div></div></body></html>`)
+	return []byte(b.String())
+}
+
+// A page of work blurbs none of which has a fandom link, or none a stats block, fails as
+// unexpected (the markup changed); one odd blurb, or a short page, does not.
+func TestParseListingMissingBlurbSections(t *testing.T) {
+	_, r, err := ParseListing(syntheticListing(5, true, true), fetchedAt)
+	require.NoError(t, err, "missing: %v", r.Missing)
+	require.Equal(t, 5, r.Counts["blurbs_with_fandom"])
+	require.Equal(t, 5, r.Counts["blurbs_with_stats"])
+
+	_, r, err = ParseListing(syntheticListing(5, false, true), fetchedAt)
+	require.ErrorIs(t, err, ErrUnexpected)
+	require.Equal(t, []string{"li.blurb h5.fandoms a.tag"}, r.Missing)
+
+	_, r, err = ParseListing(syntheticListing(5, true, false), fetchedAt)
+	require.ErrorIs(t, err, ErrUnexpected)
+	require.Equal(t, []string{"li.blurb dl.stats"}, r.Missing)
+
+	l, r, err := ParseListing(syntheticListing(4, false, false), fetchedAt)
+	require.NoError(t, err, "a short page is not checked: %v", r.Missing)
+	require.Len(t, l.Blurbs, 4)
+
+	// One blurb without a fandom among normal ones is fine.
+	odd := strings.Replace(string(syntheticListing(5, true, true)),
+		`<h5 class="fandoms heading"><a class="tag" href="/tags/Fixture%20Tag/works">Fixture Tag</a></h5>`, "", 1)
+	_, r, err = ParseListing([]byte(odd), fetchedAt)
+	require.NoError(t, err, "missing: %v", r.Missing)
+	require.Equal(t, 4, r.Counts["blurbs_with_fandom"])
+}
+
 func TestParseWorkChaptered(t *testing.T) {
 	w, r, err := ParseWork(1001, fixture(t, "work_chaptered.html"))
 	require.NoError(t, err, "missing: %v", r.Missing)
