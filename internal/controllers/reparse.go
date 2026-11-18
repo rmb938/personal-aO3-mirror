@@ -117,7 +117,7 @@ func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64
 	outcome := reparseSkipped
 	images := 0
 	if cur.page != nil {
-		w, rep, perr := parse.ParseWork(id, cur.page)
+		w, rep, perr := parseWork(log, id, cur.page)
 		log.Debug("parse report", append([]any{"work_id", id}, rep.Attrs()...)...)
 		if perr != nil {
 			outcome = reparseFailed

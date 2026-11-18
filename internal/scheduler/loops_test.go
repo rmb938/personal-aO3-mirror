@@ -147,6 +147,25 @@ func TestRescanDropsWorkThatLeftSource(t *testing.T) {
 	require.Equal(t, 4, e.source(id).MemberWorks)
 }
 
+// A work that left the source and can't be fetched (here: over the body limit) gets one check
+// after the first miss and is dropped at the second without a request, instead of being
+// downloaded again after every rescan.
+func TestRescanDropsUnfetchableWorkThatLeftSource(t *testing.T) {
+	e := newEnvWith(t, 3, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour },
+		func(o *httpx.Options) { o.MaxBody = 128 << 10 })
+	e.srv.Handle("/works/5001", fakeao3.Reply{Body: fakeao3.WorkPage(strings.Repeat("x", 256<<10))})
+	id := e.add(e.site.TagPath())
+	e.drain(50)
+	e.site.Update(5001, func(w *fakeao3.SiteWork) { w.Untagged = true })
+	for range 3 { // three rescans
+		e.clk.Advance(25 * time.Hour)
+		e.drain(100)
+	}
+	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "initial + one check after the first miss")
+	require.Zero(t, e.diag(5001).Sources, "unfetchable work that left the source still a member")
+	require.Equal(t, 2, e.source(id).MemberWorks)
+}
+
 // `source refresh --full` on a corrupt cursor restarts the walk, like the scheduler does; it
 // must not mark a half-walked backfill as done.
 func TestRefreshFullCorruptCursorRestartsWalk(t *testing.T) {

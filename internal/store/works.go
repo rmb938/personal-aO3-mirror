@@ -123,6 +123,12 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		if _, err := tx.ExecContext(ctx, `UPDATE works SET status = 'ok', status_changed_at = ? WHERE id = ?`, now, w.ID); err != nil {
 			return res, err
 		}
+		// Misses counted before it went away are stale: a revived work starts its two strikes
+		// over in every source (non-ok works are not counted, so the count would otherwise
+		// resume where it stopped).
+		if _, err := tx.ExecContext(ctx, `UPDATE source_works SET missed_rescans = 0 WHERE work_id = ?`, w.ID); err != nil {
+			return res, err
+		}
 	}
 
 	// A re-fetch of a page fetched before: snapshot what it may rewrite, to report what changed.
@@ -544,8 +550,9 @@ func (s *Tx) MarkWorkFetchFailed(ctx context.Context, workID int64) error {
 	return err
 }
 
-// markWorkChecked marks a work fetched at its listed revision without storing a page. extra is
-// a constant SET fragment from this file (never caller input).
+// markWorkChecked marks a work fetched at its listed revision without storing a page, and
+// records the fetch as given up (fetch_failed_at), in one statement. extra is a constant SET
+// fragment from this file (never caller input).
 func (s *Tx) markWorkChecked(ctx context.Context, workID int64, extra string) error {
 	now := s.unix()
 	if _, err := s.meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
@@ -553,6 +560,7 @@ func (s *Tx) markWorkChecked(ctx context.Context, workID int64, extra string) er
 		return err
 	}
 	_, err := s.meta.ExecContext(ctx, `UPDATE works SET last_fetched = ?, last_checked = ?, fetched_revised = revised_at,
-		fetched_chapters = chapters_posted, fetched_words = words`+extra+` WHERE id = ?`, now, now, workID)
+		fetched_chapters = chapters_posted, fetched_words = words, fetch_failed_at = ?`+extra+` WHERE id = ?`,
+		now, now, now, workID)
 	return err
 }

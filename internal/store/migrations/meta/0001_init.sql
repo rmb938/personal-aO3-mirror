@@ -197,11 +197,12 @@ CREATE TABLE source_works (
     work_id    INTEGER NOT NULL REFERENCES works (id) ON DELETE CASCADE,
     first_seen INTEGER NOT NULL,
     last_seen  INTEGER NOT NULL,                     -- last listing sighting (fetches never move it)
-    -- Finished rescans in a row that did not see an ok work (0 when a listing shows it). Every
-    -- miss gets one fetch: deleted/hidden marks the work (it stays a member); a successful fetch
-    -- at two or more misses drops the membership, since the work left the source. Two, because
-    -- a rescan walks pages over hours and a work can shift into a page already walked once, but
-    -- rarely twice.
+    -- Finished rescans in a row that did not see an ok work (0 when a listing shows it or the
+    -- work is revived). Every miss gets one fetch: deleted/hidden marks the work (it stays a
+    -- member); a successful fetch at two or more misses drops the membership, since the work
+    -- left the source. A work whose fetch keeps giving up is dropped at the second miss without
+    -- a request. Two, because a rescan walks pages over hours and a work can shift into a page
+    -- already walked once, but rarely twice.
     missed_rescans INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source_id, work_id)
 );

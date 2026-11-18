@@ -294,14 +294,32 @@ func (s *Tx) AddSourceWork(ctx context.Context, sourceID, workID int64) error {
 const MissedRescansToDrop = 2
 
 // RecordMissedRescan counts one more finished rescan of a source for every ok member work whose
-// last listing sighting in it is before since, and returns those works. The caller fetches each
-// one: a deleted/hidden answer marks the work (it stays a member and is no longer counted), and
-// a successful fetch drops the membership once the count reaches MissedRescansToDrop
-// (DropMissedSourceWorks). A listing sighting resets the count (LinkSourceWorks).
-func (s *Tx) RecordMissedRescan(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
-	return queryInt64s(ctx, s.meta, `UPDATE source_works SET missed_rescans = missed_rescans + 1
-		WHERE source_id = ? AND last_seen < ? AND work_id IN (SELECT id FROM works WHERE status = 'ok')
-		RETURNING work_id`, sourceID, since.Unix())
+// last listing sighting in it is before since, and returns those works in check. The caller
+// fetches each one: a deleted/hidden answer marks the work (it stays a member and is no longer
+// counted), and a successful fetch drops the membership once the count reaches
+// MissedRescansToDrop (DropMissedSourceWorks). A listing sighting or a revival resets the count.
+//
+// A work whose last fetch gave up (fetch_failed_at set: adult gate, too large, parse failure...)
+// cannot be checked, and checking it again would only spend a request on the same failure, so
+// at MissedRescansToDrop it is dropped without one (counted in dropped, not returned in check).
+func (s *Tx) RecordMissedRescan(ctx context.Context, sourceID int64, since time.Time) (check []int64, dropped int64, err error) {
+	const okMember = `source_id = ? AND last_seen < ?
+		AND EXISTS (SELECT 1 FROM works w WHERE w.id = source_works.work_id AND w.status = 'ok'`
+	if _, err := s.meta.ExecContext(ctx, `UPDATE source_works SET missed_rescans = missed_rescans + 1
+		WHERE `+okMember+`)`, sourceID, since.Unix()); err != nil {
+		return nil, 0, err
+	}
+	res, err := s.meta.ExecContext(ctx, `DELETE FROM source_works WHERE missed_rescans >= ? AND `+okMember+`
+		AND w.fetch_failed_at != 0)`, MissedRescansToDrop, sourceID, since.Unix())
+	if err != nil {
+		return nil, 0, err
+	}
+	if dropped, err = res.RowsAffected(); err != nil {
+		return nil, 0, err
+	}
+	check, err = queryInt64s(ctx, s.meta, `SELECT work_id FROM source_works WHERE `+okMember+`)
+		ORDER BY work_id`, sourceID, since.Unix())
+	return check, dropped, err
 }
 
 // DropMissedSourceWorks removes a work from every source whose last MissedRescansToDrop

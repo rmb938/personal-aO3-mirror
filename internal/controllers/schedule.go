@@ -94,9 +94,13 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Source
 		// successful fetch after MissedRescansToDrop misses in a row drops the membership (the
 		// work left the source; see FetchWork). One miss alone can be a work that shifted into
 		// an already-walked page during the hours-long walk.
-		check, err := tx.RecordMissedRescan(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
+		// A work whose fetch keeps giving up is dropped at the second miss without a request.
+		check, dropped, err := tx.RecordMissedRescan(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
 		if err != nil {
 			return err
+		}
+		if dropped > 0 {
+			log.Info("unfetchable works left the source", "dropped_members", dropped)
 		}
 		for _, id := range check {
 			if _, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassMaintenance); err != nil {

@@ -3,6 +3,8 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -45,8 +47,8 @@ func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64,
 // whose last MissedRescansToDrop rescans did not list it has lost it.
 func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64, final bool) (Detail, error) {
 	detail, err := c.fetchWork(ctx, id, sourceID)
-	if err == nil || id <= 0 {
-		return detail, err
+	if err == nil || id <= 0 || IsParseFailure(err) || isTooLarge(err) {
+		return detail, err // parse failures and too-large pages are recorded with their own marks
 	}
 	return detail, giveUpInfo(ctx, err, final, func() error {
 		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -62,7 +64,7 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 	log := c.logger(ctx)
 	path := ao3url.WorkPath(strconv.FormatInt(id, 10))
 	resp, err := c.ao3Get(ctx, httpx.KindWork, path)
-	if pe, ok := errors.AsType[PermanentError](err); ok && pe.Code == CodeTooLarge {
+	if isTooLarge(err) {
 		// Marked fetched so listings don't queue another huge download until the work changes on
 		// AO3 (needs a higher limit, then a refresh).
 		if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -71,7 +73,7 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 			return nil, err
 		}
 		log.Warn("work page over max body; not retrying until it changes", "work_id", id)
-		return Detail{"work_id": id}, pe
+		return Detail{"work_id": id}, err
 	}
 	if err != nil {
 		return nil, err
@@ -110,11 +112,13 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		return detail, err
 	}
 
-	w, rep, err := parse.ParseWork(id, resp.Body)
+	w, rep, err := parseWork(log, id, resp.Body)
 	log.Debug("parse report", append([]any{"req_id", resp.ReqID, "work_id", id}, rep.Attrs()...)...)
 	if err != nil {
 		pe := PermanentError{Code: CodeParseError}
-		if errors.Is(err, parse.ErrUnexpected) {
+		if errors.Is(err, errParserPanic) {
+			pe.Detail = "panic"
+		} else if errors.Is(err, parse.ErrUnexpected) {
 			pe = parseUnexpected(rep.Missing)
 		}
 		return detail, c.workParseFailed(ctx, id, path, resp, pe)
@@ -203,6 +207,29 @@ func (c *Controllers) storeWork(ctx context.Context, tx *store.Tx, w model.Work,
 		}
 	}
 	return sw, nil
+}
+
+// isTooLarge reports whether err is a work page over the body limit.
+func isTooLarge(err error) bool {
+	pe, ok := errors.AsType[PermanentError](err)
+	return ok && pe.Code == CodeTooLarge
+}
+
+// errParserPanic is a parser panic on a work page.
+var errParserPanic = errors.New("parser panicked")
+
+// parseWork is parse.ParseWork with a parser panic turned into an error, so the page is handled
+// like any parse failure (kept for reparse, work marked, no retry) instead of failing the job
+// unmarked and being queued again by every poll. Only the panic's type is logged: its value
+// could carry page content.
+func parseWork(log *slog.Logger, id int64, page []byte) (w model.Work, rep *parse.Report, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("work parser panicked", "work_id", id, "panic_type", fmt.Sprintf("%T", r))
+			w, rep, err = model.Work{ID: id}, &parse.Report{}, errParserPanic
+		}
+	}()
+	return parse.ParseWork(id, page)
 }
 
 // workParseFailed handles a work page we could fetch but not parse. AO3 is fine and a retry
