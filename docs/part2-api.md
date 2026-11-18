@@ -71,6 +71,11 @@ CLAUDE.md's API design rules get this line in 3a-4.
 **Pagination rule (from stage 3a-2):** a paged route pages in SQL. The store takes
 offset/limit and has a matching count, and the controller returns the page and the total from
 one `InReadTx` (so they agree). Never fetch every row and slice in the handler.
+Offset/limit is the contract, not keyset (cursor) pagination: the UI wants numbered pages and a
+total, like AO3, and a keyset cursor carries the sort key, so a title or creator sort would put
+fanwork strings in it. Offset's costs are deep-page skipping and rows drifting across pages when
+data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded by the
+`(page-1)*per_page ≤ 100000` cap and handled per table (3b, 9).
 
 ### Fanwork protection (the core design)
 1. **Single write path.** Handlers return `(any, error)`. Only `api.respond` encodes JSON.
@@ -433,6 +438,12 @@ Status: tick when the PR merges.
       returning `(page, total)`; `GET /jobs` (state, kind, source_id, page, per_page), and
       `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
       convert test against the `jobs.Kind*` constants.
+      - The jobs table grows with every work fetch. Check that its indexes cover each filter
+        with `ORDER BY id DESC`, and benchmark a deep page and `CountJobs` on a large
+        synthetic table.
+      - Also verify (EXPLAIN or benchmark) the 3a-2 assumption that rows skipped by `OFFSET`
+        don't evaluate `ListSources`' member-count subqueries. If they do, page ids first
+        with a deferred join (see 9).
     - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
       becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
       `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,
@@ -475,6 +486,11 @@ Status: tick when the PR merges.
   - Bounded `IN` lists and parameterized SQL only.
   - Migration `0002` adds reverse indexes (`tag_parents(parent_id)`,
     `work_collections(collection_id)`, `series_creators(creator_id)`) and any sort indexes.
+  - Deep pages use a deferred join: select the page's ids over an index
+    (`WHERE id IN (SELECT id … ORDER BY <sort>, id LIMIT ? OFFSET ?)`), then load the wide
+    work rows for those ids only. Every sort ends with `id` as a tie-breaker so pages are stable.
+  - Benchmark at a realistic size (synthetic, e.g. 200k works): a deep page up to the offset
+    cap, and the filtered `total` count, which may cost more than the offset.
 - [ ] **10. Works list + QUERY API**
   - `GET /works?page&per_page&sort` (simple listing).
   - `QUERY /works` with the body filter object (structured fields only in this stage).
