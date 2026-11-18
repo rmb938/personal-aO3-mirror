@@ -361,6 +361,7 @@ func TestUnavailableRetriesWithBackoff(t *testing.T) {
 	require.Equal(t, store.JobQueued, jobs[0].State)
 	require.True(t, jobs[0].NotBefore.After(e.clk.Now()), "retry must wait for the backoff")
 	require.Equal(t, "unavailable", jobs[0].LastError)
+	require.True(t, e.diag(5000).FetchFailedAt.IsZero(), "retryable failure with retries left marked as failed")
 	require.Equal(t, 4, e.fetchedCount(), "other works still progressed")
 }
 

@@ -106,7 +106,7 @@ func TestOfflineControllersNeverFetch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	ctl := New(Options{Store: st, Sources: config.Default().Sources})
-	_, err = ctl.FetchWork(ctx, 1, 0)
+	_, err = ctl.FetchWork(ctx, 1, 0, true)
 	require.ErrorIs(t, err, ErrOffline)
 	_, err = ctl.AddSource(ctx, "/tags/Fixture%20Fandom/works", AddSourceOptions{})
 	require.ErrorIs(t, err, ErrOffline)

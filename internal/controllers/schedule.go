@@ -90,19 +90,13 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Source
 	}
 	verify := 0
 	if cur.Rescan {
-		missing, err := tx.SourceWorksNotSeenSince(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
+		// Every missed work gets one fetch: deleted/hidden marks it (it stays a member); a
+		// successful fetch after MissedRescansToDrop misses in a row drops the membership (the
+		// work left the source; see FetchWork). One miss alone can be a work that shifted into
+		// an already-walked page during the hours-long walk.
+		check, err := tx.RecordMissedRescan(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
 		if err != nil {
 			return err
-		}
-		// Two strikes: a first miss gets one fetch (is it deleted?); a second miss in a row drops
-		// the membership without a request (the work left the source). One miss alone can be a
-		// work that shifted into an already-walked page during the hours-long walk.
-		check, dropped, err := tx.RecordMissedRescan(ctx, r.ID, missing)
-		if err != nil {
-			return err
-		}
-		if dropped > 0 {
-			log.Info("works left the source", "dropped_members", dropped)
 		}
 		for _, id := range check {
 			if _, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassMaintenance); err != nil {

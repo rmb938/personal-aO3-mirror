@@ -11,7 +11,7 @@ import (
 )
 
 func TestSourcesLifecycle(t *testing.T) {
-	s, _, _ := openTest(t)
+	s, clk, _ := openTest(t)
 	ctx := context.Background()
 	row := SourceRow{Kind: "tag", Target: "Fixture Fandom", FiltersJSON: "{}", Path: "/tags/Fixture%20Fandom/works",
 		State: SourceActive, BackfillOrder: "kudos_desc", PollInterval: 6 * time.Hour, TotalWorks: 3, EstRequests: 4, BackfillCursor: "{}"}
@@ -30,21 +30,40 @@ func TestSourcesLifecycle(t *testing.T) {
 	added, err := s.LinkSourceWorks(ctx, id, []int64{1, 2})
 	require.NoError(t, err)
 	require.Equal(t, 2, added)
-	// Two strikes: the first missed rescan asks for a check, a sighting resets, two in a row drop.
-	check, dropped, err := s.RecordMissedRescan(ctx, id, []int64{2})
+	// Two strikes: every missed rescan asks for a check; a successful fetch drops the membership
+	// only after two misses in a row, and a sighting resets the count.
+	clk.t = clk.t.Add(time.Second)
+	_, err = s.LinkSourceWorks(ctx, id, []int64{1}) // work 1 seen by the rescan, work 2 not
+	require.NoError(t, err)
+	since := clk.t
+	check, err := s.RecordMissedRescan(ctx, id, since)
 	require.NoError(t, err)
 	require.Equal(t, []int64{2}, check)
-	require.Zero(t, dropped)
+	dropped, err := s.DropMissedSourceWorks(ctx, 2)
+	require.NoError(t, err)
+	require.Zero(t, dropped, "one miss must not drop the membership")
 	_, err = s.LinkSourceWorks(ctx, id, []int64{2}) // seen again: count reset
 	require.NoError(t, err)
-	check, dropped, err = s.RecordMissedRescan(ctx, id, []int64{2})
+	clk.t = clk.t.Add(time.Second)
+	since = clk.t
+	check, err = s.RecordMissedRescan(ctx, id, since)
 	require.NoError(t, err)
-	require.Equal(t, []int64{2}, check, "a sighting must reset the miss count")
-	require.Zero(t, dropped)
-	check, dropped, err = s.RecordMissedRescan(ctx, id, []int64{2})
+	require.ElementsMatch(t, []int64{1, 2}, check)
+	dropped, err = s.DropMissedSourceWorks(ctx, 2)
 	require.NoError(t, err)
-	require.Empty(t, check)
-	require.Equal(t, 1, dropped, "second miss in a row drops the membership")
+	require.Zero(t, dropped, "a sighting must reset the miss count")
+	check, err = s.RecordMissedRescan(ctx, id, since)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{1, 2}, check, "second miss in a row still asks for a check")
+	require.NoError(t, s.SetWorkStatus(ctx, 1, model.StatusDeleted)) // the check found work 1 deleted
+	check, err = s.RecordMissedRescan(ctx, id, since)
+	require.NoError(t, err)
+	require.Equal(t, []int64{2}, check, "deleted works are not counted")
+	dropped, err = s.DropMissedSourceWorks(ctx, 2)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, dropped, "a fetch after two misses in a row drops the membership")
+	_, err = s.UpsertWork(ctx, fixtureWork(1), model.FromBlurb, 1) // work 1 revived
+	require.NoError(t, err)
 	added, err = s.LinkSourceWorks(ctx, id, []int64{1, 2})
 	require.NoError(t, err)
 	require.Equal(t, 1, added, "only work 2 is new to the source again")

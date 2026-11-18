@@ -76,7 +76,7 @@ func New(opts Options) *Scheduler {
 			return s.controllers.BackfillSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
 		jobs.KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
-			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)
+			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID, j.Attempts >= j.MaxAttempts)
 		},
 		jobs.KindTagInfo: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)

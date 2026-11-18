@@ -208,9 +208,9 @@ func outcome(resp *httpx.Response) error {
 	return PermanentError{Code: ErrorCode(resp.Class)}
 }
 
-// giveUpInfo handles a failed tag or series info fetch (scheduled every minute from what still
-// needs info): a permanent error, or a retryable one on the job's last attempt, records the
-// attempt via mark so the item waits for its info TTL instead of being queued again at once.
+// giveUpInfo handles a failed work, tag info or series info fetch: a permanent error, or a
+// retryable one on the job's last attempt, records the attempt via mark so the item waits (its
+// info TTL, or the failed-fetch backoff for a work) instead of being queued again at once.
 // Shutdown leaves it alone. It returns err (joined with any mark error).
 // TODO: give this a better name
 func giveUpInfo(ctx context.Context, err error, final bool, mark func() error) error {

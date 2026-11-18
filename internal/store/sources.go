@@ -278,8 +278,9 @@ func (s *Tx) LinkSourceWorks(ctx context.Context, sourceID int64, workIDs []int6
 }
 
 // AddSourceWork makes a work a member of a source if it is not one yet (a fetch for that
-// source, e.g. a single-work source). An existing membership is left alone: last_seen only
-// moves on listing sightings.
+// source, e.g. a single-work source). An existing membership is left alone: last_seen and
+// missed_rescans only change on listing sightings and rescans, so a fetch never keeps a work
+// in a source whose listing stopped showing it.
 func (s *Tx) AddSourceWork(ctx context.Context, sourceID, workID int64) error {
 	now := s.unix()
 	_, err := s.meta.ExecContext(ctx, `INSERT INTO source_works (source_id, work_id, first_seen, last_seen) VALUES (?,?,?,?)
@@ -287,30 +288,32 @@ func (s *Tx) AddSourceWork(ctx context.Context, sourceID, workID int64) error {
 	return err
 }
 
-// RecordMissedRescan counts one more finished rescan of a source that did not see these member
-// works. A first miss returns the work in check (the caller fetches it once: deletion check);
-// a second miss in a row drops the membership, since the work left the source (the work
-// itself is kept). A listing sighting resets the count (LinkSourceWorks).
-func (s *Tx) RecordMissedRescan(ctx context.Context, sourceID int64, workIDs []int64) (check []int64, dropped int, err error) {
-	for _, w := range workIDs {
-		var missed int
-		if err := s.meta.QueryRowContext(ctx, `UPDATE source_works SET missed_rescans = missed_rescans + 1
-			WHERE source_id = ? AND work_id = ? RETURNING missed_rescans`, sourceID, w).Scan(&missed); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue // not a member any more
-			}
-			return check, dropped, err
-		}
-		if missed < 2 {
-			check = append(check, w)
-			continue
-		}
-		if _, err := s.meta.ExecContext(ctx, `DELETE FROM source_works WHERE source_id = ? AND work_id = ?`, sourceID, w); err != nil {
-			return check, dropped, err
-		}
-		dropped++
+// MissedRescansToDrop is how many finished rescans in a row must miss a member work before a
+// successful fetch of it drops the membership. One miss alone can be a work that shifted into
+// an already-walked page during the hours-long walk.
+const MissedRescansToDrop = 2
+
+// RecordMissedRescan counts one more finished rescan of a source for every ok member work whose
+// last listing sighting in it is before since, and returns those works. The caller fetches each
+// one: a deleted/hidden answer marks the work (it stays a member and is no longer counted), and
+// a successful fetch drops the membership once the count reaches MissedRescansToDrop
+// (DropMissedSourceWorks). A listing sighting resets the count (LinkSourceWorks).
+func (s *Tx) RecordMissedRescan(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
+	return queryInt64s(ctx, s.meta, `UPDATE source_works SET missed_rescans = missed_rescans + 1
+		WHERE source_id = ? AND last_seen < ? AND work_id IN (SELECT id FROM works WHERE status = 'ok')
+		RETURNING work_id`, sourceID, since.Unix())
+}
+
+// DropMissedSourceWorks removes a work from every source whose last MissedRescansToDrop
+// rescans in a row missed it. Call it only after a fetch found the work on AO3: it left those
+// sources rather than being deleted. The work itself is kept. It returns how many were dropped.
+func (s *Tx) DropMissedSourceWorks(ctx context.Context, workID int64) (int64, error) {
+	res, err := s.meta.ExecContext(ctx, `DELETE FROM source_works WHERE work_id = ? AND missed_rescans >= ?`,
+		workID, MissedRescansToDrop)
+	if err != nil {
+		return 0, err
 	}
-	return check, dropped, nil
+	return res.RowsAffected()
 }
 
 // SourceWorksNeedingFetch returns a source's member works that are ok and were never fetched or
@@ -325,11 +328,4 @@ func (s *ReadTx) SourceWorksNeedingFetch(ctx context.Context, sourceID int64, fa
 		  AND (w.last_fetched = 0 OR w.fetched_revised != w.revised_at
 			OR w.fetched_chapters != w.chapters_posted OR w.fetched_words != w.words)
 		ORDER BY w.last_checked, w.id LIMIT ?`, sourceID, failedBefore.Unix(), limit)
-}
-
-// SourceWorksNotSeenSince returns ok works linked to a source whose last listing sighting in
-// that source is before since (candidates for deletion checks).
-func (s *ReadTx) SourceWorksNotSeenSince(ctx context.Context, sourceID int64, since time.Time) ([]int64, error) {
-	return queryInt64s(ctx, s.meta, `SELECT sw.work_id FROM source_works sw JOIN works w ON w.id = sw.work_id
-		WHERE sw.source_id = ? AND sw.last_seen < ? AND w.status = 'ok' ORDER BY sw.work_id`, sourceID, since.Unix())
 }

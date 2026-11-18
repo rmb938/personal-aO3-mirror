@@ -40,9 +40,9 @@ type workState struct {
 	fetchFailedAt   int64
 }
 
-// FailedFetchBackoff is how long an unchanged work whose full fetch failed is left alone by
-// listings and stale-member re-queueing (its own job retries are unaffected). A failure that
-// keeps happening (adult gate, odd answer) would otherwise cost a request on every poll.
+// FailedFetchBackoff is how long an unchanged work whose full fetch gave up (a permanent error,
+// or the job's last retry) is left alone by listings and stale-member re-queueing. A failure
+// that keeps happening (adult gate, odd answer) would otherwise cost a request on every poll.
 const FailedFetchBackoff = 24 * time.Hour
 
 // UpsertWork merges a parsed work into meta.db.
@@ -166,8 +166,11 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		}
 	case model.FromPage:
 		if opt.reparse {
+			// A reparse that fixes a parse failure (parser_version 0) also ends that failure's
+			// fetch backoff: the stored page now parses, so a changed listing may fetch again.
 			if _, err := tx.ExecContext(ctx, `UPDATE works SET notes_html = ?, endnotes_html = ?, published = ?,
-				fetched_revised = ?, fetched_chapters = ?, fetched_words = ?, parser_version = ? WHERE id = ?`,
+				fetched_revised = ?, fetched_chapters = ?, fetched_words = ?, parser_version = ?,
+				fetch_failed_at = CASE WHEN parser_version = 0 THEN 0 ELSE fetch_failed_at END WHERE id = ?`,
 				w.NotesHTML, w.EndNotesHTML, w.Published, w.Revised, w.ChaptersPosted, w.Words, parserVersion, w.ID); err != nil {
 				return res, err
 			}
@@ -380,7 +383,7 @@ func (s *Tx) SetWorkStatus(ctx context.Context, workID int64, status model.WorkS
 	now := s.unix()
 	res, err := s.meta.ExecContext(ctx, `UPDATE works SET
 		status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,
-		status = ?, last_checked = ? WHERE id = ?`, string(status), now, string(status), now, workID)
+		status = ?, last_checked = ?, fetch_failed_at = 0 WHERE id = ?`, string(status), now, string(status), now, workID)
 	if err != nil {
 		return err
 	}
@@ -441,6 +444,7 @@ type WorkDiag struct {
 	LastListed       time.Time
 	LastFetched      time.Time
 	LastChecked      time.Time
+	FetchFailedAt    time.Time // last fetch that gave up; zero after a success
 	// Related row counts.
 	Tags          int
 	Creators      int
@@ -456,10 +460,10 @@ type WorkDiag struct {
 func (s *ReadTx) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
 	var d WorkDiag
 	var restricted, anonymous int
-	var firstSeen, lastListed, lastFetched, lastChecked int64
+	var firstSeen, lastListed, lastFetched, lastChecked, fetchFailedAt int64
 	err := s.meta.QueryRowContext(ctx, `SELECT status, published, revised_at, fetched_revised, words, chapters_posted,
 		chapters_expected, kudos, hits, comments, bookmarks, restricted, anonymous, parser_version, first_seen, last_listed,
-		last_fetched, last_checked,
+		last_fetched, last_checked, fetch_failed_at,
 		(SELECT COUNT(*) FROM work_tags WHERE work_id = works.id),
 		(SELECT COUNT(*) FROM work_creators WHERE work_id = works.id),
 		(SELECT COUNT(*) FROM chapters WHERE work_id = works.id),
@@ -467,7 +471,7 @@ func (s *ReadTx) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
 		(SELECT COUNT(*) FROM work_images WHERE work_id = works.id)
 		FROM works WHERE id = ?`, id).Scan(&d.Status, &d.Published, &d.Revised, &d.FetchedRevised, &d.Words,
 		&d.ChaptersPosted, &d.ChaptersExpected, &d.Stats.Kudos, &d.Stats.Hits, &d.Stats.Comments, &d.Stats.Bookmarks,
-		&restricted, &anonymous, &d.ParserVersion, &firstSeen, &lastListed, &lastFetched, &lastChecked,
+		&restricted, &anonymous, &d.ParserVersion, &firstSeen, &lastListed, &lastFetched, &lastChecked, &fetchFailedAt,
 		&d.Tags, &d.Creators, &d.ChapterRows, &d.Sources, &d.Images)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNoWork
@@ -478,6 +482,7 @@ func (s *ReadTx) WorkDiag(ctx context.Context, id int64) (WorkDiag, error) {
 	d.Restricted, d.Anonymous = restricted == 1, anonymous == 1
 	d.FirstSeen, d.LastListed = unixTime(firstSeen), unixTime(lastListed)
 	d.LastFetched, d.LastChecked = unixTime(lastFetched), unixTime(lastChecked)
+	d.FetchFailedAt = unixTime(fetchFailedAt)
 	err = s.content.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM raw_pages WHERE work_id = ?),
 		(SELECT COALESCE(SUM(size), 0) FROM raw_pages WHERE work_id = ?),
@@ -530,13 +535,11 @@ func (s *Tx) MarkWorkTooLarge(ctx context.Context, workID int64) error {
 
 // MarkWorkFetchFailed records that a full fetch of a work failed (now), so stale-member
 // re-queueing leaves it alone for a while; it also counts as checked, so a backlog rotates.
-// A later successful fetch clears it. Creates the row if the work is not known yet.
+// A later successful fetch or status change clears it. An unknown work is not recorded: a
+// placeholder row would be an empty 'ok' work, and nothing re-queues an unknown work anyway
+// until a listing shows it (which creates the row).
 func (s *Tx) MarkWorkFetchFailed(ctx context.Context, workID int64) error {
 	now := s.unix()
-	if _, err := s.meta.ExecContext(ctx, `INSERT INTO works (id, first_seen, status_changed_at) VALUES (?,?,?)
-		ON CONFLICT (id) DO NOTHING`, workID, now, now); err != nil {
-		return err
-	}
 	_, err := s.meta.ExecContext(ctx, `UPDATE works SET fetch_failed_at = ?, last_checked = ? WHERE id = ?`, now, now, workID)
 	return err
 }

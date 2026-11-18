@@ -38,19 +38,21 @@ func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64,
 
 // FetchWork fetches one full work page and stores the raw page, chapter bodies and metadata in
 // one transaction. A work that is gone, hidden or restricted on AO3 is marked so; the local copy
-// is kept. A failed fetch (anything but shutdown or a robots wait) records fetch_failed_at, so
-// polls stop re-queueing a work that keeps failing; the job's own retries are unaffected.
-func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail, error) {
+// is kept. A fetch that gives up (a permanent error, or a retryable one on the job's last
+// attempt: final) records fetch_failed_at, so polls stop re-queueing a work that keeps failing.
+//
+// A successful fetch also settles rescans that missed the work: it is on AO3, so any source
+// whose last MissedRescansToDrop rescans did not list it has lost it.
+func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64, final bool) (Detail, error) {
 	detail, err := c.fetchWork(ctx, id, sourceID)
-	if err == nil || id <= 0 || ctx.Err() != nil || isWait(err) {
+	if err == nil || id <= 0 {
 		return detail, err
 	}
-	if merr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		return tx.MarkWorkFetchFailed(ctx, id)
-	}); merr != nil {
-		return detail, errors.Join(err, merr)
-	}
-	return detail, err
+	return detail, giveUpInfo(ctx, err, final, func() error {
+		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+			return tx.MarkWorkFetchFailed(ctx, id)
+		})
+	})
 }
 
 func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail, error) {
@@ -89,14 +91,16 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		return detail, nil
 	case httpx.ClassAdultGate:
 		// A cookie/session problem, not this page's structure: store nothing and don't mark the
-		// work fetched, so it is queued again by the next listing poll or rescan once the
-		// interstitial stops (which a reparse of the interstitial never could).
+		// work fetched (a reparse of the interstitial could never fix it). FetchWork records the
+		// failure, so a listing poll or rescan queues it again once store.FailedFetchBackoff has
+		// passed, or sooner if the work changes on AO3.
 		log.Warn("adult interstitial despite view_adult cookie; work left unfetched", "work_id", id, "req_id", resp.ReqID)
 		return detail, PermanentError{Code: CodeAdultGate, Detail: resp.Reason}
 	case httpx.ClassUnexpected:
 		if !pageStructureProblem(resp) {
 			// An odd answer (an unusual 4xx, an unfollowed redirect), not a page we failed to
-			// parse: store nothing and leave the work unfetched for the next listing to queue.
+			// parse: store nothing and leave the work unfetched for a listing to queue again
+			// after the failed-fetch backoff.
 			log.Warn("unexpected AO3 response; work left unfetched", "work_id", id, "status", resp.Status, "reason", resp.Reason)
 			return detail, PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
 		}
@@ -116,6 +120,7 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		return detail, c.workParseFailed(ctx, id, path, resp, pe)
 	}
 	var sw storedWork
+	var leftSources int64
 	if err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		// Raw page (source of truth for reparse), bodies, then metadata (marks fetched). content.db
 		// commits before meta.db, so a work is never marked fetched without its page.
@@ -126,20 +131,30 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		if sw, err = c.storeWork(ctx, tx, w, false, time.Time{}); err != nil {
 			return err
 		}
-		if sourceID <= 0 {
-			return nil
+		if sourceID > 0 {
+			// The source may have been removed while we fetched: keep the page (the request is
+			// spent, and removing a source keeps its mirrored works), just don't link it.
+			exists, err := tx.SourceExists(ctx, sourceID)
+			if err != nil {
+				return err
+			}
+			// A membership, but not a listing sighting: an existing one keeps its last_seen and
+			// missed_rescans, so this fetch never keeps a work its source stopped listing.
+			if exists {
+				if err := tx.AddSourceWork(ctx, sourceID, id); err != nil {
+					return err
+				}
+			}
 		}
-		// The source may have been removed while we fetched: keep the page (the request is
-		// spent, and removing a source keeps its mirrored works), just don't link it.
-		exists, err := tx.SourceExists(ctx, sourceID)
-		if err != nil || !exists {
-			return err
-		}
-		// A membership, but not a listing sighting: last_seen is left alone, so a rescan's
-		// verification fetch never keeps a work that left the source.
-		return tx.AddSourceWork(ctx, sourceID, id)
+		// The work is on AO3: sources whose recent rescans all missed it have lost it.
+		leftSources, err = tx.DropMissedSourceWorks(ctx, id)
+		return err
 	}); err != nil {
 		return detail, err
+	}
+	if leftSources > 0 {
+		detail["left_sources"] = leftSources
+		log.Info("work left sources that stopped listing it", "work_id", id, "dropped_members", leftSources)
 	}
 	if c.options.QueueImages {
 		detail["images_queued"] = sw.images

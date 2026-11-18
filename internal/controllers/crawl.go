@@ -149,7 +149,8 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 	var stale []int64
 	if page == 1 {
 		if stale, err = store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]int64, error) {
-			// Works that failed in the last day are left to their own job retries.
+			// Works whose fetch gave up within store.FailedFetchBackoff are skipped: nothing is
+			// queued for them meanwhile, as a retry would most likely fail the same way.
 			return tx.SourceWorksNeedingFetch(ctx, sourceID, c.options.Now().Add(-store.FailedFetchBackoff), 500)
 		}); err != nil {
 			return nil, err

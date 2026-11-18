@@ -32,8 +32,9 @@ CREATE TABLE works (
     fetched_chapters  INTEGER NOT NULL DEFAULT 0,   -- used to decide whether a re-fetch is needed
     fetched_words     INTEGER NOT NULL DEFAULT 0,
     parser_version    INTEGER NOT NULL DEFAULT 0,
-    -- Last time a full fetch failed and left the work unfetched (adult gate, odd response,
-    -- retries used up); 0 after a success. Stale-member re-queueing skips recent failures.
+    -- Last time a full fetch gave up (a permanent error such as the adult gate or an odd
+    -- response, or the job's last retry); 0 after a successful fetch, a status change, or a
+    -- reparse that fixes a parse failure. Polls skip unchanged works that failed recently.
     fetch_failed_at   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX works_revised ON works (revised_at);
@@ -196,10 +197,11 @@ CREATE TABLE source_works (
     work_id    INTEGER NOT NULL REFERENCES works (id) ON DELETE CASCADE,
     first_seen INTEGER NOT NULL,
     last_seen  INTEGER NOT NULL,                     -- last listing sighting (fetches never move it)
-    -- Finished rescans in a row that did not see the work (0 when a listing shows it). The first
-    -- miss gets one fetch (deletion check); the second drops the membership: the work left the
-    -- source. Two misses, because a rescan walks pages over hours and a work can shift into a
-    -- page already walked once, but rarely twice.
+    -- Finished rescans in a row that did not see an ok work (0 when a listing shows it). Every
+    -- miss gets one fetch: deleted/hidden marks the work (it stays a member); a successful fetch
+    -- at two or more misses drops the membership, since the work left the source. Two, because
+    -- a rescan walks pages over hours and a work can shift into a page already walked once, but
+    -- rarely twice.
     missed_rescans INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source_id, work_id)
 );

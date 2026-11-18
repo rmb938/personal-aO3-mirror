@@ -122,22 +122,28 @@ func TestTooLargeWorkFailsOnce(t *testing.T) {
 	require.Equal(t, 1, countRequests(e, uri), "oversized page re-queued by the next poll")
 }
 
-// Two strikes: a work that left the source (still on AO3) is fetched once after the first rescan
-// that misses it and dropped from the source after the second, with no further requests; a
-// deleted one stays listed under it.
+// Two strikes: a work that left the source (still on AO3) is fetched after each rescan that
+// misses it and dropped from the source by the check after the second, with no further
+// requests; a deleted one stays listed under it, also when it is deleted only after its first
+// check found it.
 func TestRescanDropsWorkThatLeftSource(t *testing.T) {
 	e := newEnv(t, 5, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour })
 	id := e.add(e.site.TagPath())
 	e.drain(50)
 	e.site.Update(5002, func(w *fakeao3.SiteWork) { w.Untagged = true })
 	e.site.Update(5003, func(w *fakeao3.SiteWork) { w.Deleted = true })
-	for range 3 { // three rescans
+	e.site.Update(5004, func(w *fakeao3.SiteWork) { w.Untagged = true })
+	for i := range 3 { // three rescans
 		e.clk.Advance(25 * time.Hour)
 		e.drain(100)
+		if i == 0 {
+			e.site.Update(5004, func(w *fakeao3.SiteWork) { w.Deleted = true }) // after its first check
+		}
 	}
-	require.Equal(t, 2, countRequests(e, "/works/5002?view_full_work=true"), "initial + one check after the first miss")
+	require.Equal(t, 3, countRequests(e, "/works/5002?view_full_work=true"), "initial + a check after each of two misses")
 	require.Zero(t, e.diag(5002).Sources, "work that left the source still a member")
 	require.Equal(t, 1, e.diag(5003).Sources, "deleted work dropped from the source")
+	require.Equal(t, 1, e.diag(5004).Sources, "work deleted after its first check dropped from the source")
 	require.Equal(t, 4, e.source(id).MemberWorks)
 }
 
@@ -190,7 +196,7 @@ func TestPollContinuesForWorksNewToSource(t *testing.T) {
 	for i := range 25 {
 		wid := int64(6000 + i)
 		e.site.Add(fakeao3.SiteWork{ID: wid, Revised: newest.Add(-time.Duration(i) * time.Hour), Words: 500, Chapters: 1, Expected: 1})
-		_, err := e.ctl.FetchWork(ctx, wid, 0)
+		_, err := e.ctl.FetchWork(ctx, wid, 0, true)
 		require.NoError(t, err)
 	}
 	e.clk.Advance(7 * time.Hour) // next poll
@@ -229,7 +235,7 @@ func TestTooLargeWorkNotReparsed(t *testing.T) {
 func TestFetchWorkForRemovedSourceKeepsPage(t *testing.T) {
 	e := newEnv(t, 3, nil)
 	ctx := context.Background()
-	_, err := e.ctl.FetchWork(ctx, 5001, 999) // source 999 does not exist (removed mid-fetch)
+	_, err := e.ctl.FetchWork(ctx, 5001, 999, true) // source 999 does not exist (removed mid-fetch)
 	require.NoError(t, err)
 	_, _, err = e.db.LatestRawPage(ctx, 5001)
 	require.NoError(t, err, "page rolled back because the source was gone")

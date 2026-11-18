@@ -205,6 +205,7 @@ func printWork(out io.Writer, id int64, d store.WorkDiag) error {
 		{"parser version", strconv.Itoa(d.ParserVersion)},
 		{"first seen", when(d.FirstSeen)}, {"last listed", when(d.LastListed)},
 		{"last fetched", when(d.LastFetched)}, {"last checked", when(d.LastChecked)},
+		{"fetch failed", when(d.FetchFailedAt)},
 	} {
 		fmt.Fprintf(tw, "%s:\t%s\n", kv[0], kv[1])
 	}
