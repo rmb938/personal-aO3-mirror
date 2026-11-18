@@ -53,22 +53,31 @@ func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	return j, err
 }
 
+// DefaultMaxAttempts is how many attempts every job gets.
+const DefaultMaxAttempts = 5
+
+// NewJob is what EnqueueJob takes. A new job is due at once and gets DefaultMaxAttempts.
+type NewJob struct {
+	Kind      string
+	SourceID  int64 // 0 = none
+	Target    string
+	Priority  int // class: lower runs first
+	DedupeKey string
+}
+
 // EnqueueJob inserts a job unless an active (queued/running) job with the same dedupe key
 // exists. If one exists with a lower priority (higher class), its class is raised.
 // It returns the job id and whether a new job was created.
-func (s *Tx) EnqueueJob(ctx context.Context, j Job) (int64, bool, error) {
-	if j.MaxAttempts == 0 {
-		j.MaxAttempts = 5
-	}
+func (s *Tx) EnqueueJob(ctx context.Context, j NewJob) (int64, bool, error) {
 	now := s.unix()
 	var src any
 	if j.SourceID > 0 {
 		src = j.SourceID
 	}
 	res, err := s.meta.ExecContext(ctx, `INSERT INTO jobs (kind, source_id, target, priority_class, state, not_before,
-		max_attempts, dedupe_key, created_at, updated_at) VALUES (?,?,?,?, 'queued', ?,?,?,?,?)
+		max_attempts, dedupe_key, created_at, updated_at) VALUES (?,?,?,?, 'queued', 0,?,?,?,?)
 		ON CONFLICT (dedupe_key) WHERE state IN ('queued','running') DO NOTHING`,
-		j.Kind, src, j.Target, j.Priority, zeroUnix(j.NotBefore), j.MaxAttempts, j.DedupeKey, now, now)
+		j.Kind, src, j.Target, j.Priority, DefaultMaxAttempts, j.DedupeKey, now, now)
 	if err != nil {
 		return 0, false, err
 	}

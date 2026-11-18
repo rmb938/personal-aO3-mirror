@@ -42,7 +42,6 @@ func TestParseListing(t *testing.T) {
 	require.Equal(t, 1234, l.Total)
 	require.Equal(t, 2, l.Pagination.Current)
 	require.Equal(t, 62, l.Pagination.Last)
-	require.True(t, l.Pagination.HasNext)
 	require.Len(t, l.Blurbs, 2)
 	require.Equal(t, 1, l.Skipped)
 

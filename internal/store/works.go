@@ -211,8 +211,8 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 			return res, err
 		}
 	}
-	// Blurbs only show a collection count, so only pages (or blurbs that carry names) replace them.
-	if origin == model.FromPage || len(w.Collections) > 0 {
+	// Blurbs only show a collection count (parseBlurb sets none), so only pages replace them.
+	if origin == model.FromPage {
 		if err := replaceCollections(ctx, tx, w.ID, w.Collections); err != nil {
 			return res, err
 		}

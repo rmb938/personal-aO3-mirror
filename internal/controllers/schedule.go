@@ -38,7 +38,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 		return c.scheduleWorkSource(ctx, tx, r, now, log)
 	}
 	if !r.NextPollAt.After(now) {
-		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindPoll, SourceID: r.ID, Target: "1",
+		if _, created, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindPoll, SourceID: r.ID, Target: "1",
 			Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(r.ID, 1)}); err != nil {
 			return err
 		} else if created {
@@ -68,7 +68,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 		if cur.Rescan {
 			class = jobs.ClassMaintenance
 		}
-		if _, created, err := tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindBackfill, SourceID: r.ID,
+		if _, created, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindBackfill, SourceID: r.ID,
 			Target: strconv.Itoa(cur.NextPage), Priority: class, DedupeKey: jobs.BackfillKey(r.ID, cur.WindowTo, cur.NextPage)}); err != nil {
 			return err
 		} else if created {
@@ -300,7 +300,7 @@ func (c *Controllers) seriesNeedingInfo(ctx context.Context, tx *store.ReadTx, n
 func enqueueInfo(ctx context.Context, tx *store.Tx, kind string, ids []int64, key func(int64) string) (int, error) {
 	queued := 0
 	for _, id := range ids {
-		_, created, err := tx.EnqueueJob(ctx, store.Job{Kind: kind, Target: strconv.FormatInt(id, 10),
+		_, created, err := tx.EnqueueJob(ctx, store.NewJob{Kind: kind, Target: strconv.FormatInt(id, 10),
 			Priority: jobs.ClassTagInfo, DedupeKey: key(id)})
 		if err != nil {
 			return queued, err

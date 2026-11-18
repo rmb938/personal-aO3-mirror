@@ -166,8 +166,6 @@ func parseBlurb(li *goquery.Selection, fetchedAt time.Time, r *Report) (model.Wo
 			w.Tags = append(w.Tags, tagFromLink(g.typ, a))
 		})
 	}
-	w.Complete = req.Find("span.complete-yes").Length() > 0
-
 	if d := header.Find("p.datetime").First(); d.Length() > 0 {
 		if date, approx, ok := parseBlurbDate(d.Text(), fetchedAt); ok {
 			w.Revised, w.RevisedApprox = date, approx
@@ -188,9 +186,7 @@ func parseBlurb(li *goquery.Selection, fetchedAt time.Time, r *Report) (model.Wo
 	w.Words = atoi(stats.Find("dd.words").Text())
 	w.ChaptersPosted, w.ChaptersExpected = chaptersPair(stats.Find("dd.chapters").Text())
 	w.Stats = parseStats(stats)
-	if w.ChaptersExpected > 0 && w.ChaptersPosted >= w.ChaptersExpected {
-		w.Complete = true
-	}
+	w.Complete = complete(w.ChaptersPosted, w.ChaptersExpected)
 	r.Counts["blurb_tags"] += len(w.Tags)
 	if w.Revised == "" {
 		r.Counts["blurb_no_date"]++

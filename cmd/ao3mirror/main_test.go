@@ -162,7 +162,7 @@ func TestJobsCLI(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, cfg.DataDir, store.Options{})
 	require.NoError(t, err)
-	for _, j := range []store.Job{
+	for _, j := range []store.NewJob{
 		{Kind: "work", Target: "101", Priority: 3, DedupeKey: "work:101"},
 		{Kind: "work", Target: "102", Priority: 3, DedupeKey: "work:102"},
 		{Kind: "tag_info", Target: "7", Priority: 5, DedupeKey: "tag:7"},
