@@ -1,0 +1,166 @@
+package store
+
+import (
+	"context"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// Image statuses (images.status CHECK).
+const (
+	ImageQueued     = "queued"
+	ImageOK         = "ok"
+	ImageFailed     = "failed"
+	ImageSkipped    = "skipped"
+	ImageTooLarge   = "too_large"
+	ImageDisallowed = "disallowed"
+)
+
+// ImageRow is one queued image. URL may contain names: never log it (log ID and hashed host).
+type ImageRow struct {
+	ID       int64
+	URL      string
+	Host     string
+	Attempts int
+}
+
+// ImageHost is the per-host key for image pacing: the hostname, lower-cased, without a
+// fully-qualified trailing dot ("Example.com." and "example.com" are one host). The image
+// worker keys its intervals, backoffs and robots cache by it too.
+func ImageHost(u *url.URL) string {
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+}
+
+// QueueImages records the images a work embeds and queues new ones for download.
+func (s *Tx) QueueImages(ctx context.Context, workID int64, urls []string) (int, error) {
+	if len(urls) == 0 {
+		return 0, nil
+	}
+	tx := s.meta
+	now := s.unix()
+	added := 0
+	for _, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			continue
+		}
+		res, err := tx.ExecContext(ctx, `INSERT INTO images (url, host, status, first_seen) VALUES (?,?, 'queued', ?)
+			ON CONFLICT (url) DO NOTHING`, raw, ImageHost(u), now)
+		if err != nil {
+			return added, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			added++
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_images (work_id, image_id)
+			SELECT ?, id FROM images WHERE url = ?`, workID, raw); err != nil {
+			return added, err
+		}
+	}
+	return added, nil
+}
+
+// NextImages returns due queued images, oldest first, leaving out skipHosts (hosts the image
+// worker is holding back) so they never crowd out other hosts' images.
+func (s *ReadTx) NextImages(ctx context.Context, now time.Time, limit int, skipHosts []string) ([]ImageRow, error) {
+	q := `SELECT id, url, host, attempts FROM images WHERE status = 'queued' AND not_before <= ?`
+	args := []any{now.Unix()}
+	if len(skipHosts) > 0 {
+		q += ` AND host NOT IN (` + placeholders(len(skipHosts)) + `)` // only "?,?,..." is concatenated
+		for _, h := range skipHosts {
+			args = append(args, h)
+		}
+	}
+	rows, err := s.meta.QueryContext(ctx, q+` ORDER BY not_before, id LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ImageRow
+	for rows.Next() {
+		var r ImageRow
+		if err := rows.Scan(&r.ID, &r.URL, &r.Host, &r.Attempts); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// NextImageDueForTestOnly returns when the earliest queued image becomes due (zero if none
+// queued). Only the imagefetch tests use it, to advance their fake clock; production code must
+// not call it (the image worker paces itself from NextImages).
+func (s *ReadTx) NextImageDueForTestOnly(ctx context.Context) (time.Time, error) {
+	var nb int64
+	err := s.meta.QueryRowContext(ctx, `SELECT COALESCE(MIN(not_before), -1) FROM images WHERE status = 'queued'`).Scan(&nb)
+	if err != nil || nb < 0 {
+		return time.Time{}, err
+	}
+	return time.Unix(nb, 0), nil
+}
+
+func (s *Tx) ImageDone(ctx context.Context, id int64, sha, contentType string, bytes int) error {
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = 'ok', sha256 = ?, content_type = ?, bytes = ?, fetched_at = ?,
+		last_error = '', attempts = attempts + 1 WHERE id = ?`, sha, contentType, bytes, s.unix(), id)
+	return err
+}
+
+// ImageRetry re-queues after notBefore; after maxAttempts the image is marked failed.
+func (s *Tx) ImageRetry(ctx context.Context, id int64, notBefore time.Time, lastError string, maxAttempts int) error {
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET attempts = attempts + 1, last_error = ?, not_before = ?,
+		status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'queued' END WHERE id = ?`, lastError, notBefore.Unix(), maxAttempts, id)
+	return err
+}
+
+// ImageDefer puts an image off until notBefore without counting an attempt: nothing was sent
+// for it (its host was held back, or its robots.txt could not be read).
+func (s *Tx) ImageDefer(ctx context.Context, id int64, notBefore time.Time, lastError string) error {
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET last_error = ?, not_before = ? WHERE id = ? AND status = 'queued'`,
+		lastError, notBefore.Unix(), id)
+	return err
+}
+
+// DueImageHosts returns which of hosts have queued images due at now.
+func (s *ReadTx) DueImageHosts(ctx context.Context, now time.Time, hosts []string) ([]string, error) {
+	if len(hosts) == 0 {
+		return nil, nil
+	}
+	args := []any{now.Unix()}
+	for _, h := range hosts {
+		args = append(args, h)
+	}
+	rows, err := s.meta.QueryContext(ctx, `SELECT DISTINCT host FROM images WHERE status = 'queued' AND not_before <= ?
+		AND host IN (`+placeholders(len(hosts))+`)`, args...) // only "?,?,..." is concatenated
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// ImageFinal marks an image permanently failed/skipped/too_large/disallowed.
+func (s *Tx) ImageFinal(ctx context.Context, id int64, status, lastError string) error {
+	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = ?, last_error = ?, attempts = attempts + 1, fetched_at = ?
+		WHERE id = ?`, status, lastError, s.unix(), id)
+	return err
+}
+
+// ImageCounts groups images by status.
+func (s *ReadTx) ImageCounts(ctx context.Context) (map[string]int, int64, error) {
+	out := map[string]int{}
+	if err := countGroups(ctx, s.meta, `SELECT status, COUNT(*) FROM images GROUP BY status`, out); err != nil {
+		return nil, 0, err
+	}
+	var bytes int64
+	err := s.meta.QueryRowContext(ctx, `SELECT COALESCE(SUM(bytes), 0) FROM images WHERE status = 'ok'`).Scan(&bytes)
+	return out, bytes, err
+}

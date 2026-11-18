@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./data/**/*.db)",
+      "Read(./data/**/*.db-wal)",
+      "Read(./data/**/*.db-shm)",
+      "Read(./data/**/*.zst)",
+      "Read(./data/images/**)",
+      "Read(./data/raw/**)",
+      "Read(./data/skeleton-input/**)",
+      "Read(**/*.db)",
+      "Bash(sqlite3:*)",
+      "Bash(go run ./cmd/skeletonize:*)",
+      "Bash(./skeletonize:*)",
+      "WebFetch(domain:archiveofourown.org)",
+      "WebFetch(domain:www.archiveofourown.org)",
+      "WebFetch(domain:ao3.org)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
