@@ -110,3 +110,54 @@ func TestSourcesLifecycle(t *testing.T) {
 	require.Equal(t, 2, works, "works must be kept")
 	require.Equal(t, 0, members, "memberships removed")
 }
+
+func TestListSourcesPaged(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	n, err := s.CountSources(ctx)
+	require.NoError(t, err)
+	require.Zero(t, n)
+	page, err := s.ListSources(ctx, 0, 10)
+	require.NoError(t, err)
+	require.Empty(t, page)
+
+	var ids []int64
+	for i := range 5 {
+		id, err := s.InsertSource(ctx, model.Source{Kind: "tag", Target: "Fixture Tag " + string(rune('A'+i)), FiltersJSON: "{}",
+			Path: "/tags/x/works", State: model.SourceActive, BackfillCursor: "{}"})
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	// Memberships on the second source, so the counts are computed for paged rows too.
+	_, err = s.UpsertWork(ctx, fixtureWork(1), model.FromPage, 1)
+	require.NoError(t, err)
+	_, err = s.LinkSourceWorks(ctx, ids[1], []int64{1})
+	require.NoError(t, err)
+	// Deleting one leaves a gap in the ids: paging is by position, not id range.
+	require.NoError(t, s.DeleteSource(ctx, ids[2]))
+	want := []int64{ids[0], ids[1], ids[3], ids[4]}
+
+	n, err = s.CountSources(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 4, n)
+	var got []int64
+	for offset := 0; offset < n; offset += 3 {
+		page, err := s.ListSources(ctx, offset, 3)
+		require.NoError(t, err)
+		for _, r := range page {
+			got = append(got, r.ID)
+			if r.ID == ids[1] {
+				require.Equal(t, 1, r.MemberWorks)
+				require.Equal(t, 1, r.FetchedWorks)
+			}
+		}
+	}
+	require.Equal(t, want, got, "pages cover every source once, in id order")
+	page, err = s.ListSources(ctx, 4, 3)
+	require.NoError(t, err)
+	require.Empty(t, page, "offset past the end")
+	for _, bad := range [][2]int{{-1, 10}, {0, 0}, {0, -1}} {
+		_, err = s.ListSources(ctx, bad[0], bad[1])
+		require.Error(t, err, "offset %d limit %d", bad[0], bad[1])
+	}
+}

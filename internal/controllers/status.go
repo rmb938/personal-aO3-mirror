@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"time"
 
@@ -56,7 +57,8 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 		if r.Jobs, err = tx.JobCounts(ctx); err != nil {
 			return err
 		}
-		if r.Sources, err = tx.ListSources(ctx); err != nil {
+		// Every source, as before paging existed; stage 3c (GET /status) may cap this.
+		if r.Sources, err = tx.ListSources(ctx, 0, math.MaxInt); err != nil {
 			return err
 		}
 		if r.PartialSeries, err = tx.PartialSeriesList(ctx, 20); err != nil {
@@ -119,11 +121,18 @@ func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error
 	return d, err
 }
 
-// ListSources returns every source with its progress counts.
-func (c *Controllers) ListSources(ctx context.Context) ([]model.Source, error) {
-	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Source, error) {
-		return tx.ListSources(ctx)
+// ListSources returns one page of sources (ordered by id, with progress counts) and the total
+// number of sources, read in one transaction so they agree. offset must be ≥ 0 and limit ≥ 1.
+func (c *Controllers) ListSources(ctx context.Context, offset, limit int) (page []model.Source, total int, err error) {
+	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		var err error
+		if page, err = tx.ListSources(ctx, offset, limit); err != nil {
+			return err
+		}
+		total, err = tx.CountSources(ctx)
+		return err
 	})
+	return page, total, err
 }
 
 // GetSource returns one source, or store.ErrNoSource.

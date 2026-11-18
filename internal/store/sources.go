@@ -93,8 +93,14 @@ func (s *ReadTx) GetSource(ctx context.Context, id int64) (model.Source, error) 
 	return r, err
 }
 
-func (s *ReadTx) ListSources(ctx context.Context) ([]model.Source, error) {
-	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceCols+` FROM sources ORDER BY id`)
+// ListSources returns up to limit sources with their member counts, ordered by id, skipping the
+// first offset. The member-count subqueries run only for the returned page.
+func (s *ReadTx) ListSources(ctx context.Context, offset, limit int) ([]model.Source, error) {
+	if offset < 0 || limit < 1 {
+		return nil, fmt.Errorf("store: list sources: bad page (offset %d, limit %d)", offset, limit)
+	}
+	rows, err := s.meta.QueryContext(ctx, `SELECT `+sourceCols+` FROM sources ORDER BY id LIMIT ? OFFSET ?`,
+		limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +114,13 @@ func (s *ReadTx) ListSources(ctx context.Context) ([]model.Source, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// CountSources returns the number of sources (any state).
+func (s *ReadTx) CountSources(ctx context.Context) (int, error) {
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources`).Scan(&n)
+	return n, err
 }
 
 // GetSourceRow is GetSource without the member counts (MemberWorks and FetchedWorks are 0),

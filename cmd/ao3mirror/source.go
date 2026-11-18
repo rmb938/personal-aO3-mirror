@@ -152,16 +152,25 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 		if err := fs.Parse(rest); err != nil {
 			return 2
 		}
-		rows, err := a.ctl.ListSources(ctx)
-		if err != nil {
-			fmt.Fprintf(errOut, "list: %v\n", err)
-			return 1
-		}
 		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tKIND\tTARGET\tFILTERS\tSTATE\tWORKS seen/fetched/total\tORDER\tNEXT POLL\tERROR")
-		for _, r := range rows {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\t%s\n", r.ID, r.Kind, target(r, *names), filtersSummary(r, *names),
-				r.State, r.MemberWorks, r.FetchedWorks, total(r.TotalWorks), r.BackfillOrder, when(r.NextPollAt), dash(r.LastError))
+		// Page through like the API client will (stage 6). Each page is its own snapshot, so a
+		// source added or removed meanwhile can shift a row across a page boundary.
+		const perPage = 100
+		for offset := 0; ; offset += perPage {
+			rows, n, err := a.ctl.ListSources(ctx, offset, perPage)
+			if err != nil {
+				tw.Flush()
+				fmt.Fprintf(errOut, "list: %v\n", err)
+				return 1
+			}
+			for _, r := range rows {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\t%s\n", r.ID, r.Kind, target(r, *names), filtersSummary(r, *names),
+					r.State, r.MemberWorks, r.FetchedWorks, total(r.TotalWorks), r.BackfillOrder, when(r.NextPollAt), dash(r.LastError))
+			}
+			if len(rows) < perPage || offset+perPage >= n {
+				break
+			}
 		}
 		tw.Flush()
 		return 0

@@ -359,13 +359,17 @@ Status: tick when the PR merges.
         until a stage needs them.
       - Update every caller (store, controllers, scheduler, imagefetch, cmd). Keep the doc
         comment warning that `Target`/`FiltersJSON` may hold names (never log them).
-    - [ ] **3a-2. Store + controller: paged sources.**
+    - [x] **3a-2. Store + controller: paged sources.**
       - Store: `ListSources` takes offset/limit (the member-count subqueries then only run for
         the page) and gets a `CountSources`.
       - Controller: `ListSources(ctx, offset, limit)` returns `(page, total)` from one
         `InReadTx`. Update the CLI `source list` caller (it can page through, or ask for a
         large limit) and decide what `Status` passes (all sources today; 3c may cap it).
       - Store tests for offset/limit/count, ordering stable by id.
+      - As built: the store rejects `offset < 0` or `limit < 1` with an error (the API
+        validates first, so this is a guard). `Status` still lists every source
+        (`limit = math.MaxInt`). The CLI `source list` pages through 100 at a time, the API's
+        max `per_page`, so stage 6's client keeps the same loop.
     - [ ] **3a-3. Refactor: typed enums in the registry** (no change to responses). Today
       every enum is a key → values entry in `api/registry.go`, kept by hand. Nothing ties it
       to the struct: a field that should be an enum is only noticed when its value comes out
