@@ -358,14 +358,15 @@ func (c *Client) do(ctx context.Context, log *slog.Logger, reqID string, kind Ki
 	case ClassRateLimited, ClassUnavailable, ClassUnexpected:
 		level = slog.LevelWarn
 	}
+	tm := t.snapshot()
 	log.Log(ctx, level, "http",
 		"path", safe, "hop", hop, "status", hr.StatusCode, "class", string(v.Class), "reason", v.Reason,
 		"bytes", len(body), "content_type", hr.Header.Get("Content-Type"),
 		"retry_after", hr.Header.Get("Retry-After"), "cf_ray", hr.Header.Get("Cf-Ray"),
 		"cf_cache_status", hr.Header.Get("Cf-Cache-Status"), "proto", hr.Proto,
-		"wait_ms", waited.Milliseconds(), "dns_ms", t.ms(t.dnsStart, t.dnsDone),
-		"connect_ms", t.ms(t.connStart, t.connDone), "tls_ms", t.ms(t.tlsStart, t.tlsDone),
-		"ttfb_ms", t.ms(t.wroteReq, t.firstByte), "total_ms", total.Milliseconds(), "conn_reused", t.reused,
+		"wait_ms", waited.Milliseconds(), "dns_ms", tm.ms(tm.dnsStart, tm.dnsDone),
+		"connect_ms", tm.ms(tm.connStart, tm.connDone), "tls_ms", tm.ms(tm.tlsStart, tm.tlsDone),
+		"ttfb_ms", tm.ms(tm.wroteReq, tm.firstByte), "total_ms", total.Milliseconds(), "conn_reused", tm.reused,
 		"interval_ms", st.Interval.Milliseconds(), "slow_factor", st.Factor, "consec_fails", st.ConsecFails,
 		"backoff_until", st.BackoffTill, "breaker_open", st.BreakerOpen, "day_count", st.DayCount,
 	)
@@ -451,26 +452,53 @@ func errClass(err error) string {
 	return "other"
 }
 
+// timings collects httptrace marks for one request. The transport can run the dial callbacks
+// on its own goroutine, even after the request has returned (a dial it started may finish
+// after the request got another connection), so marks are set and read under mu.
 type timings struct {
+	mu sync.Mutex
+	m  timingMarks
+}
+
+type timingMarks struct {
 	dnsStart, dnsDone, connStart, connDone, tlsStart, tlsDone, wroteReq, firstByte time.Time
 	reused                                                                         bool
 }
 
+func (t *timings) set(f func(m *timingMarks)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f(&t.m)
+}
+
+// snapshot returns a copy of the marks set so far.
+func (t *timings) snapshot() timingMarks {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.m
+}
+
 func (t *timings) trace() *httptrace.ClientTrace {
+	now := func(field func(m *timingMarks) *time.Time) {
+		ts := time.Now()
+		t.set(func(m *timingMarks) { *field(m) = ts })
+	}
 	return &httptrace.ClientTrace{
-		DNSStart:             func(httptrace.DNSStartInfo) { t.dnsStart = time.Now() },
-		DNSDone:              func(httptrace.DNSDoneInfo) { t.dnsDone = time.Now() },
-		ConnectStart:         func(string, string) { t.connStart = time.Now() },
-		ConnectDone:          func(string, string, error) { t.connDone = time.Now() },
-		TLSHandshakeStart:    func() { t.tlsStart = time.Now() },
-		TLSHandshakeDone:     func(tls.ConnectionState, error) { t.tlsDone = time.Now() },
-		GotConn:              func(i httptrace.GotConnInfo) { t.reused = i.Reused },
-		WroteRequest:         func(httptrace.WroteRequestInfo) { t.wroteReq = time.Now() },
-		GotFirstResponseByte: func() { t.firstByte = time.Now() },
+		DNSStart:          func(httptrace.DNSStartInfo) { now(func(m *timingMarks) *time.Time { return &m.dnsStart }) },
+		DNSDone:           func(httptrace.DNSDoneInfo) { now(func(m *timingMarks) *time.Time { return &m.dnsDone }) },
+		ConnectStart:      func(string, string) { now(func(m *timingMarks) *time.Time { return &m.connStart }) },
+		ConnectDone:       func(string, string, error) { now(func(m *timingMarks) *time.Time { return &m.connDone }) },
+		TLSHandshakeStart: func() { now(func(m *timingMarks) *time.Time { return &m.tlsStart }) },
+		TLSHandshakeDone: func(tls.ConnectionState, error) {
+			now(func(m *timingMarks) *time.Time { return &m.tlsDone })
+		},
+		GotConn:              func(i httptrace.GotConnInfo) { t.set(func(m *timingMarks) { m.reused = i.Reused }) },
+		WroteRequest:         func(httptrace.WroteRequestInfo) { now(func(m *timingMarks) *time.Time { return &m.wroteReq }) },
+		GotFirstResponseByte: func() { now(func(m *timingMarks) *time.Time { return &m.firstByte }) },
 	}
 }
 
-func (t *timings) ms(a, b time.Time) int64 {
+func (timingMarks) ms(a, b time.Time) int64 {
 	if a.IsZero() || b.IsZero() {
 		return -1
 	}

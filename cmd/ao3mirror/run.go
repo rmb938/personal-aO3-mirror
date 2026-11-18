@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
@@ -18,50 +19,70 @@ import (
 
 var errDaemonLocked = errors.New("another ao3mirror run is already using this data dir")
 
-// lockDaemon takes an exclusive lock so only one daemon runs per data dir. The returned unlock
-// releases it and reports any error.
-func lockDaemon(dataDir string) (unlock func() error, err error) {
+// lockRetry is the pause between attempts at a held daemon lock. daemonRunning probes by taking
+// the lock for a moment, so a held lock is retried briefly before it counts: otherwise a
+// daemon starting during a probe (e.g. `source add`) would refuse to run.
+const lockRetry = 20 * time.Millisecond
+
+// flockDaemon makes up to attempts tries at the exclusive daemon lock for dataDir and returns
+// the locked file, or errDaemonLocked if another process still holds it.
+func flockDaemon(dataDir string, attempts int) (f *os.File, err error) {
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dataDir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err = os.OpenFile(filepath.Join(dataDir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err != nil { // not locked: don't leak the file
-			err = errors.Join(err, f.Close())
+	for i := 1; ; i++ {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if !errors.Is(err, syscall.EWOULDBLOCK) || i >= attempts {
+			break
 		}
-	}()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, errDaemonLocked
-		}
+		time.Sleep(lockRetry)
+	}
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		err = errDaemonLocked
+	}
+	if err != nil { // not locked: don't leak the file
+		return nil, errors.Join(err, f.Close())
+	}
+	return f, nil
+}
+
+func unlockDaemon(f *os.File) error {
+	return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close())
+}
+
+// lockDaemon takes an exclusive lock so only one daemon runs per data dir, retrying for up to
+// a second past a probe. The returned unlock releases it and reports any error.
+func lockDaemon(dataDir string) (unlock func() error, err error) {
+	f, err := flockDaemon(dataDir, 50)
+	if err != nil {
 		return nil, err
 	}
 	// The pid in the lock file is informational (the flock is what matters).
 	if err := f.Truncate(0); err != nil {
-		return nil, fmt.Errorf("lock file: %w", err)
+		return nil, errors.Join(fmt.Errorf("lock file: %w", err), unlockDaemon(f))
 	}
 	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
-		return nil, fmt.Errorf("lock file: %w", err)
+		return nil, errors.Join(fmt.Errorf("lock file: %w", err), unlockDaemon(f))
 	}
-	return func() error {
-		return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.Close())
-	}, nil
+	return func() error { return unlockDaemon(f) }, nil
 }
 
 // daemonRunning reports whether a process (normally `ao3mirror run`) holds the daemon lock for
-// dataDir. It takes no lock that lingers.
+// dataDir. It takes no lock that lingers and leaves the pid in the lock file alone. A lock held
+// only by another probe is released within the few retries.
 func daemonRunning(dataDir string) (bool, error) {
-	unlock, err := lockDaemon(dataDir)
+	f, err := flockDaemon(dataDir, 5)
 	if errors.Is(err, errDaemonLocked) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return false, unlock()
+	return false, unlockDaemon(f)
 }
 
 func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
