@@ -92,10 +92,9 @@ func ParseWork(workID int64, page []byte) (model.Work, *Report, error) {
 	} else {
 		w.Revised, w.RevisedIsPublished = w.Published, true
 	}
-	statusLabel := clean(stats.Find("dt.status").Text())
 	w.Words = atoi(stats.Find("dd.words").Text())
 	w.ChaptersPosted, w.ChaptersExpected = chaptersPair(stats.Find("dd.chapters").Text())
-	w.Complete = (w.ChaptersExpected > 0 && w.ChaptersPosted >= w.ChaptersExpected) || strings.HasPrefix(statusLabel, "Completed")
+	w.Complete = complete(w.ChaptersPosted, w.ChaptersExpected)
 	w.Stats = parseStats(stats)
 
 	// Work skin: <style> rendered by skins/_skin_style_block inside #work-skin, before #workskin.

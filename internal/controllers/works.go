@@ -34,7 +34,7 @@ func (c *Controllers) EnqueueWorkFetch(ctx context.Context, workID, sourceID int
 // enqueueWorkFetch is EnqueueWorkFetch inside the caller's transaction: the one place that
 // builds work-fetch jobs.
 func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64, class int) (int64, bool, error) {
-	return tx.EnqueueJob(ctx, store.Job{Kind: jobs.KindWork, SourceID: sourceID,
+	return tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, SourceID: sourceID,
 		Target: strconv.FormatInt(workID, 10), Priority: class, DedupeKey: jobs.WorkKey(workID)})
 }
 

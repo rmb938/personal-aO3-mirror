@@ -399,8 +399,8 @@ func TestWorkLookupsAreExact(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"/works/12?view_full_work=true", "/works/12/chapters/5"}, paths)
 
-	enqueue(t, s, Job{Kind: "work", Target: "12", Priority: 3, DedupeKey: "work:12"})
-	enqueue(t, s, Job{Kind: "work", Target: "123", Priority: 3, DedupeKey: "work:123"})
+	enqueue(t, s, NewJob{Kind: "work", Target: "12", Priority: 3, DedupeKey: "work:12"})
+	enqueue(t, s, NewJob{Kind: "work", Target: "123", Priority: 3, DedupeKey: "work:123"})
 	jobs, err := s.FindJobs(ctx, JobFilter{DedupeKey: "work:12", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)

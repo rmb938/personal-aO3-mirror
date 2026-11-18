@@ -128,6 +128,11 @@ func chaptersPair(s string) (posted, expected int) {
 	return
 }
 
+// complete is AO3's completeness rule (work.rb update_complete_status, is_wip): every expected
+// chapter is posted. The work page's "Completed:" label and the blurb's complete-yes symbol are
+// both rendered from it, so the chapter counts alone decide.
+func complete(posted, expected int) bool { return expected > 0 && posted >= expected }
+
 func innerHTML(s *goquery.Selection) string {
 	if s.Length() == 0 {
 		return ""
@@ -235,7 +240,6 @@ func parseBlurbDate(s string, now time.Time) (date string, approx bool, ok bool)
 type Pagination struct {
 	Current int
 	Last    int
-	HasNext bool
 }
 
 func parsePagination(doc *goquery.Selection, r *Report) Pagination {
@@ -250,9 +254,6 @@ func parsePagination(doc *goquery.Selection, r *Report) Pagination {
 	ol.Find("li a").Each(func(_ int, a *goquery.Selection) {
 		if n := atoi(a.Text()); n > p.Last && clean(a.Text()) == strconv.Itoa(n) {
 			p.Last = n
-		}
-		if rel, _ := a.Attr("rel"); strings.Contains(rel, "next") {
-			p.HasNext = true
 		}
 	})
 	if p.Current > p.Last {

@@ -262,16 +262,10 @@ func (s *Scheduler) runHandler(ctx context.Context, job store.Job, log *slog.Log
 	return s.handlers[job.Kind](ctx, job)
 }
 
-// errCode keeps internal errors short and content-free (they are ours, not AO3 text).
+// errCode keeps internal errors short and content-free (they are ours, not AO3 text). AO3
+// client errors that mean something (robots disallow, too large) never get here: the
+// controllers turn them into a PermanentError.
 func errCode(err error) string {
-	switch {
-	case errors.Is(err, httpx.ErrDisallowed):
-		return "robots_disallowed"
-	case errors.Is(err, httpx.ErrTooLarge):
-		return "too_large"
-	case errors.Is(err, httpx.ErrForeign):
-		return "foreign_host"
-	}
 	msg := err.Error()
 	if len(msg) > 120 {
 		msg = msg[:120]
