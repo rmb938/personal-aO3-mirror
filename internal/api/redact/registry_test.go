@@ -109,6 +109,136 @@ func TestRegisterEnum(t *testing.T) {
 	require.Error(t, r.RegisterEnum("kind", ""))
 }
 
+type srcState string
+
+func (srcState) EnumValues() []string { return []string{"active", "paused"} }
+
+type jobState string
+
+func (*jobState) EnumValues() []string { return []string{"queued", "paused"} } // pointer receiver
+
+type noVals string
+
+func (noVals) EnumValues() []string { return nil }
+
+type emptyVal string
+
+func (emptyVal) EnumValues() []string { return []string{"a", ""} }
+
+type intEnum int
+
+func (intEnum) EnumValues() []string { return []string{"1"} }
+
+type selfMarshal string
+
+func (selfMarshal) EnumValues() []string           { return []string{"a"} }
+func (s selfMarshal) MarshalText() ([]byte, error) { return []byte("x" + s), nil }
+
+func TestRegisterTypedEnums(t *testing.T) {
+	type source struct {
+		State srcState `json:"state"`
+	}
+	type job struct {
+		State  *jobState  `json:"state"`
+		States []srcState `json:"states"`
+		Status int        `json:"status"` // a non-string field may share an enum key
+	}
+	type health struct {
+		Status srcState `json:"status"`
+	}
+	r := NewRegistry()
+	require.NoError(t, r.RegisterTypes(source{}, job{}, health{}))
+	assert.ElementsMatch(t, []string{"active", "paused", "queued"}, setOf(r.enums["state"]), "union across types")
+	assert.ElementsMatch(t, []string{"active", "paused"}, setOf(r.enums["states"]), "slice element type")
+	assert.ElementsMatch(t, []string{"active", "paused"}, setOf(r.enums["status"]))
+
+	h, err := NewHasher(0, nil)
+	require.NoError(t, err)
+	e, err := NewEnforcer(r, h)
+	require.NoError(t, err)
+	res, err := e.Enforce(Hashed, []byte(`{"state":"queued","states":["active","SENTINEL"],"status":"bogus"}`))
+	require.NoError(t, err)
+	assert.Contains(t, string(res.Body), `"state":"queued"`)
+	assert.Contains(t, string(res.Body), `"active"`)
+	assert.NotContains(t, string(res.Body), "SENTINEL")
+	assert.NotContains(t, string(res.Body), "bogus")
+	assert.Equal(t, []string{"states", "status"}, res.OffEnum, "off-set keys, once each")
+
+	res, err = e.Enforce(Revealed, []byte(`{"state":"bogus","states":["bogus"]}`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"state", "states"}, res.OffEnum, "checked in revealed mode too")
+
+	res, err = e.Enforce(Hashed, []byte(`{"state":"active"}`))
+	require.NoError(t, err)
+	assert.Empty(t, res.OffEnum)
+}
+
+func TestRegisterTypedEnumsRejects(t *testing.T) {
+	type typed struct {
+		State srcState `json:"state"`
+	}
+	type plain struct {
+		State string `json:"state"`
+	}
+	type plainSlice struct {
+		State []string `json:"state"`
+	}
+	type withNoVals struct {
+		V noVals `json:"v"`
+	}
+	type withEmptyVal struct {
+		V emptyVal `json:"v"`
+	}
+	type withIntEnum struct {
+		V []intEnum `json:"v"`
+	}
+	type withSelfMarshal struct {
+		V selfMarshal `json:"v"`
+	}
+	type both struct {
+		A typed `json:"a"`
+		B plain `json:"b"`
+	}
+	for name, vals := range map[string][]any{
+		"typed then plain":     {typed{}, plain{}},
+		"plain then typed":     {plain{}, typed{}},
+		"plain slice vs typed": {typed{}, plainSlice{}},
+		"nested in one type":   {both{}},
+		"no values":            {withNoVals{}},
+		"empty value":          {withEmptyVal{}},
+		"non-string":           {withIntEnum{}},
+		"self-marshals":        {withSelfMarshal{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Error(t, NewRegistry().RegisterTypes(vals...))
+		})
+	}
+
+	t.Run("RegisterEnum after typed", func(t *testing.T) {
+		r := NewRegistry()
+		require.NoError(t, r.RegisterTypes(typed{}))
+		assert.Error(t, r.RegisterEnum("state", "x"))
+	})
+	t.Run("typed after RegisterEnum", func(t *testing.T) {
+		r := NewRegistry()
+		require.NoError(t, r.RegisterEnum("state", "x"))
+		assert.Error(t, r.RegisterTypes(typed{}))
+	})
+	t.Run("RegisterEnum on a plain key is the runtime-value case", func(t *testing.T) {
+		r := NewRegistry()
+		require.NoError(t, r.RegisterTypes(plain{}))
+		assert.NoError(t, r.RegisterEnum("state", "x"))
+	})
+}
+
+func setOf(m map[string]struct{}) []string {
+	var s []string
+	for k := range m {
+		s = append(s, k)
+	}
+	return s
+}
+
 func TestNewEnforcerChecksEnumKeysAndSnapshots(t *testing.T) {
 	h, err := NewHasher(0, nil)
 	require.NoError(t, err)

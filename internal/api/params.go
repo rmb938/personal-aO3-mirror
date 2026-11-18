@@ -8,11 +8,13 @@ import (
 	"strconv"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 // RevealParam is the query parameter that asks for real fanwork content on one request. Its
 // only accepted value is "1". Go code always uses this constant, never the literal.
-const RevealParam = "reveal_fanwork"
+const RevealParam = string(dto.ParamReveal)
 
 const (
 	// maxQueryParams caps the number of query parameters (values, counting repeats).
@@ -35,22 +37,22 @@ type query map[string]string
 func parseQuery(r *http.Request, allowed ...string) (query, error) {
 	vals, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return nil, errCode(CodeBadRequest)
+		return nil, errCode(dto.CodeBadRequest)
 	}
 	n := 0
 	for _, vs := range vals {
 		n += len(vs)
 	}
 	if n > maxQueryParams {
-		return nil, errCode(CodeBadRequest)
+		return nil, errCode(dto.CodeBadRequest)
 	}
 	q := make(query, len(vals))
 	for name, vs := range vals {
 		if name != RevealParam && !slices.Contains(allowed, name) {
-			return nil, errCode(CodeUnknownParam)
+			return nil, errCode(dto.CodeUnknownParam)
 		}
 		if len(vs) > 1 {
-			return nil, errField(CodeDuplicateParam, name)
+			return nil, errField(dto.CodeDuplicateParam, name)
 		}
 		if name != RevealParam {
 			q[name] = vs[0]
@@ -71,11 +73,11 @@ func (q query) int(name string, def, lo, hi int64) (int64, error) {
 // parseInt parses s as a base-10 integer (digits only, optional leading '-') in [lo, hi].
 func parseInt(field, s string, lo, hi int64) (int64, error) {
 	if s == "" || s[0] == '+' {
-		return 0, errField(CodeInvalidParam, field)
+		return 0, errField(dto.CodeInvalidParam, field)
 	}
 	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || v < lo || v > hi {
-		return 0, errField(CodeInvalidParam, field)
+		return 0, errField(dto.CodeInvalidParam, field)
 	}
 	return v, nil
 }
@@ -106,7 +108,7 @@ func (q query) page() (Page, error) {
 		return Page{}, err
 	}
 	if pg-1 > maxOffset/per {
-		return Page{}, errField(CodeInvalidParam, "page")
+		return Page{}, errField(dto.CodeInvalidParam, "page")
 	}
 	return Page{Page: pg, PerPage: per}, nil
 }
@@ -115,11 +117,11 @@ func (q query) page() (Page, error) {
 // runes.
 func checkText(field, s string, maxRunes int) error {
 	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxRunes {
-		return errField(CodeInvalidParam, field)
+		return errField(dto.CodeInvalidParam, field)
 	}
 	for _, r := range s {
 		if unicode.IsControl(r) {
-			return errField(CodeInvalidParam, field)
+			return errField(dto.CodeInvalidParam, field)
 		}
 	}
 	return nil

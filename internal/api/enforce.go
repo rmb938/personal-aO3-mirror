@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
 )
 
@@ -62,6 +63,8 @@ func (b *bufferWriter) Write(p []byte) (int, error) {
 //     reveal_required;
 //   - a body over maxResponseBytes gives a 500 problem.
 //
+// An enum key holding a value outside its set is logged as a warning (keys only).
+//
 // Every response gets X-Fanwork (hashed|revealed); hashed JSON gets X-Fanwork-Key-Epoch, and
 // revealed responses get Cache-Control: no-store. The mode is read after the handler returns,
 // because the reveal middleware runs further in.
@@ -92,11 +95,18 @@ func (a *API) enforce(next http.Handler) http.Handler {
 				a.enforceFailed(w, r, mode, err)
 				return
 			}
+			if len(res.OffEnum) > 0 {
+				// A model value missing from its dto enum type: hashed (fail safe), but a bug.
+				a.log.LogAttrs(r.Context(), slog.LevelWarn, "api enum value outside its set",
+					slog.String("req_id", state(r.Context()).id),
+					slog.String("route", routePattern(r)),
+					slog.Any("keys", res.OffEnum))
+			}
 			a.write(w, mode, bw.header, status, res.Body, res.Epoch)
 		case mode == redact.Revealed:
 			a.write(w, mode, bw.header, status, body, "")
 		default:
-			a.writeProblem(w, mode, &Error{Code: CodeRevealRequired, Status: http.StatusForbidden})
+			a.writeProblem(w, mode, &Error{Code: dto.CodeRevealRequired, Status: http.StatusForbidden})
 		}
 	})
 }
@@ -108,7 +118,7 @@ func (a *API) enforceFailed(w http.ResponseWriter, r *http.Request, mode redact.
 		slog.String("req_id", state(r.Context()).id),
 		slog.String("route", routePattern(r)),
 		slog.String("err", err.Error()))
-	a.writeProblem(w, mode, errCode(CodeInternal))
+	a.writeProblem(w, mode, errCode(dto.CodeInternal))
 }
 
 // writeProblem sends e's problem in place of the handler's response. Problems hold only

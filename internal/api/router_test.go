@@ -151,7 +151,7 @@ func TestHealthzAndVersion(t *testing.T) {
 
 		w = get(h, "/api/v1/healthz?page=1")
 		require.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Equal(t, string(CodeUnknownParam), decodeProblem(t, w).Code)
+		assert.Equal(t, dto.CodeUnknownParam, decodeProblem(t, w).Code)
 	}
 }
 
@@ -159,12 +159,12 @@ func TestNotFoundAndMethodNotAllowed(t *testing.T) {
 	a, _ := newTestAPI(t, nil)
 	w := get(a.Public(), "/api/v1/nope")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, string(CodeNotFound), decodeProblem(t, w).Code)
+	assert.Equal(t, dto.CodeNotFound, decodeProblem(t, w).Code)
 	assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 
 	w = do(a.Public(), httptest.NewRequest(http.MethodDelete, "/api/v1/healthz", nil))
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	assert.Equal(t, string(CodeMethodNotAllowed), decodeProblem(t, w).Code)
+	assert.Equal(t, dto.CodeMethodNotAllowed, decodeProblem(t, w).Code)
 	assert.Equal(t, []string{http.MethodGet}, w.Header().Values("Allow"))
 }
 
@@ -266,7 +266,8 @@ func TestLeakHarnessDetectsContent(t *testing.T) {
 	assertNoSentinel(t, w, logs)
 	var h dto.Health
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &h))
-	assert.True(t, strings.HasPrefix(h.Status, "h_"), "hashed")
+	assert.True(t, strings.HasPrefix(string(h.Status), "h_"), "hashed")
+	assert.Contains(t, logs.String(), "enum value outside its set", "off-set enum value is warned about")
 
 	w = get(a.public, "/leaktest"+revealQuery)
 	require.Equal(t, http.StatusOK, w.Code)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -53,6 +54,11 @@ type Result struct {
 	// Epoch is the ID of the key epoch that hashed Body (the X-Fanwork-Key-Epoch header). It
 	// is empty in Revealed mode.
 	Epoch string
+	// OffEnum lists, once each and in order of first sight, the enum keys that held a value
+	// outside their set (hashed in Hashed mode, like any string). It is a programming error
+	// (a model value missing from its DTO type) for the caller to log: keys are registered
+	// DTO keys, never content.
+	OffEnum []string
 }
 
 // Enforcer rewrites JSON response bodies according to a registry snapshot. It is safe for
@@ -100,7 +106,7 @@ func (e *Enforcer) Enforce(mode Mode, in []byte) (Result, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return Result{}, fmt.Errorf("%w: trailing data", ErrInvalidJSON)
 	}
-	res := Result{Body: w.out.Bytes()}
+	res := Result{Body: w.out.Bytes(), OffEnum: w.offEnum}
 	if mode == Hashed {
 		res.Epoch = ep.ID()
 	}
@@ -112,6 +118,8 @@ type walker struct {
 	mode Mode
 	mac  *mac
 	out  bytes.Buffer
+	// offEnum collects Result.OffEnum.
+	offEnum []string
 }
 
 // value reads and writes one JSON value; key is the object key it sits under ("" at the top).
@@ -131,6 +139,7 @@ func (w *walker) value(dec *json.Decoder, key string) error {
 			return fmt.Errorf("%w: unexpected %c", ErrInvalidJSON, rune(t))
 		}
 	case string:
+		w.noteOffEnum(key, t)
 		if w.mode == Revealed || w.e.allowed(key, t) {
 			w.writeString(t)
 		} else {
@@ -239,6 +248,17 @@ func (e *Enforcer) allowed(key, s string) bool {
 		return isDate(s)
 	}
 	return false
+}
+
+// noteOffEnum records key in Result.OffEnum when it is an enum key whose set lacks s.
+func (w *walker) noteOffEnum(key, s string) {
+	set, ok := w.e.enums[key]
+	if !ok {
+		return
+	}
+	if _, in := set[s]; !in && !slices.Contains(w.offEnum, key) {
+		w.offEnum = append(w.offEnum, key)
+	}
 }
 
 // isUTCTimestamp accepts exactly what time.Time.MarshalJSON produces for a UTC time.

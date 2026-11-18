@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -60,7 +61,7 @@ func TestHandleError(t *testing.T) {
 	assert.JSONEq(t, `{"code":"not_found","title":"Not found","status":404}`, w.Body.String())
 	assert.Empty(t, logs.String(), "expected errors are not logged")
 
-	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errField(CodeInvalidParam, "page") })
+	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errField(dto.CodeInvalidParam, "page") })
 	assert.JSONEq(t, `{"code":"invalid_param","title":"Invalid parameter","status":400,"field":"page"}`, w.Body.String())
 
 	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errors.New("db exploded") })
@@ -71,7 +72,7 @@ func TestHandleError(t *testing.T) {
 }
 
 func TestHandleQuery415AdvertisesAcceptQuery(t *testing.T) {
-	h := func(*http.Request) (any, error) { return nil, errCode(CodeUnsupportedMediaType) }
+	h := func(*http.Request) (any, error) { return nil, errCode(dto.CodeUnsupportedMediaType) }
 	w := serve(t, discardLogger(), methodQuery, h)
 	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Accept-Query"))

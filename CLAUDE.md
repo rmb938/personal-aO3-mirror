@@ -67,6 +67,9 @@ Design rules for API code:
 - `internal/api/dto` imports only the standard library. It never uses, imports or embeds
   `controllers`, `store` or `model` types; handlers map controller results into DTOs field by
   field.
+- A string field with a closed value set is a named string type in `dto` with an
+  `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
+  `string` field is free text and always hashed.
 - Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
   query param allowlists. Logs carry route patterns and param names, never query values or
   bodies.

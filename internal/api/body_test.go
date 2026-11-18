@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 type testBody struct {
@@ -55,7 +57,7 @@ func TestDecodeJSON(t *testing.T) {
 	for name, body := range bad {
 		t.Run(name, func(t *testing.T) {
 			_, err := decodeTest(t, "application/json", body)
-			requireAPIError(t, err, CodeInvalidBody, "")
+			requireAPIError(t, err, dto.CodeInvalidBody, "")
 		})
 	}
 }
@@ -64,20 +66,20 @@ func TestDecodeJSONContentType(t *testing.T) {
 	for _, ct := range []string{"", "text/plain", "application/json; charset=latin1",
 		"application/json; foo=bar", "application/jsonx", "application/problem+json", "%%%"} {
 		_, err := decodeTest(t, ct, `{}`)
-		requireAPIError(t, err, CodeUnsupportedMediaType, "")
+		requireAPIError(t, err, dto.CodeUnsupportedMediaType, "")
 	}
 
 	// Two Content-Type headers are refused.
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{}`))
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Type", "application/json")
-	requireAPIError(t, decodeJSON(r, &testBody{}), CodeUnsupportedMediaType, "")
+	requireAPIError(t, decodeJSON(r, &testBody{}), dto.CodeUnsupportedMediaType, "")
 }
 
 func TestDecodeJSONTooLarge(t *testing.T) {
 	pad := strings.Repeat(" ", maxBodyBytes)
 	_, err := decodeTest(t, "application/json", `{"url":"u"}`+pad)
-	requireAPIError(t, err, CodeBodyTooLarge, "")
+	requireAPIError(t, err, dto.CodeBodyTooLarge, "")
 
 	// Exactly at the cap is fine.
 	body := `{"url":"u"}`

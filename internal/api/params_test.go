@@ -9,10 +9,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 // requireAPIError asserts err is an *Error with the code and field.
-func requireAPIError(t *testing.T, err error, code Code, field string) {
+func requireAPIError(t *testing.T, err error, code dto.ProblemCode, field string) {
 	t.Helper()
 	e, ok := errors.AsType[*Error](err)
 	require.True(t, ok, "want *Error, got %v", err)
@@ -40,23 +42,23 @@ func TestParseQuery(t *testing.T) {
 	assert.Equal(t, query{"page": "1"}, q)
 
 	_, err = parse("SENTINEL=1", "page")
-	requireAPIError(t, err, CodeUnknownParam, "")
+	requireAPIError(t, err, dto.CodeUnknownParam, "")
 
 	_, err = parse("page=1&page=2", "page")
-	requireAPIError(t, err, CodeDuplicateParam, "page")
+	requireAPIError(t, err, dto.CodeDuplicateParam, "page")
 
 	_, err = parse(RevealParam + "=1&" + RevealParam + "=1")
-	requireAPIError(t, err, CodeDuplicateParam, RevealParam)
+	requireAPIError(t, err, dto.CodeDuplicateParam, RevealParam)
 
 	_, err = parse("page=%zz", "page")
-	requireAPIError(t, err, CodeBadRequest, "")
+	requireAPIError(t, err, dto.CodeBadRequest, "")
 
 	_, err = parse("page=1;per_page=2", "page", "per_page")
-	requireAPIError(t, err, CodeBadRequest, "")
+	requireAPIError(t, err, dto.CodeBadRequest, "")
 
 	many := strings.Repeat("a=1&", maxQueryParams) + "a=1"
 	_, err = parse(many, "a")
-	requireAPIError(t, err, CodeBadRequest, "")
+	requireAPIError(t, err, dto.CodeBadRequest, "")
 }
 
 func TestParseInt(t *testing.T) {
@@ -69,16 +71,16 @@ func TestParseInt(t *testing.T) {
 	for _, s := range []string{"", "0", "101", "+5", "-1", "1.5", "1e3", " 1", "1 ", "0x10", "abc",
 		"99999999999999999999"} {
 		_, err := parseInt("page", s, 1, 100)
-		requireAPIError(t, err, CodeInvalidParam, "page")
+		requireAPIError(t, err, dto.CodeInvalidParam, "page")
 	}
 
 	v, err := parseID("id", "9007199254740991")
 	require.NoError(t, err)
 	assert.Equal(t, int64(MaxID), v)
 	_, err = parseID("id", "9007199254740992")
-	requireAPIError(t, err, CodeInvalidParam, "id")
+	requireAPIError(t, err, dto.CodeInvalidParam, "id")
 	_, err = parseID("id", "0")
-	requireAPIError(t, err, CodeInvalidParam, "id")
+	requireAPIError(t, err, dto.CodeInvalidParam, "id")
 }
 
 func TestPage(t *testing.T) {
@@ -102,7 +104,7 @@ func TestPage(t *testing.T) {
 	for _, c := range cases {
 		p, err := c.q.page()
 		if c.badField != "" {
-			requireAPIError(t, err, CodeInvalidParam, c.badField)
+			requireAPIError(t, err, dto.CodeInvalidParam, c.badField)
 			continue
 		}
 		require.NoError(t, err, c.q)
@@ -116,6 +118,6 @@ func TestCheckText(t *testing.T) {
 	require.NoError(t, checkText("q", "hello wörld", 11))
 	require.NoError(t, checkText("q", "", 1))
 	for _, s := range []string{"\x00", "a\nb", "tab\t", "\u0085", "bad\xff", "twelve runes"} {
-		requireAPIError(t, checkText("q", s, 11), CodeInvalidParam, "q")
+		requireAPIError(t, checkText("q", s, 11), dto.CodeInvalidParam, "q")
 	}
 }

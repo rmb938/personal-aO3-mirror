@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 )
 
@@ -68,7 +69,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	// --no-reveal: the reveal param is refused, not honoured.
 	status, _, body := get(t, tcp, base+"/api/v1/healthz?"+api.RevealParam+"=1")
 	assert.Equal(t, http.StatusForbidden, status)
-	assert.Equal(t, string(api.CodeRevealDisabled), body["code"])
+	assert.Equal(t, string(dto.CodeRevealDisabled), body["code"])
 
 	sockPath := cfg.Path(cfg.API.AdminSocket)
 	status, _, _ = get(t, unixClient(sockPath), "http://admin/api/v1/version")

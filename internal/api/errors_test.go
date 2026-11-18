@@ -20,60 +20,66 @@ import (
 func TestProblemFor(t *testing.T) {
 	cases := []struct {
 		err      error
-		code     Code
+		code     dto.ProblemCode
 		status   int
 		internal bool
 	}{
-		{errCode(CodeBadRequest), CodeBadRequest, http.StatusBadRequest, false},
-		{fmt.Errorf("wrap: %w", errField(CodeInvalidParam, "page")), CodeInvalidParam, http.StatusBadRequest, false},
-		{&Error{Code: CodeRevealRequired, Status: http.StatusForbidden}, CodeRevealRequired, http.StatusForbidden, false},
-		{&Error{Code: "made_up"}, CodeInternal, http.StatusInternalServerError, true},
-		{errCode(CodeInternal), CodeInternal, http.StatusInternalServerError, true},
-		{store.ErrNoSource, CodeNotFound, http.StatusNotFound, false},
-		{fmt.Errorf("get: %w", store.ErrNoJob), CodeNotFound, http.StatusNotFound, false},
-		{store.ErrNoSourceAdd, CodeNotFound, http.StatusNotFound, false},
-		{store.ErrNoWork, CodeNotFound, http.StatusNotFound, false},
-		{store.ErrNoSeries, CodeNotFound, http.StatusNotFound, false},
-		{store.ErrNoTag, CodeNotFound, http.StatusNotFound, false},
-		{store.ErrNoRawPage, CodeNotFound, http.StatusNotFound, false},
-		{store.ErrStateConflict, CodeConflict, http.StatusConflict, false},
-		{store.ErrSourceExists, CodeExists, http.StatusConflict, false},
-		{fmt.Errorf("add: %w", controllers.ExistsError{ID: 3}), CodeExists, http.StatusConflict, false},
-		{context.DeadlineExceeded, CodeUnavailable, http.StatusServiceUnavailable, false},
-		{context.Canceled, CodeUnavailable, http.StatusServiceUnavailable, false},
-		{errors.New("boom"), CodeInternal, http.StatusInternalServerError, true},
+		{errCode(dto.CodeBadRequest), dto.CodeBadRequest, http.StatusBadRequest, false},
+		{fmt.Errorf("wrap: %w", errField(dto.CodeInvalidParam, "page")), dto.CodeInvalidParam, http.StatusBadRequest, false},
+		{&Error{Code: dto.CodeRevealRequired, Status: http.StatusForbidden}, dto.CodeRevealRequired, http.StatusForbidden, false},
+		{&Error{Code: "made_up"}, dto.CodeInternal, http.StatusInternalServerError, true},
+		{errCode(dto.CodeInternal), dto.CodeInternal, http.StatusInternalServerError, true},
+		{store.ErrNoSource, dto.CodeNotFound, http.StatusNotFound, false},
+		{fmt.Errorf("get: %w", store.ErrNoJob), dto.CodeNotFound, http.StatusNotFound, false},
+		{store.ErrNoSourceAdd, dto.CodeNotFound, http.StatusNotFound, false},
+		{store.ErrNoWork, dto.CodeNotFound, http.StatusNotFound, false},
+		{store.ErrNoSeries, dto.CodeNotFound, http.StatusNotFound, false},
+		{store.ErrNoTag, dto.CodeNotFound, http.StatusNotFound, false},
+		{store.ErrNoRawPage, dto.CodeNotFound, http.StatusNotFound, false},
+		{store.ErrStateConflict, dto.CodeConflict, http.StatusConflict, false},
+		{store.ErrSourceExists, dto.CodeExists, http.StatusConflict, false},
+		{fmt.Errorf("add: %w", controllers.ExistsError{ID: 3}), dto.CodeExists, http.StatusConflict, false},
+		{context.DeadlineExceeded, dto.CodeUnavailable, http.StatusServiceUnavailable, false},
+		{context.Canceled, dto.CodeUnavailable, http.StatusServiceUnavailable, false},
+		{errors.New("boom"), dto.CodeInternal, http.StatusInternalServerError, true},
 	}
 	for _, c := range cases {
 		t.Run(c.err.Error(), func(t *testing.T) {
 			p, internal := problemFor(c.err)
-			assert.Equal(t, string(c.code), p.Code)
+			assert.Equal(t, c.code, p.Code)
 			assert.Equal(t, c.status, p.Status)
-			assert.Equal(t, codeInfo[c.code].title, p.Title)
+			info, ok := c.code.Info()
+			require.True(t, ok)
+			assert.Equal(t, info.Title, p.Title)
 			assert.Equal(t, c.internal, internal)
 		})
 	}
 }
 
 func TestProblemField(t *testing.T) {
-	p := errField(CodeInvalidParam, "per_page").problem()
-	assert.Equal(t, "per_page", p.Field)
+	p := errField(dto.CodeInvalidParam, "per_page").problem()
+	assert.Equal(t, dto.ParamPerPage, p.Field)
 
 	// A name the API doesn't declare is never echoed.
-	p = errField(CodeInvalidParam, "SENTINEL-field").problem()
+	p = errField(dto.CodeInvalidParam, "SENTINEL-field").problem()
 	assert.Empty(t, p.Field)
 }
 
-func TestCodeInfoComplete(t *testing.T) {
-	titles := map[string]Code{}
-	for c, info := range codeInfo {
-		assert.NotZero(t, info.status, c)
-		assert.NotEmpty(t, info.title, c)
-		assert.Regexp(t, `^[a-z][a-z_]*$`, string(c))
-		if prev, dup := titles[info.title]; dup {
+func TestProblemCodesComplete(t *testing.T) {
+	titles := map[dto.ProblemTitle]dto.ProblemCode{}
+	for _, s := range dto.ProblemCode("").EnumValues() {
+		c := dto.ProblemCode(s)
+		info, ok := c.Info()
+		require.True(t, ok, c)
+		assert.NotZero(t, info.Status, c)
+		assert.NotEmpty(t, info.Title, c)
+		assert.Regexp(t, `^[a-z][a-z_]*$`, s)
+		if prev, dup := titles[info.Title]; dup {
 			t.Errorf("codes %s and %s share a title", prev, c)
 		}
-		titles[info.title] = c
+		titles[info.Title] = c
 	}
+	assert.Len(t, dto.ProblemTitle("").EnumValues(), len(titles))
 }
 
 // Every problem the API can produce passes the enforcer in hashed mode unchanged: its strings
@@ -83,9 +89,9 @@ func TestProblemsPassEnforcerUnhashed(t *testing.T) {
 	require.NoError(t, err)
 	enf, err := newEnforcer(h, "test-version")
 	require.NoError(t, err)
-	for c := range codeInfo {
-		for f := range knownFields {
-			body, err := json.Marshal(errField(c, f).problem())
+	for _, c := range dto.ProblemCode("").EnumValues() {
+		for _, f := range dto.ParamName("").EnumValues() {
+			body, err := json.Marshal(errField(dto.ProblemCode(c), f).problem())
 			require.NoError(t, err)
 			res, err := enf.Enforce(redact.Hashed, body)
 			require.NoError(t, err)

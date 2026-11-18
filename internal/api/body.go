@@ -7,6 +7,8 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 // decodeJSON strictly decodes r's body into dst (a pointer to a DTO):
@@ -18,20 +20,20 @@ import (
 // Errors never quote the body. Callers still validate each field (ranges, checkText).
 func decodeJSON(r *http.Request, dst any) error {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		return errCode(CodeUnsupportedMediaType)
+		return errCode(dto.CodeUnsupportedMediaType)
 	}
 	if r.Body == nil {
-		return errCode(CodeInvalidBody)
+		return errCode(dto.CodeInvalidBody)
 	}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			return errCode(CodeBodyTooLarge)
+			return errCode(dto.CodeBodyTooLarge)
 		}
-		return errCode(CodeInvalidBody)
+		return errCode(dto.CodeInvalidBody)
 	}
 	if err := json.Unmarshal(raw, dst, json.RejectUnknownMembers(true)); err != nil {
-		return errCode(CodeInvalidBody)
+		return errCode(dto.CodeInvalidBody)
 	}
 	return nil
 }

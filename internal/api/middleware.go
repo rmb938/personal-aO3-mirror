@@ -17,6 +17,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 const (
@@ -123,7 +125,7 @@ var loggedMethods = append([]string{http.MethodHead, http.MethodOptions, http.Me
 
 // accessLog logs one line per request. It logs the route pattern and numeric path IDs, never
 // the raw path, query values, bodies or response strings. Query parameter names are logged
-// only when they are names the API declares (knownFields); others are only counted, since a
+// only when they are names the API declares (dto.ParamName); others are only counted, since a
 // client chooses them freely.
 func (a *API) accessLog(listener string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -230,7 +232,7 @@ func queryNameAttrs(rawQuery string) []slog.Attr {
 	var names []string
 	other := 0
 	for name := range vals {
-		if knownFields[name] {
+		if dto.ParamName(name).Known() {
 			names = append(names, name)
 		} else {
 			other++
@@ -263,7 +265,7 @@ func (a *API) recoverer(next http.Handler) http.Handler {
 				slog.String("panic_type", fmt.Sprintf("%T", v)),
 				slog.String("stack", string(debug.Stack())))
 			w.Header().Set(headerFanwork, "hashed")
-			p := errCode(CodeInternal).problem()
+			p := errCode(dto.CodeInternal).problem()
 			respond(w, r, a.log, p.Status, contentTypeProblem, p)
 		}()
 		next.ServeHTTP(w, r)
@@ -288,7 +290,7 @@ func securityHeaders(next http.Handler) http.Handler {
 func (a *API) urlLimits(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(r.URL.EscapedPath())+len(r.URL.RawQuery) > maxURLBytes {
-			respondError(w, r, a.log, errCode(CodeURITooLong))
+			respondError(w, r, a.log, errCode(dto.CodeURITooLong))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -308,7 +310,7 @@ func (a *API) rateLimit(n int, window time.Duration, listener string) func(http.
 	}
 	return httprate.LimitBy(n, window, key,
 		httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
-			respondError(w, r, a.log, errCode(CodeRateLimited))
+			respondError(w, r, a.log, errCode(dto.CodeRateLimited))
 		}),
 		httprate.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
 			respondError(w, r, a.log, fmt.Errorf("rate limiter: %w", err))
@@ -325,7 +327,7 @@ func (a *API) throttle(inFlight, backlog int, wait time.Duration) func(http.Hand
 	queue := make(chan struct{}, inFlight+backlog)
 	reject := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "1")
-		respondError(w, r, a.log, errCode(CodeUnavailable))
+		respondError(w, r, a.log, errCode(dto.CodeUnavailable))
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -370,7 +372,7 @@ func timeout(d time.Duration) func(http.Handler) http.Handler {
 func (a *API) crossOrigin() func(http.Handler) http.Handler {
 	c := http.NewCrossOriginProtection()
 	c.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		respondError(w, r, a.log, errCode(CodeForbidden))
+		respondError(w, r, a.log, errCode(dto.CodeForbidden))
 	}))
 	return c.Handler
 }
@@ -381,7 +383,7 @@ func (a *API) reveal(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vals, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			respondError(w, r, a.log, errCode(CodeBadRequest))
+			respondError(w, r, a.log, errCode(dto.CodeBadRequest))
 			return
 		}
 		vs, ok := vals[RevealParam]
@@ -391,11 +393,11 @@ func (a *API) reveal(next http.Handler) http.Handler {
 		}
 		switch {
 		case len(vs) != 1:
-			respondError(w, r, a.log, errField(CodeDuplicateParam, RevealParam))
+			respondError(w, r, a.log, errField(dto.CodeDuplicateParam, RevealParam))
 		case vs[0] != "1":
-			respondError(w, r, a.log, errField(CodeInvalidParam, RevealParam))
+			respondError(w, r, a.log, errField(dto.CodeInvalidParam, RevealParam))
 		case a.opts.NoReveal:
-			respondError(w, r, a.log, errCode(CodeRevealDisabled))
+			respondError(w, r, a.log, errCode(dto.CodeRevealDisabled))
 		default:
 			state(r.Context()).reveal = true
 			next.ServeHTTP(w, r)
