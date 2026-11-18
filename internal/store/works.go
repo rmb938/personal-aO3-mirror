@@ -402,6 +402,13 @@ func (s *Tx) SetWorkStatus(ctx context.Context, workID int64, status model.WorkS
 	return err
 }
 
+// ChapterCount returns how many chapters are stored for a work (0 for an unknown work).
+func (s *ReadTx) ChapterCount(ctx context.Context, workID int64) (int, error) {
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM chapters WHERE work_id = ?`, workID).Scan(&n)
+	return n, err
+}
+
 // WorkStatus returns a work's status and whether it exists.
 func (s *ReadTx) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus, bool, error) {
 	var st model.WorkStatus

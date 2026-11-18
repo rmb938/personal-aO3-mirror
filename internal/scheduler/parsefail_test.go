@@ -65,6 +65,51 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "work re-fetched after parse failure")
 }
 
+// A fetched page with fewer chapters than it says are posted never replaces stored chapters
+// with fewer: it is handled as a parse failure. A page that is only short of its posted count
+// but has more than stored is kept (the gap is left for the UI to warn about).
+func TestWorkPageMissingChaptersKeepsStoredChapters(t *testing.T) {
+	e := newEnv(t, 3, nil) // 5001 has 2 chapters, 5002 has 3
+	ctx := context.Background()
+	e.add(e.site.TagPath())
+	e.drain(50)
+	require.Equal(t, 3, e.diag(5002).ChapterBodies)
+	require.Equal(t, 2, e.diag(5001).ChapterBodies)
+
+	updated := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+	// 5002: 4 posted, page shows 2 (fewer than the 3 stored): refused.
+	e.site.Update(5002, func(w *fakeao3.SiteWork) {
+		w.Chapters, w.Expected, w.Rendered, w.Words, w.Revised = 4, 4, 2, w.Words+100, updated
+	})
+	// 5001: 4 posted, page shows 3 (more than the 2 stored): stored, short of posted.
+	e.site.Update(5001, func(w *fakeao3.SiteWork) {
+		w.Chapters, w.Expected, w.Rendered, w.Words, w.Revised = 4, 4, 3, w.Words+100, updated
+	})
+	e.clk.Advance(7 * time.Hour)
+	e.drain(50)
+
+	d := e.diag(5002)
+	require.Equal(t, 3, d.ChapterBodies, "stored chapter bodies must be kept")
+	require.Equal(t, 3, d.ChapterRows, "stored chapter rows must be kept")
+	require.Equal(t, 2, d.RawVersions, "good raw page kept next to the refused one")
+	require.False(t, d.FetchFailedAt.IsZero(), "refused page marks the fetch failed")
+	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: store.JobFailed, DedupePrefix: "work:5002", Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Contains(t, jobs[0].LastError, "chapters_shrank")
+	require.Equal(t, 1, jobs[0].Attempts, "no retry")
+
+	d = e.diag(5001)
+	require.Equal(t, 3, d.ChapterBodies, "page with more chapters than stored is kept")
+	require.Equal(t, 4, d.ChaptersPosted)
+
+	// Reparse of the refused page is refused the same way, without failing the run.
+	res, err := e.ctl.Reparse(ctx, controllers.ReparseOptions{WorkID: 5002})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Failed)
+	require.Equal(t, 3, e.diag(5002).ChapterBodies)
+}
+
 func TestBackfillBlocksOnParseFailure(t *testing.T) {
 	e := newEnv(t, 45, nil) // 3 listing pages
 	ctx := context.Background()

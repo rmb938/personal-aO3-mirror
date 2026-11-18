@@ -20,6 +20,9 @@ type SiteWork struct {
 	Words    int
 	Chapters int // posted
 	Expected int // 0 = "?"
+	// Rendered, if set, is how many chapter divs the work page renders (fewer than Chapters
+	// simulates a page whose chapters the parser can't all find).
+	Rendered int
 	Deleted  bool
 	Untagged bool // no longer in the tag's listing, but its work page still loads
 }
@@ -211,7 +214,11 @@ func (s *Site) blurb(sw *SiteWork) string {
 
 func (s *Site) workPage(sw *SiteWork) string {
 	var ch strings.Builder
-	for i := 1; i <= sw.Chapters; i++ {
+	rendered := sw.Chapters
+	if sw.Rendered > 0 {
+		rendered = sw.Rendered
+	}
+	for i := 1; i <= rendered; i++ {
 		fmt.Fprintf(&ch, `<div class="chapter" id="chapter-%[1]d"><div class="chapter preface group"><h3 class="title"><a href="/works/%[2]d/chapters/%[3]d">Chapter %[1]d</a>: Fixture Chapter</h3></div>
 <div class="userstuff module" role="article"><h3 class="landmark heading" id="work">Chapter Text</h3><p>Fixture body %[2]d chapter %[1]d.</p></div></div>`, i, sw.ID, sw.ID*100+int64(i))
 	}
