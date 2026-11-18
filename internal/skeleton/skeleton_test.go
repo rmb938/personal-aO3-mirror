@@ -21,7 +21,9 @@ func TestTextRules(t *testing.T) {
 	assert.NotEqual(t, "12,345", got, "number must be replaced")
 	assert.Regexp(t, `^20[0-9]{2}-[01][0-9]-[0-3][0-9]$`, s.Text("2026-10-01"), "iso date")
 	assert.Regexp(t, `^[0-3][0-9] [A-Z][a-z]{2} 20[0-9]{2}$`, s.Text("01 Nov 2026"), "rfc date")
-	assert.Equal(t, "3 days", s.Text("3 days"), "relative date")
+	for _, rel := range []string{"3 days ago", "1 hour ago", "less than 1 minute ago"} {
+		assert.Equal(t, rel, s.Text(rel), "relative date")
+	}
 	assert.Regexp(t, `^[0-9]+ - [0-9]+ of [0-9],[0-9]{3} Works in$`, s.Text("21 - 40 of 1,234 Works in"), "listing heading")
 	got = s.Text("123/?")
 	assert.Regexp(t, `^[1-9][0-9]{2}/\?$`, got, "chapters")

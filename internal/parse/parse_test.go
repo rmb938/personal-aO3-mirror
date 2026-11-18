@@ -249,11 +249,13 @@ func TestBlurbDates(t *testing.T) {
 		date   string
 		approx bool
 	}{
-		"01 Nov 2026":        {"2026-11-01", false},
-		"less than a minute": {"2026-11-15", true},
-		"about 5 hours":      {"2026-11-15", true},
-		"3 days":             {"2026-11-12", true},
-		"about 1 month":      {"2026-10-16", true},
+		"01 Nov 2026":            {"2026-11-01", false},
+		"less than 1 minute ago": {"2026-11-15", true},
+		"1 minute ago":           {"2026-11-15", true},
+		"5 hours ago":            {"2026-11-15", true},
+		"1 day ago":              {"2026-11-14", true},
+		"3 days ago":             {"2026-11-12", true},
+		"30 days ago":            {"2026-10-16", true},
 	} {
 		d, approx, ok := parseBlurbDate(in, fetchedAt)
 		if assert.True(t, ok, "%q should parse", in) {

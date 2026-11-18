@@ -10,7 +10,7 @@
 //   - AO3 UI vocabulary (labels like "Words:", canonical rating/warning/category names) is kept
 //   - other words become lorem-ipsum words (case shape kept; length not preserved)
 //   - numbers >= 100 keep digit count and comma grouping with random values; smaller ones kept
-//   - dates stay valid dates in the same format; relative dates ("3 days") keep their wording
+//   - dates stay valid dates in the same format; relative dates ("3 days ago") keep their wording
 //   - .userstuff contents (work text, summaries, notes) collapse to one lorem placeholder
 //   - <script>, <style>, <noscript>, <template> contents are dropped
 //   - attributes: class, id, role, rel, lang, dir, type, name kept (numbers/words masked in id,
@@ -140,7 +140,8 @@ var uiPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^Chapter [0-9]+$`),
 	regexp.MustCompile(`^(Chapter|Part) [0-9]+ of$`),
 	regexp.MustCompile(`^[0-9][0-9,]*/([0-9][0-9,]*|\?)$`),
-	regexp.MustCompile(`^(less than a minute|(about |over |almost )?[0-9]+ (second|minute|hour|day|month|year)s?)$`),
+	// AO3's time_ago_in_words (app/helpers/translation_helper.rb), not the Rails one.
+	regexp.MustCompile(`^(less than )?[0-9]+ (minute|hour|day)s? ago$`),
 }
 
 var lorem = strings.Fields(`lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor
