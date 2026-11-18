@@ -77,7 +77,7 @@ func TestBackfillBlocksOnParseFailure(t *testing.T) {
 
 	require.Equal(t, 1, countRequests(e, page2), "broken listing page requested once")
 	src := e.source(id)
-	cur, err := controllers.ParseCursor(src.BackfillCursor)
+	cur, err := controllers.ParseSourceCursor(src.BackfillCursor)
 	require.NoError(t, err)
 	require.Equal(t, 2, cur.NextPage)
 	require.Equal(t, parse.Version, cur.BlockedParser)

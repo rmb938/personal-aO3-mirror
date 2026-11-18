@@ -452,7 +452,7 @@ func TestTagInfoFetched(t *testing.T) {
 }
 
 func TestRescanVerifiesMissingWorks(t *testing.T) {
-	e := newEnv(t, 5, func(o *controllers.Options) { o.RescanInterval = 24 * time.Hour })
+	e := newEnv(t, 5, func(o *controllers.Options) { o.Sources.FullRescanInterval = 24 * time.Hour })
 	ctx := context.Background()
 	id := e.add(e.site.TagPath())
 	e.drain(50)
@@ -476,7 +476,7 @@ func TestRescanVerifiesMissingWorks(t *testing.T) {
 	}
 	require.Equal(t, []string{"/works/5003?view_full_work=true"}, works, "rescan should only fetch the missing work")
 	src = e.source(id)
-	cur, err := controllers.ParseCursor(src.BackfillCursor)
+	cur, err := controllers.ParseSourceCursor(src.BackfillCursor)
 	require.NoError(t, err)
 	require.Equal(t, store.SourceDoneBackfill, src.State)
 	require.False(t, cur.Rescan)

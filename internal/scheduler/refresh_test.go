@@ -69,7 +69,7 @@ func TestRefreshFullAndSet(t *testing.T) {
 	require.Equal(t, store.SourceActive, e.source(id).State, "full refresh should reactivate")
 	e.drain(50)
 	src := e.source(id)
-	cur, err := controllers.ParseCursor(src.BackfillCursor)
+	cur, err := controllers.ParseSourceCursor(src.BackfillCursor)
 	require.NoError(t, err)
 	require.Equal(t, store.SourceDoneBackfill, src.State, "after full refresh")
 	require.False(t, cur.Rescan, "after full refresh")

@@ -74,8 +74,7 @@ func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client
 		DataDir: cfg.DataDir, KeepVersions: cfg.Content.KeepVersions, QueueImages: cfg.Images.Enabled,
 		Sources: cfg.Sources, Interval: cfg.Rate.Interval,
 		TagInfoTypes: cfg.Tags.InfoTypes, TagInfoTTL: cfg.Tags.InfoTTL,
-		RescanInterval: cfg.Sources.FullRescanInterval,
-		SeriesInfo:     cfg.Series.Info, SeriesInfoTTL: cfg.Series.InfoTTL,
+		SeriesInfo: cfg.Series.Info, SeriesInfoTTL: cfg.Series.InfoTTL,
 	}
 	if client != nil { // a typed nil would defeat the controllers' offline check
 		o.Client = client

@@ -52,10 +52,10 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 	if r.State == store.SourceDoneBackfill {
 		return c.maybeStartRescan(ctx, tx, r, now, log)
 	}
-	cur, err := ParseCursor(r.BackfillCursor)
+	cur, err := ParseSourceCursor(r.BackfillCursor)
 	if err != nil {
 		log.Error("bad backfill cursor; resetting", "err", err.Error())
-		cur = Cursor{NextPage: 1, Order: r.BackfillOrder}
+		cur = SourceCursor{NextPage: 1, Order: r.BackfillOrder}
 	}
 	if cur.NextPage > 0 && cur.BlockedParser == parse.Version {
 		return nil // parse failure at this page; resumes when a new parser version ships
@@ -81,7 +81,7 @@ func (c *Controllers) scheduleSource(ctx context.Context, tx *store.Tx, r store.
 
 // finishWalk completes a backfill or rescan: verifies works not seen during a rescan, then
 // marks the source done_backfill (state, verification jobs and cursor change together).
-func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Cursor, now time.Time, log *slog.Logger) error {
+func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur SourceCursor, now time.Time, log *slog.Logger) error {
 	if err := tx.SetSourceState(ctx, r.ID, store.SourceDoneBackfill, store.SourceActive); err != nil {
 		if errors.Is(err, store.ErrStateConflict) {
 			return nil // not active any more (paused/cancelled); try next round
@@ -123,10 +123,10 @@ func (c *Controllers) maybeStartRescan(ctx context.Context, tx *store.Tx, r stor
 		r.LastFullScanAt = now
 		return tx.UpdateSourceProgress(ctx, r)
 	}
-	if now.Before(r.LastFullScanAt.Add(c.options.RescanInterval)) {
+	if now.Before(r.LastFullScanAt.Add(c.options.Sources.FullRescanInterval)) {
 		return nil
 	}
-	r.BackfillCursor = rescanCursor(r.BackfillOrder, now).JSON()
+	r.BackfillCursor = rescanSourceCursor(r.BackfillOrder, now).JSON()
 	if err := tx.UpdateSourceProgress(ctx, r); err != nil {
 		return err
 	}

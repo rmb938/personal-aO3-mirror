@@ -18,8 +18,8 @@ import (
 // dateFloor is when AO3 opened; backfill windows stop here.
 var dateFloor = time.Date(2008, 9, 1, 0, 0, 0, 0, time.UTC)
 
-// Cursor is the backfill position stored in sources.backfill_cursor (JSON).
-type Cursor struct {
+// SourceCursor is the backfill position stored in sources.backfill_cursor (JSON).
+type SourceCursor struct {
 	NextPage int    `json:"next_page"` // 0 = listing backfill done
 	Order    string `json:"order"`
 	// Date windows on revised_at, used when a source exceeds AO3's 100k result window.
@@ -40,13 +40,13 @@ type Cursor struct {
 	RetryAt int64 `json:"retry_at,omitempty"`
 }
 
-func (c Cursor) JSON() string {
+func (c SourceCursor) JSON() string {
 	b, _ := json.Marshal(c)
 	return string(b)
 }
 
-func ParseCursor(s string) (Cursor, error) {
-	var c Cursor
+func ParseSourceCursor(s string) (SourceCursor, error) {
+	var c SourceCursor
 	if s == "" || s == "{}" {
 		return c, nil
 	}
@@ -54,9 +54,9 @@ func ParseCursor(s string) (Cursor, error) {
 	return c, err
 }
 
-// rescanCursor starts a full re-walk of a source's listing at page 1.
-func rescanCursor(order string, now time.Time) Cursor {
-	return Cursor{NextPage: 1, Order: order, Rescan: true, RescanStarted: now.Unix()}
+// rescanSourceCursor starts a full re-walk of a source's listing at page 1.
+func rescanSourceCursor(order string, now time.Time) SourceCursor {
+	return SourceCursor{NextPage: 1, Order: order, Rescan: true, RescanStarted: now.Unix()}
 }
 
 func sourceOf(r store.SourceRow) (ao3url.Source, error) {
@@ -88,9 +88,9 @@ func (c *Controllers) readSource(ctx context.Context, sourceID int64) (store.Sou
 	return r, src, nil
 }
 
-// fetchPage fetches and parses one listing page of a source. It touches no store. A page AO3
+// fetchSourcePage fetches and parses one listing page of a source. It touches no store. A page AO3
 // served but we could not parse saves a debug skeleton and returns a parse failure.
-func (c *Controllers) fetchPage(ctx context.Context, sourceID int64, src ao3url.Source,
+func (c *Controllers) fetchSourcePage(ctx context.Context, sourceID int64, src ao3url.Source,
 	page int, order ao3url.Order, win *ao3url.Window) (parsedListing, string, error) {
 	resp, err := c.getListing(ctx, src, page, order, win)
 	if err != nil {
@@ -111,19 +111,19 @@ func (c *Controllers) fetchPage(ctx context.Context, sourceID int64, src ao3url.
 	return p, resp.ReqID, nil
 }
 
-// PollPage walks one page of a source newest-revised-first, and queues the next page until a
+// PollSourcePage walks one page of a source newest-revised-first, and queues the next page until a
 // page has nothing new or changed.
 //
 // Steps: read the source, fetch the page, then one write transaction that re-reads the source
 // and applies only this page's changes, so a refresh or settings change made during the fetch
 // is kept.
-func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (Detail, error) {
+func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page int) (Detail, error) {
 	log := c.logger(ctx)
 	r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
-	p, reqID, err := c.fetchPage(ctx, r.ID, src, page, ao3url.UpdateOrder, nil)
+	p, reqID, err := c.fetchSourcePage(ctx, r.ID, src, page, ao3url.UpdateOrder, nil)
 	if IsParseFailure(err) {
 		// No retry: the next poll is a full poll_interval away.
 		uerr := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -153,7 +153,7 @@ func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (D
 		if err != nil {
 			return err
 		}
-		enqueued, err := linkAndQueue(ctx, tx, fresh.ID, blurbs, jobs.ClassPollFetch)
+		enqueued, err := linkAndQueueBlurbs(ctx, tx, fresh.ID, blurbs, jobs.ClassPollFetch)
 		if err != nil {
 			return err
 		}
@@ -211,19 +211,19 @@ func (c *Controllers) PollPage(ctx context.Context, sourceID int64, page int) (D
 	return detail, err
 }
 
-// BackfillPage walks one page of a source in its backfill order; >MaxResults sources go window
+// BackfillSourcePage walks one page of a source in its backfill order; >MaxResults sources go window
 // by window.
 //
 // Steps: read the source and cursor, fetch the page, then one write transaction that re-reads
 // the source. If the cursor moved during the fetch (a refresh or rescan reset it), the page's
 // blurbs are still stored but the cursor is left alone.
-func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int) (Detail, error) {
+func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, page int) (Detail, error) {
 	log := c.logger(ctx)
 	r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
-	cur, err := ParseCursor(r.BackfillCursor)
+	cur, err := ParseSourceCursor(r.BackfillCursor)
 	if err != nil {
 		return nil, PermanentError{Code: CodeBadCursor}
 	}
@@ -255,7 +255,7 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 	if cur.Rescan {
 		fetchClass = jobs.ClassMaintenance
 	}
-	p, reqID, err := c.fetchPage(ctx, r.ID, src, page, order, win)
+	p, reqID, err := c.fetchSourcePage(ctx, r.ID, src, page, order, win)
 	if IsParseFailure(err) {
 		// The same page will parse the same way: stop this source's backfill here until a new
 		// parser version ships (it then resumes automatically).
@@ -310,7 +310,7 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 		if err != nil {
 			return err
 		}
-		enqueued, err := linkAndQueue(ctx, tx, fresh.ID, blurbs, fetchClass)
+		enqueued, err := linkAndQueueBlurbs(ctx, tx, fresh.ID, blurbs, fetchClass)
 		if err != nil {
 			return err
 		}
@@ -325,7 +325,7 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 			detail["stale_after_fetch"] = true
 			return nil
 		}
-		c.advanceCursor(&cur, page, win, l, detail, log)
+		c.advanceSourceCursor(&cur, page, win, l, detail, log)
 		if page == 1 && win == nil && l.Total >= 0 {
 			fresh.TotalWorks = l.Total
 		}
@@ -340,9 +340,9 @@ func (c *Controllers) BackfillPage(ctx context.Context, sourceID int64, page int
 	return detail, err
 }
 
-// advanceCursor moves a backfill cursor past a successfully stored page: next page, a smaller
+// advanceSourceCursor moves a backfill cursor past a successfully stored page: next page, a smaller
 // window when the current one is over AO3's result window, the previous date window, or done.
-func (c *Controllers) advanceCursor(cur *Cursor, page int, win *ao3url.Window, l parse.Listing, detail Detail, log *slog.Logger) {
+func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3url.Window, l parse.Listing, detail Detail, log *slog.Logger) {
 	cur.BlockedParser, cur.RetryAt = 0, 0
 	maxPages := ao3url.Pages(c.options.MaxResults)
 	pg := l.Pagination

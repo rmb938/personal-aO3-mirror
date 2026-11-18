@@ -70,10 +70,10 @@ func New(opts Options) *Scheduler {
 	s := &Scheduler{options: opts, store: opts.Store, controllers: opts.Controllers, log: opts.Logger.With("component", "scheduler")}
 	s.handlers = map[string]handler{
 		jobs.KindPoll: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
-			return s.controllers.PollPage(ctx, j.SourceID, atoi(j.Target))
+			return s.controllers.PollSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
 		jobs.KindBackfill: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
-			return s.controllers.BackfillPage(ctx, j.SourceID, atoi(j.Target))
+			return s.controllers.BackfillSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
 		jobs.KindWork: func(ctx context.Context, j store.Job) (controllers.Detail, error) {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID)

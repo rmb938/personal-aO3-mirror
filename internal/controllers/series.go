@@ -23,7 +23,7 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool)
 	markFetched := func() error {
 		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.MarkSeriesFetched(ctx, id) })
 	}
-	resp, err := c.get(ctx, httpx.KindSeries, "/series/"+target)
+	resp, err := c.ao3Get(ctx, httpx.KindSeries, "/series/"+target)
 	if err != nil {
 		return nil, giveUpInfo(ctx, err, final, markFetched)
 	}

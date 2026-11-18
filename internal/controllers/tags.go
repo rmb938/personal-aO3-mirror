@@ -29,7 +29,7 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (D
 	}
 	// attempted marks a fetch that yielded nothing, so the tag waits for tags.info_ttl.
 	attempted := func() error { return update(store.TagInfoUpdate{AttemptOnly: true}) }
-	resp, err := c.get(ctx, httpx.KindTag, "/tags/"+ao3url.TagParam(t.Name))
+	resp, err := c.ao3Get(ctx, httpx.KindTag, "/tags/"+ao3url.TagParam(t.Name))
 	if err != nil {
 		return nil, giveUpInfo(ctx, err, final, attempted)
 	}

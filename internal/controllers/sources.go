@@ -123,7 +123,7 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 			res.Estimate = c.estimate(1, 0, 1, false)
 			row.State = store.SourceActive
 			row.TotalWorks, row.EstRequests = 1, res.Estimate.Requests
-			row.BackfillCursor = Cursor{NextPage: 0, Order: orderName}.JSON()
+			row.BackfillCursor = SourceCursor{NextPage: 0, Order: orderName}.JSON()
 		} else {
 			var err error
 			if blurbs, err = c.storeListing(ctx, tx, *page1, 1); err != nil {
@@ -140,7 +140,7 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 			if pages <= 1 {
 				next = 0
 			}
-			row.BackfillCursor = Cursor{NextPage: next, Order: orderName}.JSON()
+			row.BackfillCursor = SourceCursor{NextPage: next, Order: orderName}.JSON()
 			if o.Confirm || total <= c.options.Sources.AutoConfirmMax {
 				row.State = store.SourceActive
 			} else {
@@ -162,7 +162,7 @@ func (c *Controllers) AddSource(ctx context.Context, rawURL string, o AddSourceO
 			}
 		}
 		if len(blurbs.ids) > 0 {
-			n, err := linkAndQueue(ctx, tx, id, blurbs, jobs.ClassBackfill)
+			n, err := linkAndQueueBlurbs(ctx, tx, id, blurbs, jobs.ClassBackfill)
 			if err != nil {
 				return err
 			}
@@ -309,9 +309,9 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 	r.NextPollAt = now
 	res.PollNow = true
 	if full {
-		cur, err := ParseCursor(r.BackfillCursor)
+		cur, err := ParseSourceCursor(r.BackfillCursor)
 		if err != nil {
-			cur = Cursor{Order: r.BackfillOrder}
+			cur = SourceCursor{Order: r.BackfillOrder}
 		}
 		if cur.BlockedParser != 0 {
 			cur.BlockedParser = 0
@@ -319,7 +319,7 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 		}
 		cur.RetryAt = 0
 		if r.State == store.SourceDoneBackfill && r.Kind != string(ao3url.KindWork) {
-			cur = rescanCursor(r.BackfillOrder, now)
+			cur = rescanSourceCursor(r.BackfillOrder, now)
 			res.RescanStarted = true
 		}
 		r.BackfillCursor = cur.JSON()

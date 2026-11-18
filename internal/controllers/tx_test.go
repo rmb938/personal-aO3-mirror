@@ -53,7 +53,7 @@ func TestPollKeepsChangesMadeDuringTheFetch(t *testing.T) {
 		want, err = e.svc.GetSource(ctx, id)
 		require.NoError(t, err)
 	})
-	_, err = ctl.PollPage(ctx, id, 1)
+	_, err = ctl.PollSourcePage(ctx, id, 1)
 	require.NoError(t, err)
 
 	got, err := e.svc.GetSource(ctx, id)
@@ -72,11 +72,11 @@ func TestBackfillDoesNotAdvanceACursorMovedDuringTheFetch(t *testing.T) {
 	id := res.Source.ID
 	src, err := e.svc.GetSource(ctx, id)
 	require.NoError(t, err)
-	cur, err := ParseCursor(src.BackfillCursor)
+	cur, err := ParseSourceCursor(src.BackfillCursor)
 	require.NoError(t, err)
 	require.Equal(t, 2, cur.NextPage)
 
-	moved := Cursor{NextPage: 1, Order: cur.Order, Rescan: true, RescanStarted: 1}.JSON()
+	moved := SourceCursor{NextPage: 1, Order: cur.Order, Rescan: true, RescanStarted: 1}.JSON()
 	ctl := e.withHook(func() {
 		// Something else (e.g. a refresh starting a rescan) resets the cursor mid-fetch.
 		err := e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -89,7 +89,7 @@ func TestBackfillDoesNotAdvanceACursorMovedDuringTheFetch(t *testing.T) {
 		})
 		require.NoError(t, err)
 	})
-	detail, err := ctl.BackfillPage(ctx, id, 2)
+	detail, err := ctl.BackfillSourcePage(ctx, id, 2)
 	require.NoError(t, err)
 	require.Equal(t, true, detail["stale_after_fetch"])
 
@@ -116,7 +116,7 @@ func TestFetchInsideTransactionIsRefused(t *testing.T) {
 	e := newEnv(t, 5000)
 	before := len(e.srv.Requests())
 	err := e.st.InTx(context.Background(), func(ctx context.Context, _ *store.Tx) error {
-		_, err := e.svc.get(ctx, httpx.KindWork, "/works/1")
+		_, err := e.svc.ao3Get(ctx, httpx.KindWork, "/works/1")
 		return err
 	})
 	require.ErrorIs(t, err, store.ErrTxMisuse)

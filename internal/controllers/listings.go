@@ -25,7 +25,7 @@ func (c *Controllers) getListing(ctx context.Context, src ao3url.Source, page in
 	if src.Kind == ao3url.KindSeries {
 		kind = httpx.KindSeries
 	}
-	return c.get(ctx, kind, path)
+	return c.ao3Get(ctx, kind, path)
 }
 
 // parsedListing is one parsed listing page. series is set for page 1 of a series source (its
@@ -95,9 +95,9 @@ func (c *Controllers) storeListing(ctx context.Context, tx *store.Tx, p parsedLi
 	return res, nil
 }
 
-// linkAndQueue records the blurbs as members of a source and queues the fetches they need. It
+// linkAndQueueBlurbs records the blurbs as members of a source and queues the fetches they need. It
 // returns how many fetch jobs were newly created.
-func linkAndQueue(ctx context.Context, tx *store.Tx, sourceID int64, res blurbsResult, class int) (int, error) {
+func linkAndQueueBlurbs(ctx context.Context, tx *store.Tx, sourceID int64, res blurbsResult, class int) (int, error) {
 	if err := tx.LinkSourceWorks(ctx, sourceID, res.ids); err != nil {
 		return 0, err
 	}

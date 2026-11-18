@@ -45,7 +45,7 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64) (Detail
 	}
 	log := c.logger(ctx)
 	path := ao3url.WorkPath(strconv.FormatInt(id, 10))
-	resp, err := c.get(ctx, httpx.KindWork, path)
+	resp, err := c.ao3Get(ctx, httpx.KindWork, path)
 	if pe, ok := errors.AsType[PermanentError](err); ok && pe.Code == CodeTooLarge {
 		// Mark it like a parse failure so listings don't queue another huge download until the
 		// work changes on AO3.

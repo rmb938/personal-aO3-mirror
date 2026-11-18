@@ -56,11 +56,10 @@ type Options struct {
 	MaxPollPages int // cap on pages walked per update poll (default 50)
 	WindowDays   int // initial date-window span for >MaxResults sources (default 365)
 
-	TagInfoTypes   []string      // tag types to fetch wrangling info for (empty = off)
-	TagInfoTTL     time.Duration // refetch tag info after this long (default 30d)
-	RescanInterval time.Duration // full re-walk of done sources (default 30d)
-	SeriesInfo     bool          // fetch pages of series that mirrored works belong to
-	SeriesInfoTTL  time.Duration // refresh those at least this often (default 30d)
+	TagInfoTypes  []string      // tag types to fetch wrangling info for (empty = off)
+	TagInfoTTL    time.Duration // refetch tag info after this long (default 30d)
+	SeriesInfo    bool          // fetch pages of series that mirrored works belong to
+	SeriesInfoTTL time.Duration // refresh those at least this often (default 30d)
 }
 
 // Controllers runs the mirror's business operations. It is safe to share; it holds no
@@ -96,9 +95,6 @@ func New(opts Options) *Controllers {
 	if opts.SeriesInfoTTL == 0 {
 		opts.SeriesInfoTTL = 30 * 24 * time.Hour
 	}
-	if opts.RescanInterval == 0 {
-		opts.RescanInterval = 30 * 24 * time.Hour
-	}
 	return &Controllers{options: opts, store: opts.Store, log: opts.Logger}
 }
 
@@ -109,9 +105,9 @@ type Detail = map[string]any
 // logger returns the request-scoped logger (job attrs from the scheduler) or the default one.
 func (c *Controllers) logger(ctx context.Context) *slog.Logger { return logx.From(ctx, c.log) }
 
-// get fetches one AO3 path through the paced client. It refuses to run inside a transaction
+// ao3Get fetches one AO3 path through the paced client. It refuses to run inside a transaction
 // (that would hold the SQLite write lock across a request that can wait for minutes).
-func (c *Controllers) get(ctx context.Context, kind httpx.Kind, path string) (*httpx.Response, error) {
+func (c *Controllers) ao3Get(ctx context.Context, kind httpx.Kind, path string) (*httpx.Response, error) {
 	if err := store.NotInTx(ctx); err != nil {
 		return nil, err
 	}
@@ -216,6 +212,7 @@ func outcome(resp *httpx.Response) error {
 // needs info): a permanent error, or a retryable one on the job's last attempt, records the
 // attempt via mark so the item waits for its info TTL instead of being queued again at once.
 // Shutdown leaves it alone. It returns err (joined with any mark error).
+// TODO: give this a better name
 func giveUpInfo(ctx context.Context, err error, final bool, mark func() error) error {
 	if ctx.Err() != nil {
 		return err

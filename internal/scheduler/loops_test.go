@@ -213,7 +213,7 @@ func TestOddListingResponseHoldsBackfill(t *testing.T) {
 		return n
 	}
 	after := listing()
-	cur, err := controllers.ParseCursor(e.source(id).BackfillCursor)
+	cur, err := controllers.ParseSourceCursor(e.source(id).BackfillCursor)
 	require.NoError(t, err)
 	require.Zero(t, cur.BlockedParser, "odd response blocked the backfill as a parse failure")
 	require.NotZero(t, cur.RetryAt, "page not held back")

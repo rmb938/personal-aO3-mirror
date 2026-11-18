@@ -44,14 +44,14 @@ type workState struct {
 // origin FromBlurb updates listing-visible metadata and stats, but never chapters, notes, the
 // published date or fetch bookkeeping. FromPage updates everything and marks the work fetched.
 func (s *Tx) UpsertWork(ctx context.Context, w model.Work, origin model.Origin, parserVersion int) (UpsertResult, error) {
-	return s.upsert(ctx, w, origin, parserVersion, upsertOpt{})
+	return s.upsertWork(ctx, w, origin, parserVersion, upsertOpt{})
 }
 
 // ReparseWork re-applies a work parsed from a stored raw page (fetched at pageAt). It never
 // changes availability status or fetch times. Listing-visible metadata (title, tags, stats...)
 // is only rewritten if no newer listing blurb has been seen since the page was fetched.
 func (s *Tx) ReparseWork(ctx context.Context, w model.Work, pageAt time.Time, parserVersion int) error {
-	_, err := s.upsert(ctx, w, model.FromPage, parserVersion, upsertOpt{reparse: true, pageAt: pageAt.Unix()})
+	_, err := s.upsertWork(ctx, w, model.FromPage, parserVersion, upsertOpt{reparse: true, pageAt: pageAt.Unix()})
 	return err
 }
 
@@ -60,7 +60,7 @@ type upsertOpt struct {
 	pageAt  int64
 }
 
-func (s *Tx) upsert(ctx context.Context, w model.Work, origin model.Origin, parserVersion int, opt upsertOpt) (UpsertResult, error) {
+func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, parserVersion int, opt upsertOpt) (UpsertResult, error) {
 	if w.ID <= 0 {
 		return UpsertResult{}, errors.New("store: work id required")
 	}
@@ -206,14 +206,14 @@ func (s *Tx) upsert(ctx context.Context, w model.Work, origin model.Origin, pars
 		}
 		res.MetaChanged = diffMeta(before, after)
 	}
-	s.log.Debug("work upserted", "work_id", w.ID, "origin", originName(origin), "reparse", opt.reparse,
+	s.log.Debug("work upserted", "work_id", w.ID, "origin", workOriginName(origin), "reparse", opt.reparse,
 		"listing_meta_updated", listingMeta, "new", res.New,
 		"changed", res.Changed, "needs_fetch", res.NeedsFetch, "revived", res.Revived,
 		"tags", len(w.Tags), "creators", len(w.Creators), "chapters", len(w.Chapters), "series", len(w.Series))
 	return res, nil
 }
 
-func originName(o model.Origin) string {
+func workOriginName(o model.Origin) string {
 	if o == model.FromPage {
 		return "page"
 	}
