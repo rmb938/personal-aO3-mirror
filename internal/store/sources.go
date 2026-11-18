@@ -322,6 +322,15 @@ func (s *Tx) RecordMissedRescan(ctx context.Context, sourceID int64, since time.
 	return check, dropped, err
 }
 
+// OkSourceMembers returns how many of a source's member works have status ok (the ones its
+// listing is expected to show).
+func (s *ReadTx) OkSourceMembers(ctx context.Context, sourceID int64) (int, error) {
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_works sw JOIN works w ON w.id = sw.work_id
+		WHERE sw.source_id = ? AND w.status = 'ok'`, sourceID).Scan(&n)
+	return n, err
+}
+
 // DropMissedSourceWorks removes a work from every source whose last MissedRescansToDrop
 // rescans in a row missed it. Call it only after a fetch found the work on AO3: it left those
 // sources rather than being deleted. The work itself is kept. It returns how many were dropped.

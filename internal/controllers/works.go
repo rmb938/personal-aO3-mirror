@@ -153,7 +153,10 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		// The work is on AO3: sources whose recent rescans all missed it have lost it.
 		leftSources, err = tx.DropMissedSourceWorks(ctx, id)
 		return err
-	}); err != nil {
+	}); errors.Is(err, errChaptersShrank) {
+		// Rolled back: handled like any parse failure (page kept for reparse, no retry).
+		return detail, c.workParseFailed(ctx, id, path, resp, PermanentError{Code: CodeParseError, Detail: "chapters_shrank"})
+	} else if err != nil {
 		return detail, err
 	}
 	if leftSources > 0 {
@@ -187,9 +190,27 @@ type storedWork struct {
 // its embedded images. A fresh fetch (reparse false) marks the work fetched. A reparse leaves
 // fetch bookkeeping and status alone; pageAt is when the stored page was fetched, so newer
 // listing metadata is not rolled back.
+//
+// A page with fewer chapters than it says are posted, and fewer than are stored, is refused
+// with errChaptersShrank (the stored chapters are kept): the parser most likely missed some.
+// A page that is merely short of its posted count is stored; the gap (fetched_chapters vs
+// stored chapters) is left for the UI to warn about. A chapter the author deleted lowers the
+// posted count too, so it is not refused.
 func (c *Controllers) storeWork(ctx context.Context, tx *store.Tx, w model.Work, reparse bool, pageAt time.Time) (storedWork, error) {
 	var sw storedWork
 	var err error
+	if parsed := len(w.Chapters); parsed < w.ChaptersPosted {
+		stored, err := tx.ChapterCount(ctx, w.ID)
+		if err != nil {
+			return sw, err
+		}
+		if parsed < stored {
+			c.logger(ctx).Warn("work page has fewer chapters than stored and than posted; stored chapters kept",
+				"work_id", w.ID, "chapters_parsed", parsed, "chapters_posted", w.ChaptersPosted, "chapters_stored", stored,
+				"reparse", reparse)
+			return sw, errChaptersShrank
+		}
+	}
 	if sw.content, err = tx.PutWorkContent(ctx, w.ID, w.Chapters, w.SkinCSS); err != nil {
 		return sw, err
 	}
@@ -214,6 +235,10 @@ func isTooLarge(err error) bool {
 	pe, ok := errors.AsType[PermanentError](err)
 	return ok && pe.Code == CodeTooLarge
 }
+
+// errChaptersShrank refuses a parsed work page that would replace stored chapters with fewer,
+// while the page itself says more are posted (see storeWork).
+var errChaptersShrank = errors.New("work page parsed fewer chapters than stored and than posted")
 
 // errParserPanic is a parser panic on a work page.
 var errParserPanic = errors.New("parser panicked")

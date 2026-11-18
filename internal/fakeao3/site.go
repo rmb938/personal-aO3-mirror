@@ -20,8 +20,12 @@ type SiteWork struct {
 	Words    int
 	Chapters int // posted
 	Expected int // 0 = "?"
+	// Rendered, if set, is how many chapter divs the work page renders (fewer than Chapters
+	// simulates a page whose chapters the parser can't all find).
+	Rendered int
 	Deleted  bool
 	Untagged bool // no longer in the tag's listing, but its work page still loads
+	Unlinked bool // listed, but its blurb has no work link (as if AO3 changed the blurb markup)
 }
 
 // Site is a synthetic AO3 with one tag. It supports the listing params the scraper uses:
@@ -197,8 +201,12 @@ func (s *Site) blurb(sw *SiteWork) string {
 	if sw.Expected > 0 && sw.Chapters >= sw.Expected {
 		complete = "complete-yes"
 	}
+	link := fmt.Sprintf(`<a href="/works/%d">Fixture Work %d</a>`, sw.ID, sw.ID)
+	if sw.Unlinked {
+		link = fmt.Sprintf(`<span>Fixture Work %d</span>`, sw.ID)
+	}
 	return fmt.Sprintf(`<li id="work_%[1]d" class="work blurb group" role="article">
-<div class="header module"><h4 class="heading"><a href="/works/%[1]d">Fixture Work %[1]d</a> by <a rel="author" href="/users/fixture_author/pseuds/fixture_author">fixture_author</a></h4>
+<div class="header module"><h4 class="heading">%[9]s by <a rel="author" href="/users/fixture_author/pseuds/fixture_author">fixture_author</a></h4>
 <h5 class="fandoms heading"><span class="landmark">Fandoms:</span> <a class="tag" href="%[2]s">Fixture Tag</a></h5>
 <ul class="required-tags"><li><a href="/help/symbols-key.html"><span class="rating-general-audience rating" title="General Audiences"><span class="text">General Audiences</span></span></a></li><li><a href="/help/symbols-key.html"><span class="%[3]s iswip" title="x"><span class="text">x</span></span></a></li></ul>
 <p class="datetime">%[4]s</p></div>
@@ -206,12 +214,16 @@ func (s *Site) blurb(sw *SiteWork) string {
 <dl class="stats"><dt class="language">Language:</dt><dd class="language">English</dd><dt class="words">Words:</dt><dd class="words">%[5]s</dd>
 <dt class="chapters">Chapters:</dt><dd class="chapters">%[6]s</dd><dt class="kudos">Kudos:</dt><dd class="kudos">%[7]d</dd>
 <dt class="hits">Hits:</dt><dd class="hits">%[8]d</dd></dl></li>`,
-		sw.ID, s.TagPath(), complete, sw.Revised.Format("02 Jan 2006"), commas(sw.Words), s.chapters(sw), sw.Kudos, sw.Hits)
+		sw.ID, s.TagPath(), complete, sw.Revised.Format("02 Jan 2006"), commas(sw.Words), s.chapters(sw), sw.Kudos, sw.Hits, link)
 }
 
 func (s *Site) workPage(sw *SiteWork) string {
 	var ch strings.Builder
-	for i := 1; i <= sw.Chapters; i++ {
+	rendered := sw.Chapters
+	if sw.Rendered > 0 {
+		rendered = sw.Rendered
+	}
+	for i := 1; i <= rendered; i++ {
 		fmt.Fprintf(&ch, `<div class="chapter" id="chapter-%[1]d"><div class="chapter preface group"><h3 class="title"><a href="/works/%[2]d/chapters/%[3]d">Chapter %[1]d</a>: Fixture Chapter</h3></div>
 <div class="userstuff module" role="article"><h3 class="landmark heading" id="work">Chapter Text</h3><p>Fixture body %[2]d chapter %[1]d.</p></div></div>`, i, sw.ID, sw.ID*100+int64(i))
 	}

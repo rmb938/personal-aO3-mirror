@@ -140,6 +140,18 @@ func TestParseWorkUnexpected(t *testing.T) {
 	require.NotContains(t, err.Error(), "<p>", "error must name selectors only")
 }
 
+// A chapter whose text container is missing fails the parse, so an empty chapter never
+// replaces a stored good one.
+func TestParseWorkChapterMissingBody(t *testing.T) {
+	page := string(fixture(t, "work_chaptered.html"))
+	broken := strings.Replace(page, `<div class="userstuff module" role="article">`, `<div class="fixture-renamed module" role="article">`, 1)
+	require.NotEqual(t, page, broken, "fixture must contain a chapter body to break")
+	_, r, err := ParseWork(1001, []byte(broken))
+	require.ErrorIs(t, err, ErrUnexpected)
+	require.Contains(t, r.Missing, "#chapters>div.chapter>div.userstuff")
+	require.Equal(t, 1, r.Counts["chapter_missing_body"])
+}
+
 func TestParseSeries(t *testing.T) {
 	s, r, err := ParseSeries(3001, fixture(t, "series.html"), fetchedAt)
 	require.NoError(t, err, "missing: %v", r.Missing)

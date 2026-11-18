@@ -111,6 +111,13 @@ func ParseWork(workID int64, page []byte) (model.Work, *Report, error) {
 		chDivs.Each(func(i int, div *goquery.Selection) {
 			w.Chapters = append(w.Chapters, parseChapter(i+1, div, r))
 		})
+		// AO3 always renders a chapter's text in div.userstuff (chapters/_chapter.html.erb). A
+		// chapter without one means the structure changed: fail rather than store an empty
+		// chapter over the good copy.
+		if r.Counts["chapter_missing_body"] > 0 {
+			r.Missing = append(r.Missing, "#chapters>div.chapter>div.userstuff")
+			return w, r, unexpected("#chapters div.chapter div.userstuff")
+		}
 	} else {
 		body := r.sel("#chapters>div.userstuff", chapters.ChildrenFiltered("div.userstuff").First())
 		if body.Length() == 0 {

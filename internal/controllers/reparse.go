@@ -138,7 +138,9 @@ func (c *Controllers) reparseOne(ctx context.Context, log *slog.Logger, id int64
 			}
 			outcome, images = reparseDone, sw.images
 			return nil
-		}); err != nil {
+		}); errors.Is(err, errChaptersShrank) {
+			outcome = reparseFailed // rolled back; storeWork logged the counts
+		} else if err != nil {
 			return err
 		}
 	}

@@ -90,26 +90,17 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Source
 	}
 	verify := 0
 	if cur.Rescan {
-		// Every missed work gets one fetch: deleted/hidden marks it (it stays a member); a
-		// successful fetch after MissedRescansToDrop misses in a row drops the membership (the
-		// work left the source; see FetchWork). One miss alone can be a work that shifted into
-		// an already-walked page during the hours-long walk.
-		// A work whose fetch keeps giving up is dropped at the second miss without a request.
-		check, dropped, err := tx.RecordMissedRescan(ctx, r.ID, time.Unix(cur.RescanStarted, 0))
+		complete, err := rescanSawSource(ctx, tx, r.ID, cur, log)
 		if err != nil {
 			return err
 		}
-		if dropped > 0 {
-			log.Info("unfetchable works left the source", "dropped_members", dropped)
-		}
-		for _, id := range check {
-			if _, created, err := enqueueWorkFetch(ctx, tx, id, r.ID, jobs.ClassMaintenance); err != nil {
+		if complete {
+			if verify, err = recordRescanMisses(ctx, tx, r.ID, time.Unix(cur.RescanStarted, 0), log); err != nil {
 				return err
-			} else if created {
-				verify++
 			}
 		}
 		cur.Rescan, cur.RescanStarted = false, 0
+		cur.RescanListed, cur.RescanSkipped, cur.RescanTruncated = 0, 0, false
 		r.BackfillCursor = cur.JSON()
 	}
 	r.BackfillDoneAt, r.LastFullScanAt = now, now
@@ -122,6 +113,67 @@ func finishWalk(ctx context.Context, tx *store.Tx, r store.SourceRow, cur Source
 	}
 	log.Info("source walk complete", "works_seen", seen, "works_fetched", fetched, "verify_jobs", verify)
 	return nil
+}
+
+// recordRescanMisses counts a finished rescan's misses and queues a check fetch for each missed
+// work. It returns how many check jobs were newly created.
+//
+// Every missed work gets one fetch: deleted/hidden marks it (it stays a member); a successful
+// fetch after MissedRescansToDrop misses in a row drops the membership (the work left the
+// source; see FetchWork). One miss alone can be a work that shifted into an already-walked page
+// during the hours-long walk. A work whose fetch keeps giving up is dropped at the second miss
+// without a request.
+func recordRescanMisses(ctx context.Context, tx *store.Tx, sourceID int64, started time.Time, log *slog.Logger) (int, error) {
+	check, dropped, err := tx.RecordMissedRescan(ctx, sourceID, started)
+	if err != nil {
+		return 0, err
+	}
+	if dropped > 0 {
+		log.Info("unfetchable works left the source", "dropped_members", dropped)
+	}
+	verify := 0
+	for _, id := range check {
+		if _, created, err := enqueueWorkFetch(ctx, tx, id, sourceID, jobs.ClassMaintenance); err != nil {
+			return verify, err
+		} else if created {
+			verify++
+		}
+	}
+	return verify, nil
+}
+
+// rescanSawSource reports whether a finished rescan saw the whole source, so that its misses
+// mean the works left. A walk that did not would count works it never reached as missed, and
+// two such walks would drop them from the source. Such a walk counts no misses:
+//   - it stopped at AO3's result window with pages left;
+//   - more blurbs were skipped (no work link) than stored: the listing parser most likely no
+//     longer finds work links (real skips, mystery and external works, are a minority);
+//   - it stored no blurb at all while the source has ok members (e.g. the blurb selector no
+//     longer matches). A source whose works all really left keeps them as members, and warns
+//     on every rescan, rather than risk dropping works that are still in it.
+//
+// Works that really leave make a listing shorter, not skipped, so they still count.
+func rescanSawSource(ctx context.Context, tx *store.Tx, sourceID int64, cur SourceCursor, log *slog.Logger) (bool, error) {
+	counts := []any{"listed", cur.RescanListed, "skipped", cur.RescanSkipped}
+	switch {
+	case cur.RescanTruncated:
+		log.Warn("rescan stopped at AO3's result window; missed works not counted", counts...)
+		return false, nil
+	case cur.RescanSkipped > cur.RescanListed:
+		log.Warn("rescan skipped more blurbs than it stored; missed works not counted", counts...)
+		return false, nil
+	case cur.RescanListed > 0:
+		return true, nil
+	}
+	members, err := tx.OkSourceMembers(ctx, sourceID)
+	if err != nil {
+		return false, err
+	}
+	if members > 0 {
+		log.Warn("rescan listed none of the source's works; missed works not counted", append(counts, "ok_members", members)...)
+		return false, nil
+	}
+	return true, nil
 }
 
 // maybeStartRescan restarts the listing walk of a done source every RescanInterval to refresh
