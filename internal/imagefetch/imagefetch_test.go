@@ -341,6 +341,39 @@ func TestRobotsUnavailableRetriesImage(t *testing.T) {
 	require.Equal(t, map[string]int{"ok": 1}, counts, "image lost to a temporary robots.txt error")
 }
 
+// A 403 (often a temporary bot block) is retried with backoff, not given up at once: an image
+// the host serves again later is downloaded. One that keeps refusing fails after MaxAttempts.
+func TestForbiddenImageRetried(t *testing.T) {
+	var mu sync.Mutex
+	forbidden := map[string]int{"/a.png": 1, "/b.png": 1000} // a: one 403, then served; b: always 403
+	requests := map[string]int{}
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		requests[r.URL.Path]++
+		refuse := requests[r.URL.Path] <= forbidden[r.URL.Path]
+		mu.Unlock()
+		if refuse {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{1}, 50)...))
+	}))
+	t.Cleanup(h.Close)
+	db, run := fakeWorker(t, []string{h.URL + "/a.png", h.URL + "/b.png"})
+	run(3000) // up to ~2 days of fake time: past every retry of the 10m-doubling backoff
+	counts, _, err := db.ImageCounts(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"ok": 1, "failed": 1}, counts, "image lost to a single 403, or a refusing one never given up")
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 5, requests["/b.png"], "always-403 image tried MaxAttempts times")
+}
+
 // A host held back by a 429 does not stall images on other hosts, however many of its own
 // images are queued ahead of them.
 func TestBackedOffHostDoesNotBlockOthers(t *testing.T) {

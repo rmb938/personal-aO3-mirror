@@ -325,13 +325,17 @@ func (w *Worker) fetch(ctx context.Context, r store.ImageRow) {
 	defer resp.Body.Close()
 	ct := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	switch {
-	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusForbidden:
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
 		_ = st.ImageFinal(ctx, r.ID, store.ImageFailed, fmt.Sprintf("status=%d", resp.StatusCode))
 		log.Info("image gone", "status", resp.StatusCode)
 		return
-	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError:
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden ||
+		resp.StatusCode >= http.StatusInternalServerError:
 		// The whole host backs off (Retry-After, or the first retry delay), not just this image:
-		// its other queued images wait too.
+		// its other queued images wait too. A 403 is retried like this too: hosts send it for
+		// temporary bot blocks and challenges, and a failed image is never queued again, so
+		// giving up at the first one would lose an image the host may serve an hour later.
+		// One that keeps refusing fails after MaxAttempts.
 		host := store.ImageHost(resp.Request.URL)
 		cool := w.hostBackoff(host, httpx.ParseRetryAfter(resp.Header.Get("Retry-After"), w.o.Now()))
 		log.Warn("image host unavailable; host backing off", "status", resp.StatusCode, "retry_after", resp.Header.Get("Retry-After"),
