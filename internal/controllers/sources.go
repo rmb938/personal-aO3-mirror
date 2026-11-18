@@ -213,12 +213,9 @@ func (c *Controllers) addFirstPage(ctx context.Context, src ao3url.Source, order
 	case httpx.ClassRateLimited, httpx.ClassUnavailable:
 		return parsedListing{}, 0, fmt.Errorf("%w (%s)", ErrUnavailable, resp.Reason)
 	default:
-		if !pageStructureProblem(resp) {
-			// An odd answer (adult gate, unusual 4xx, unfollowed redirect): not our parser.
-			return parsedListing{}, 0, PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
-		}
-		c.saveSkeleton(ctx, "listing", skeletonAddID(src), resp.Body)
-		return parsedListing{}, 0, fmt.Errorf("%w (%s)", ErrUnexpected, resp.Reason)
+		// An odd answer (unusual 4xx, unfollowed redirect): not our parser. Listing and series
+		// pages have no HTTP-200 structure check in the classifier; the parser below decides.
+		return parsedListing{}, 0, PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
 	}
 	p, err := c.parseListing(ctx, src, 1, resp)
 	if err != nil {

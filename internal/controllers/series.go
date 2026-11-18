@@ -33,9 +33,6 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool)
 		return detail, markFetched()
 	}
 	if err := outcome(resp); err != nil {
-		if resp.Class == httpx.ClassUnexpected {
-			c.saveSkeleton(ctx, "series", target, resp.Body)
-		}
 		return detail, giveUpInfo(ctx, err, final, markFetched)
 	}
 	ser, rep, err := parse.ParseSeries(id, resp.Body, c.options.Now())

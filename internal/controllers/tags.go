@@ -39,10 +39,8 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (D
 		return detail, attempted()
 	}
 	if err := outcome(resp); err != nil {
-		if resp.Class == httpx.ClassUnexpected {
-			c.saveSkeleton(ctx, "tag", skelID, resp.Body)
-		}
-		// Permanent (restricted, hidden, adult gate, unexpected) or out of retries.
+		// Permanent (restricted, hidden, odd answer) or out of retries. An odd answer is not a
+		// tag page, so no skeleton is saved for it.
 		return detail, giveUpInfo(ctx, err, final, attempted)
 	}
 	info, rep, err := parse.ParseTag(resp.Body)

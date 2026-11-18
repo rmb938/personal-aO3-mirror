@@ -194,6 +194,10 @@ func (e PermanentError) Error() string {
 }
 
 // outcome maps an httpx response class to an operation outcome for non-OK responses.
+//
+// It is for listing, series and tag pages. For those the classifier only says unexpected for an
+// odd answer (an unusual 4xx, an unfollowed redirect): the HTTP-200 structure check and the adult
+// gate exist for work pages only, and fetchWork handles both before calling outcome.
 func outcome(resp *httpx.Response) error {
 	switch resp.Class {
 	case httpx.ClassRateLimited, httpx.ClassUnavailable:
@@ -201,9 +205,7 @@ func outcome(resp *httpx.Response) error {
 	case httpx.ClassOK:
 		return nil
 	case httpx.ClassUnexpected:
-		if !pageStructureProblem(resp) {
-			return PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
-		}
+		return PermanentError{Code: CodeOddResponse, Detail: resp.Reason}
 	}
 	return PermanentError{Code: ErrorCode(resp.Class)}
 }
@@ -235,10 +237,10 @@ func parseUnexpected(missing []string) PermanentError {
 	return PermanentError{Code: CodeParseUnexpected, Detail: strings.Join(missing, ",")}
 }
 
-// pageStructureProblem reports whether an unexpected response is an AO3 page whose structure we
-// did not recognise (HTTP 200), as opposed to an odd answer (unusual 4xx, unfollowed redirect,
-// 1xx/3xx). Only the former is a parse failure: it is kept for reparse and blocks a backfill
-// until the parser changes. An odd answer is neither stored nor treated as one.
+// pageStructureProblem reports whether an unexpected response is a work page whose structure we
+// did not recognise (HTTP 200, no #workskin), as opposed to an odd answer (unusual 4xx,
+// unfollowed redirect). Only the former is a parse failure: it is kept for reparse. An odd
+// answer is neither stored nor treated as one. Only work fetches can get the former.
 func pageStructureProblem(resp *httpx.Response) bool {
 	return resp.Class == httpx.ClassUnexpected && resp.Status == http.StatusOK
 }
