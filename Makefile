@@ -9,8 +9,12 @@ GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK_VERSION ?= v1.9.0
 PYTHON   ?= python3
 BIN      ?= ao3mirror
+# Per fuzz target. FUZZFLAGS passes extra flags, e.g. FUZZFLAGS='-parallel 4' to use fewer
+# cores (the default is one fuzz worker per core).
+FUZZTIME ?= 30s
+FUZZFLAGS ?=
 
-.PHONY: all build fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench clean help
+.PHONY: all build fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench fuzz clean help
 
 all: check build
 
@@ -25,6 +29,7 @@ help:
 	@echo "make guard-test  test the Claude guard hook (.claude/hooks/guard.py)"
 	@echo "make check       lint + vulncheck + test + guard-test: run before every commit"
 	@echo "make bench       content store layout benchmarks (synthetic data)"
+	@echo "make fuzz        run every Fuzz* target for FUZZTIME each (default 30s; uses all cores)"
 
 build:
 	$(GO) build -o $(BIN) ./cmd/ao3mirror
@@ -74,6 +79,18 @@ check: lint vulncheck test guard-test
 
 bench:
 	$(GO) test ./internal/store -run '^$$' -bench 'Blob|ChapterColumnOrder' -benchtime 2000x
+
+# Real fuzzing; `make test` only replays the seed inputs. `go test -fuzz` takes one target per
+# run, so this finds every Fuzz* func and runs each in turn, stopping at the first failure. A
+# failing input is saved under the package's testdata/fuzz/; commit it as a regression seed.
+# Not part of `check`: it is slow and keeps all cores busy.
+fuzz:
+	@set -e; for dir in $$(grep -rlE '^func Fuzz' --include='*_test.go' internal cmd | xargs -n1 dirname | sort -u); do \
+		for fn in $$($(GO) test -list '^Fuzz' ./$$dir | grep '^Fuzz'); do \
+			echo "== ./$$dir $$fn ($(FUZZTIME))"; \
+			$(GO) test ./$$dir -run '^$$' -fuzz "^$$fn$$" -fuzztime $(FUZZTIME) $(FUZZFLAGS); \
+		done; \
+	done
 
 clean:
 	rm -f $(BIN)

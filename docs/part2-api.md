@@ -223,13 +223,27 @@ Status: tick when the PR merges.
   - `settings.json`: extend the hook matcher with `mcp__.*`.
   - Add `guard_test.py` cases for each rule, both blocked and allowed (e.g. `grep -r
     reveal_fanwork internal/` is allowed, and `serve --no-reveal` is allowed).
-- [ ] **1. `internal/api/redact`.** No HTTP server yet.
+- [x] **1. `internal/api/redact`.** No HTTP server yet.
   - Hasher: an in-memory `crypto/rand` key with an epoch ID, and rotation driven by an
     injectable clock. `Hash(s)` under one epoch snapshot per response.
   - Registry: `RegisterTypes(...)` collects keys, `RegisterEnum(key, values...)`.
   - `Enforce(mode, jsonBytes) ([]byte, error)`.
   - Tests: unit tests per rule, plus a fuzz test (random JSON with sentinel strings: no input
     string survives in hashed mode unless allowed) and benchmarks.
+  - As built:
+    - `Enforcer.Enforce(mode, body)` returns `Result{Body, Epoch}`. `Epoch` is the epoch ID
+      for the `X-Fanwork-Key-Epoch` header, and is empty in revealed mode.
+    - Errors are `*UnknownKeyError` (it carries only the key's hash) or `ErrInvalidJSON`.
+      Neither message quotes the input.
+    - `NewEnforcer(reg, hasher)` snapshots the registry, and every enum key must be a DTO key.
+    - `RegisterTypes` requires an explicit snake_case json tag on every exported field. It
+      rejects map, interface, chan and func fields. Types with their own JSON or text
+      marshaling (e.g. `time.Time`) count as leaves.
+    - Strings inside arrays use the key of the field that holds the array.
+    - An `_at` value must be exactly what `time.Time` marshals for UTC (RFC3339Nano with `Z`).
+    - `NewHasher` enforces the `MinRotation` (1h) rule, which config validation can reuse.
+    - `Epoch` values print and log only their ID.
+    - Benchmark: about 1 ms (~175 MB/s) for a 186 KB list page in hashed mode.
 - [ ] **2. Server skeleton**
   - `serve` command (`--no-reveal`), `api:` config, chi router.
   - The full middleware chain above.
