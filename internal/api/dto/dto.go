@@ -19,3 +19,17 @@ type Problem struct {
 	// always a name the API declares, never echoed client input.
 	Field string `json:"field,omitzero"`
 }
+
+// Health is the body of GET /api/v1/healthz.
+type Health struct {
+	// Status is always "ok" (an enum).
+	Status string `json:"status"`
+}
+
+// Version is the body of GET /api/v1/version.
+type Version struct {
+	// Version is the build version (an enum of the one running version).
+	Version string `json:"version"`
+	// ParserVersion is the parser version new parses are stamped with.
+	ParserVersion int `json:"parser_version"`
+}

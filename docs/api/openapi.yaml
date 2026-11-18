@@ -1,0 +1,70 @@
+# Hand-written API description for `ao3mirror serve` (docs/part2-api.md).
+#
+# internal/api's route-coverage test checks that the operations here match the routers exactly:
+# every operation without `x-admin-only: true` is on the public listener, and every operation is
+# on the admin socket. OpenAPI 3.2 is used for its native `query` operation (RFC 10008).
+openapi: 3.2.0
+info:
+  title: ao3mirror API
+  version: v1
+  description: |
+    Every string in a response is replaced with a keyed hash (`h_` + 24 hex) unless it is a
+    registered enum value, an `_at` RFC 3339 UTC timestamp or an `_on` date. Only the per-request
+    reveal query parameter returns real content. Every response carries `X-Fanwork:
+    hashed|revealed`; hashed responses carry `X-Fanwork-Key-Epoch`, and hashes are comparable
+    only within one epoch.
+servers:
+  - url: /
+paths:
+  /api/v1/healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness check.
+      responses:
+        "200":
+          description: The server is up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/version:
+    get:
+      operationId: getVersion
+      summary: Build and parser versions.
+      responses:
+        "200":
+          description: Versions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+        default: { $ref: "#/components/responses/Problem" }
+components:
+  responses:
+    Problem:
+      description: An RFC 9457 problem. Every field is an enumerable value.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      required: [code, title, status]
+      additionalProperties: false
+      properties:
+        code: { type: string, description: "Machine-readable error code (closed set)." }
+        title: { type: string, description: "Fixed title for the code." }
+        status: { type: integer }
+        field: { type: string, description: "The request parameter or body field at fault." }
+    Health:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [ok] }
+    Version:
+      type: object
+      required: [version, parser_version]
+      additionalProperties: false
+      properties:
+        version: { type: string }
+        parser_version: { type: integer }

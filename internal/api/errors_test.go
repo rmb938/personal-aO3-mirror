@@ -81,7 +81,7 @@ func TestCodeInfoComplete(t *testing.T) {
 func TestProblemsPassEnforcerUnhashed(t *testing.T) {
 	h, err := redact.NewHasher(0, nil)
 	require.NoError(t, err)
-	enf, err := newEnforcer(h)
+	enf, err := newEnforcer(h, "test-version")
 	require.NoError(t, err)
 	for c := range codeInfo {
 		for f := range knownFields {
