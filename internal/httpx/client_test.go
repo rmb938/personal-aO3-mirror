@@ -243,6 +243,12 @@ func TestClassification(t *testing.T) {
 		{"/works/19", fakeao3.Reply{Body: fakeao3.Page("<p>no workskin</p>")}, KindWork, ClassUnexpected},
 		{"/tags/fixture/works", fakeao3.Reply{Body: fakeao3.Page("")}, KindListing, ClassOK},
 		{"/works/20", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/x"}}, KindWork, ClassUnexpected},
+		// A 404 without AO3's layout (a proxy or deploy page) is an outage, not a deleted work.
+		{"/works/25", fakeao3.Reply{Status: 404, Body: "<html><body>404 Not Found</body></html>"}, KindWork, ClassUnavailable},
+		{"/works/26", fakeao3.Reply{Status: 404}, KindWork, ClassUnavailable},
+		// Another host's root or login page says nothing about the work: not hidden/restricted.
+		{"/works/27", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/"}}, KindWork, ClassUnexpected},
+		{"/works/28", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": "https://elsewhere.example/users/login?restricted=true"}}, KindWork, ClassUnexpected},
 	}
 	for _, c := range cases {
 		h.srv.Handle(c.path, c.reply)
@@ -283,6 +289,17 @@ func TestRedirectSchemeChangeNotFollowed(t *testing.T) {
 	for _, rec := range h.srv.Requests() {
 		require.NotEqual(t, "/works/2", rec.URI, "followed a scheme-changing redirect")
 	}
+}
+
+// A scheme-changing redirect to the root is unexpected, not "hidden": only a same-origin
+// redirect to the root or login page means AO3 denied access to the work.
+func TestRedirectSchemeChangeToRootNotHidden(t *testing.T) {
+	h := newHarness(t, 10*time.Second, 0)
+	other := strings.Replace(h.srv.URL, "http://", "https://", 1)
+	h.srv.Handle("/works/1", fakeao3.Reply{Status: 302, Header: map[string]string{"Location": other + "/"}})
+	r := h.get(t, KindWork, "/works/1")
+	require.Equal(t, ClassUnexpected, r.Class, "reason %s", r.Reason)
+	require.Contains(t, r.Reason, "scheme=true")
 }
 
 // A rate-limited robots.txt is "busy", not "no robots.txt": nothing is allowed until it is
