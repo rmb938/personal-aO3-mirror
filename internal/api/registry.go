@@ -12,10 +12,16 @@ import (
 // the enforcer rejects its keys (500).
 var responseTypes = []any{
 	dto.Problem{},
+	dto.Health{},
+	dto.Version{},
 }
 
+// healthOK is the only Health.Status value.
+const healthOK = "ok"
+
 // newEnforcer builds the response enforcer from the DTO types and the API's closed value sets.
-func newEnforcer(h *redact.Hasher) (*redact.Enforcer, error) {
+// version is the running build version, registered as the only `version` value.
+func newEnforcer(h *redact.Hasher, version string) (*redact.Enforcer, error) {
 	reg := redact.NewRegistry()
 	if err := reg.RegisterTypes(responseTypes...); err != nil {
 		return nil, err
@@ -27,9 +33,11 @@ func newEnforcer(h *redact.Hasher) (*redact.Enforcer, error) {
 		titles = append(titles, info.title)
 	}
 	enums := map[string][]string{
-		"code":  codes,
-		"title": titles,
-		"field": slices.Collect(maps.Keys(knownFields)),
+		"code":    codes,
+		"title":   titles,
+		"field":   slices.Collect(maps.Keys(knownFields)),
+		"status":  {healthOK},
+		"version": {version},
 	}
 	for key, vals := range enums {
 		if err := reg.RegisterEnum(key, vals...); err != nil {

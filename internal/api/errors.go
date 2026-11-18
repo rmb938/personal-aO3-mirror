@@ -25,6 +25,7 @@ const (
 	CodeUnsupportedMediaType Code = "unsupported_media_type"
 	CodeRevealRequired       Code = "reveal_required"
 	CodeRevealDisabled       Code = "reveal_disabled"
+	CodeForbidden            Code = "forbidden"
 	CodeNotFound             Code = "not_found"
 	CodeMethodNotAllowed     Code = "method_not_allowed"
 	CodeConflict             Code = "conflict"
@@ -50,6 +51,7 @@ var codeInfo = map[Code]struct {
 	CodeUnsupportedMediaType: {http.StatusUnsupportedMediaType, "Unsupported media type"},
 	CodeRevealRequired:       {http.StatusBadRequest, "Reveal required"},
 	CodeRevealDisabled:       {http.StatusForbidden, "Reveal disabled on this server"},
+	CodeForbidden:            {http.StatusForbidden, "Forbidden"},
 	CodeNotFound:             {http.StatusNotFound, "Not found"},
 	CodeMethodNotAllowed:     {http.StatusMethodNotAllowed, "Method not allowed"},
 	CodeConflict:             {http.StatusConflict, "State conflict"},

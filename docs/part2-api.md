@@ -273,8 +273,37 @@ Status: tick when the PR merges.
         trailing data and invalid UTF-8 by default, plus `RejectUnknownMembers`; matching is
         case-sensitive. Errors never quote the body.
       - `newEnforcer` builds the redact registry from `responseTypes` and the enums.
-    - [ ] **2b. Router + middleware**: chi router, the full middleware chain, healthz/version,
-      the all-routes leak test and the OpenAPI route-coverage test.
+    - [x] **2b. Router + middleware**: chi router, the full middleware chain, healthz/version,
+      the all-routes leak test and the OpenAPI route-coverage test. As built:
+      - `api.New(Options)` builds one hasher/enforcer shared by two chi routers: `Public()` and
+        `Admin()` (public routes + an empty admin-only group). Options carry only what 2b needs
+        (`Version`, `NoReveal`, `TrustedProxies`, `RequestTimeout`, `HashKeyRotation`,
+        `GeneralPerMin`); the search and source-add limits arrive with their routes. The admin
+        socket gets 10× the general limit, and never runs `ClientIPFromXFF` (no IP peer, so
+        XFF there would be spoofable); its requests share the `admin` bucket.
+      - Per-request state (`req_id`, client ID, reveal) lives in one context value set by the
+        request-ID middleware. The reveal parser runs innermost and sets the flag; the enforcer
+        and access log read it after the handler returns. Anything rejected before the reveal
+        parser is therefore always hashed.
+      - Enforcer middleware buffers into its own header map, so a replaced response (500 on an
+        unknown key, invalid JSON or > 32 MiB; 403 `reveal_required` for non-JSON in hashed
+        mode, including JSON without a JSON content type) drops the handler's headers. Empty
+        bodies pass. Replacement problems also go through `Enforce`.
+      - Throttle is our own (64 in flight, 256 backlog, 5s wait, 503 `unavailable` +
+        `Retry-After: 1`): chi's `ThrottleBacklog` writes text/plain, which the enforcer would
+        turn into a misleading 403. Cross-origin denials are 403 `forbidden` (new code).
+      - Access log: method names outside the known set log as `other`; query param names are
+        logged only when in `knownFields`, others only counted (`other_params`), since a client
+        picks them freely. Numeric path params log as `path_<name>`, others as
+        `path_<name>_invalid`.
+      - 405 sets `Allow` by matching the path against each routed method.
+      - `docs/api/openapi.yaml` is **OpenAPI 3.2** (native `query` operations). Admin-only
+        operations carry `x-admin-only: true`; the coverage test compares both routers.
+      - The leak test (`router_test.go`) walks both routers against `routeSamples`, sends each
+        route a normal and a hostile request (sentinels in param names/values, request ID,
+        body), and has a positive control route. Store seeding starts with the first
+        store-backed route (stage 3). Body 415/413/400 cases are covered by `body_test.go`
+        until a route takes a body.
     - [ ] **2c. `serve`**: `api:` config, the `serve` command (`--no-reveal`), TCP + admin
       socket listeners, graceful shutdown.
 - [ ] **3. Read-only ops API**
