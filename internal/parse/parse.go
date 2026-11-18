@@ -227,41 +227,27 @@ func parseISODate(s string) (string, bool) {
 	return "", false
 }
 
-var relDate = regexp.MustCompile(`(?i)(less than a minute|(?:about|over|almost)?\s*(\d+)\s+(second|minute|hour|day|month|year)s?)`)
+// relDate matches AO3's own time_ago_in_words (app/helpers/translation_helper.rb), which
+// replaces the Rails helper: "less than 1 minute ago", "N minutes ago", "1 hour ago",
+// "N hours ago", "1 day ago", "N days ago" (set_format_for_date uses it for at most 30 days).
+// "less than 1 minute ago" matches as "1 minute ago", which is the same day.
+var relDate = regexp.MustCompile(`(\d+) (minute|hour|day)s? ago`)
 
-// parseBlurbDate handles set_format_for_date: rfc822 ("01 Nov 2026") or, for dates within 30
-// days, time_ago_in_words ("about 3 hours", "5 days"). approx reports the relative form.
+// parseBlurbDate handles set_format_for_date (app/helpers/date_helper.rb): Date rfc822
+// ("01 Nov 2026", always zero-padded) or, for dates within 30 days, AO3's relative form
+// ("3 hours ago", "5 days ago"). approx reports the relative form.
 func parseBlurbDate(s string, now time.Time) (date string, approx bool, ok bool) {
 	s = clean(s)
-	for _, layout := range []string{"02 Jan 2006", "2 Jan 2006", "2006-01-02"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.Format("2006-01-02"), false, true
-		}
+	if t, err := time.Parse("02 Jan 2006", s); err == nil {
+		return t.Format("2006-01-02"), false, true
 	}
 	m := relDate.FindStringSubmatch(s)
 	if m == nil {
 		return "", false, false
 	}
-	if strings.HasPrefix(strings.ToLower(m[1]), "less than") {
-		return now.UTC().Format("2006-01-02"), true, true
-	}
-	n, _ := strconv.Atoi(m[2])
-	var d time.Duration
-	switch strings.ToLower(m[3]) {
-	case "second":
-		d = time.Duration(n) * time.Second
-	case "minute":
-		d = time.Duration(n) * time.Minute
-	case "hour":
-		d = time.Duration(n) * time.Hour
-	case "day":
-		d = time.Duration(n) * 24 * time.Hour
-	case "month":
-		d = time.Duration(n) * 30 * 24 * time.Hour
-	case "year":
-		d = time.Duration(n) * 365 * 24 * time.Hour
-	}
-	return now.Add(-d).UTC().Format("2006-01-02"), true, true
+	n, _ := strconv.Atoi(m[1])
+	unit := map[string]time.Duration{"minute": time.Minute, "hour": time.Hour, "day": 24 * time.Hour}[m[2]]
+	return now.Add(-time.Duration(n) * unit).UTC().Format("2006-01-02"), true, true
 }
 
 // ---- pagination ----
