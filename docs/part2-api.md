@@ -472,7 +472,7 @@ Status: tick when the PR merges.
           error after opening it. The store and controllers log through the API's logger, so
           the leak test also checks their lines.
     - [ ] **3b. Jobs**, in three PRs:
-      - [ ] **3b-1. Store + controller: paged jobs.** Store offset/limit + `CountJobs` for
+      - [x] **3b-1. Store + controller: paged jobs.** Store offset/limit + `CountJobs` for
         `JobFilter`, a controller returning `(page, total)`.
         - The jobs table grows with every work fetch. Check that its indexes cover each filter
           with `ORDER BY id DESC`, and benchmark a deep page and `CountJobs` on a large
