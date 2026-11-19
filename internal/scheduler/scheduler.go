@@ -175,7 +175,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 	}
 	s.setPhase(ctx, job.ID, model.DaemonRunning)
 	book("event_start", func(ctx context.Context, tx *store.Tx) error {
-		return tx.JobEvent(ctx, job.ID, "start", controllers.JobOutcome{Attempt: new(job.Attempts), Target: new(job.Target)})
+		return tx.JobEvent(ctx, job.ID, model.JobEventStart, controllers.JobOutcome{Attempt: new(job.Attempts), Target: new(job.Target)})
 	})
 	start := s.options.Now()
 	detail, err := s.runHandler(jctx, job, log)
@@ -210,7 +210,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 	switch {
 	case err == nil:
 		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
-		finish("done", model.JobDone, "")
+		finish(model.JobEventDone, model.JobDone, "")
 		log.Info("job done", append([]any{"ms", *out.MS}, detailAttrs(detail)...)...)
 	case ctx.Err() != nil:
 		book("requeue", func(ctx context.Context, tx *store.Tx) error { return tx.RequeueJob(ctx, job.ID, s.options.Now()) })
@@ -227,7 +227,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 			if err := tx.RequeueJob(ctx, job.ID, nb); err != nil {
 				return err
 			}
-			return tx.JobEvent(ctx, job.ID, "wait", out, detail)
+			return tx.JobEvent(ctx, job.ID, model.JobEventWait, out, detail)
 		})
 		log.Info("job waiting", "error", string(we.Code), "not_before", nb)
 	case errors.As(err, &re):
@@ -236,16 +236,16 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 			nb = st.BackoffTill
 		}
 		out.NotBefore = new(nb.UTC().Truncate(time.Second))
-		state := retry("retry", re.Code, nb)
+		state := retry(model.JobEventRetry, re.Code, nb)
 		log.Warn("job retry", "error", re.Code, "next_state", state, "not_before", nb)
 	case errors.As(err, &pe):
 		out.Error = new(pe.Error())
-		finish("failed", model.JobFailed, pe.Error())
+		finish(model.JobEventFailed, model.JobFailed, pe.Error())
 		log.Warn("job failed", "error", pe.Error())
 	default:
 		// Unexpected (store/transport) errors: retry; the store caps attempts.
 		code := string(controllers.CodeInternal) + ":" + errCode(err)
-		state := retry("error", code, s.options.Now().Add(5*time.Minute))
+		state := retry(model.JobEventError, code, s.options.Now().Add(5*time.Minute))
 		log.Error("job error", "error", err.Error(), "next_state", state)
 	}
 	s.setPhase(ctx, 0, model.DaemonBetween)

@@ -165,7 +165,7 @@ func (c *Controllers) SourceAddOutcome(ctx context.Context, jobID int64) (Source
 		}
 		var d SourceAddDetail
 		for _, ev := range evs {
-			if ev.Event == "done" {
+			if ev.Event == model.JobEventDone {
 				if err := json.Unmarshal([]byte(ev.Detail), &d); err != nil {
 					return err
 				}

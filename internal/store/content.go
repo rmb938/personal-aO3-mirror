@@ -163,6 +163,11 @@ const (
 	ContentUnchanged ContentChange = "unchanged" // identical to what was stored
 )
 
+// ContentChanges lists every ContentChange.
+func ContentChanges() []ContentChange {
+	return []ContentChange{ContentNew, ContentChanged, ContentUnchanged}
+}
+
 // compareWorkContent compares new content with the stored copy. Content is compared, never
 // logged.
 func (s *ReadTx) compareWorkContent(ctx context.Context, workID int64, chs []model.Chapter, skinCSS string) (ContentChange, error) {

@@ -23,6 +23,7 @@ const (
 	seedFailedAdd    int64 = 2 // add_source job, failed with a sentinel detail
 	seedOtherJob     int64 = 3 // a work job (not a source add), queued
 	seedBackfillJob  int64 = 4 // a backfill job of seedTagSource with a sentinel target, queued
+	seedWork         int64 = 7 // seedOtherJob's work, from a blurb, every text field a sentinel
 )
 
 // seedTime is the store clock while seeding.
@@ -104,11 +105,36 @@ func seed(t *testing.T, st *store.Store) {
 		require.Equal(t, seedOtherJob, id)
 
 		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindBackfill, SourceID: seedTagSource,
-			Target: sentinel + "jobtarget", Priority: jobs.ClassBackfill, DedupeKey: "seed-backfill"})
+			Target: sentinel + "jobtarget", Priority: jobs.ClassBackfill, DedupeKey: sentinel + "dedupe"})
 		if err != nil {
 			return err
 		}
 		require.Equal(t, seedBackfillJob, id)
+		// Its trace: a start and a retry, with every text field a sentinel.
+		if err := tx.JobEvent(ctx, id, model.JobEventStart,
+			controllers.JobOutcome{Attempt: new(1), Target: new(sentinel + "event")}); err != nil {
+			return err
+		}
+		if err := tx.JobEvent(ctx, id, model.JobEventRetry,
+			controllers.JobOutcome{MS: new(int64(1500)), Error: new("parse_error:" + sentinel + "error"), NextState: new(model.JobQueued),
+				NotBefore: new(seedTime.Add(time.Minute))},
+			&controllers.BackfillDetail{Page: new(2), Blurbs: new(20), New: new(0), Rescan: new(false), ReqID: new(sentinel + "req"),
+				WindowFrom: new("2020-01-01"), WindowTo: new("2020-12-31")}); err != nil {
+			return err
+		}
+
+		// The work of seedOtherJob, with every content field a sentinel (debug shows none of it).
+		if _, err := tx.UpsertWork(ctx, model.Work{ID: seedWork, Title: sentinel + "title", SummaryHTML: sentinel + "summary",
+			Creators: []model.Creator{{User: sentinel + "user", Pseud: sentinel + "pseud"}},
+			Tags:     []model.Tag{{Type: model.TagFreeform, Name: sentinel + "tag"}},
+			Language: sentinel + "lang", Words: 1200, ChaptersPosted: 2, Revised: "2025-03-04",
+			Stats: model.Stats{Kudos: 5}}, model.FromBlurb, 0); err != nil {
+			return err
+		}
+		if err := tx.InsertRequest(ctx, store.RequestRow{Time: seedTime, ReqID: sentinel + "workreq", JobID: seedOtherJob,
+			Kind: "work", Path: "/works/7?view_adult=true", Status: 200, Class: "ok", Reason: sentinel + "workreason"}); err != nil {
+			return err
+		}
 
 		if err := tx.SetHeartbeat(ctx, model.Heartbeat{PID: 42, Phase: model.DaemonRunning, CurrentJob: seedOtherJob,
 			Interval: 10 * time.Second, SlowFactor: 1.5, DayCount: 3, BackoffUntil: seedTime.Add(time.Minute)}); err != nil {

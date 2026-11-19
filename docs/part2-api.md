@@ -715,7 +715,7 @@ Status: tick when the PR merges.
       hostile body route request expects 400 `invalid-body`. Rejected sentinel URLs are checked
       absent from the problem and logs. The test controllers get `config.Default()`'s sources
       options and interval.
-- [ ] **5. Admin endpoints (socket only)**
+- [x] **5. Admin endpoints (socket only)**
   - `POST /sources/{id}/confirm|pause|resume|cancel|refresh` (refresh body `{full}`),
     `PATCH /sources/{id}` (settings), `DELETE /sources/{id}`.
   - `GET /debug/jobs/{id}`, `/debug/works/{id}`.
@@ -750,7 +750,7 @@ Status: tick when the PR merges.
     - The priority and poll_interval bounds and details are shared with `SourceAdd`
       (`request/source.go`); the poll_interval detail no longer says "(the default)".
     - On the public listener refresh is 404 and `PATCH /sources/{id}` 405 (`Allow: GET`).
-  - [ ] **5c. Debug:** `GET /debug/jobs/{id}`, `/debug/works/{id}` (DTOs for job events,
+  - [x] **5c. Debug:** `GET /debug/jobs/{id}`, `/debug/works/{id}` (DTOs for job events,
     request rows and the work diagnostics), in two PRs:
     - [x] **5c-1. Refactor: typed job event details** (no API or stored-format change). The
       `controllers.Detail` map is gone: each job kind's handler returns its own struct
@@ -765,8 +765,29 @@ Status: tick when the PR merges.
         `JobOutcome` and into the kind's detail. The source add result reads `SourceAddDetail`.
       - A test checks that every kind has a detail type, every field is a pointer or slice, and
         no detail key is also a `JobOutcome` key.
-    - [ ] **5c-2. Debug routes**, with the event detail as typed fields: `outcome` plus the
-      job kind's detail object, every field present (`null` when unset).
+    - [x] **5c-2. Debug routes**, with the event detail as typed fields. As built:
+      - `GET /debug/jobs/{id}` → `dto.JobDebug{job, dedupe_key, events, requests}`. An event is
+        `{occurred_at, event, outcome, <kind>}`: `event` is the enum `JobEventType` (from the
+        new `model.JobEvent*` constants and `model.JobEvents()`, which the scheduler now uses),
+        `outcome` is `dto.JobOutcome` and `<kind>` (`poll`, `backfill`, `work`, `tag_info`,
+        `series_info`, `source_add`) is the job kind's detail, the other kinds omitted. Every
+        outcome and detail field is present, `null` when the run did not set it. Enum-valued
+        fields are typed (new enums `TagType` and `ContentChange`, matched against
+        `model.TagTypes()` and `store.ContentChanges()`); `error` splits into `error_code` and
+        `error_detail` like a job's last error; `ms` becomes `duration`, `not_before` and
+        `retry_at` timestamps, the window `_on` dates. Free text (`target`, `req_id`,
+        `meta_changed`, `error_detail`) and the dedupe key are hashed.
+      - `controllers.DebugJob` returns decoded events (`controllers.JobEvent{Outcome, Detail}`,
+        via `DecodeJobEvent`); `ao3mirror debug job` prints them re-merged, as stored.
+      - `GET /debug/works/{id}` → `dto.WorkDebug{work, jobs, requests}`, `work` a
+        `dto.WorkDiag` of numbers, `_on` dates, `_at` times, states and stored row counts
+        (`rows`); no content. `controllers.WorkDebug` gains the work `ID`. Unknown work → 404
+        with the new detail `detailNoWork`.
+      - `dto.RequestError` is renamed `dto.Request` (same JSON; OpenAPI schema `Request`): the
+        debug routes list every request, not only failed ones.
+      - The seed adds work 7 (from a blurb, every text field a sentinel), an ok request for it
+        and events on the backfill job; the backfill job's dedupe key is a sentinel.
+      - On the public listener both paths are 404.
 - [ ] **6. `internal/apiclient` + CLI conversion**
   - 6a: client (unix-socket transport, problem+json errors) and `source *` commands, including
     `add --wait` polling `/source-adds/{job}`.

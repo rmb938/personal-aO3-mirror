@@ -57,6 +57,19 @@ func utc(t time.Time) time.Time {
 	return t.UTC()
 }
 
+// convPtr converts the value p points to with conv; nil stays nil.
+func convPtr[M, D any](p *M, conv func(M) D) *D {
+	if p == nil {
+		return nil
+	}
+	return new(conv(*p))
+}
+
+// enumPtr converts a pointer to a string to a pointer to the enum type D; nil stays nil.
+func enumPtr[D ~string](p *string) *D {
+	return convPtr(p, func(s string) D { return D(s) })
+}
+
 // unix maps unix seconds (0: unset) to a UTC time.
 func unix(sec int64) time.Time {
 	if sec == 0 {

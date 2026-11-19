@@ -23,6 +23,8 @@ const (
 	routeSourceResume  = "/api/v1/sources/{id}/resume"
 	routeSourceCancel  = "/api/v1/sources/{id}/cancel"
 	routeSourceRefresh = "/api/v1/sources/{id}/refresh"
+	routeDebugJob      = "/api/v1/debug/jobs/{id}"
+	routeDebugWork     = "/api/v1/debug/works/{id}"
 )
 
 // pathFor fills route's {param} segments with ids, in order: pathFor(routeSource, 3) is

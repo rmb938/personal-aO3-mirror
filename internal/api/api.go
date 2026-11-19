@@ -148,6 +148,8 @@ func (a *API) router(admin bool) *chi.Mux {
 		r.Post(routeSourceRefresh, a.handle(a.refreshSource))
 		r.Patch(routeSource, a.handle(a.setSourceSettings))
 		r.Delete(routeSource, a.handle(a.sourceAction(a.ctl.RemoveSource)))
+		r.Get(routeDebugJob, a.handle(a.debugJob))
+		r.Get(routeDebugWork, a.handle(a.debugWork))
 	}
 	return r
 }

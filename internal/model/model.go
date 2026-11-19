@@ -17,6 +17,12 @@ const (
 	TagUnknown   TagType = "Unknown"
 )
 
+// TagTypes lists every TagType.
+func TagTypes() []TagType {
+	return []TagType{TagRating, TagWarning, TagCategory, TagFandom, TagRelation, TagCharacter, TagFreeform, TagMedia,
+		TagUnknown}
+}
+
 // WorkStatus is the local availability state of a work.
 type WorkStatus string
 

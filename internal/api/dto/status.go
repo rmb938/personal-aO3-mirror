@@ -56,20 +56,21 @@ func (TagInfoType) EnumValues() []string {
 // Status is the daemon, queue and progress overview (GET /api/v1/status). Count lists hold only
 // the values that have rows, sorted by value.
 type Status struct {
-	Daemon        Daemon         `json:"daemon"`
-	Works         WorkCounts     `json:"works"`
-	Tags          int            `json:"tags"`
-	Creators      int            `json:"creators"`
-	Series        int            `json:"series"`
-	RawPages      RawPageCounts  `json:"raw_pages"`
-	Requests      RequestCounts  `json:"requests"`
-	Sources       []SourceCount  `json:"sources"`
-	Images        ImageCounts    `json:"images"`
-	TagInfo       TagInfo        `json:"tag_info"`
-	Jobs          []JobCount     `json:"jobs"`
-	PartialSeries []SeriesGap    `json:"partial_series"`
-	RequestErrors []RequestError `json:"request_errors"`
-	FailedJobs    []Job          `json:"failed_jobs"`
+	Daemon        Daemon        `json:"daemon"`
+	Works         WorkCounts    `json:"works"`
+	Tags          int           `json:"tags"`
+	Creators      int           `json:"creators"`
+	Series        int           `json:"series"`
+	RawPages      RawPageCounts `json:"raw_pages"`
+	Requests      RequestCounts `json:"requests"`
+	Sources       []SourceCount `json:"sources"`
+	Images        ImageCounts   `json:"images"`
+	TagInfo       TagInfo       `json:"tag_info"`
+	Jobs          []JobCount    `json:"jobs"`
+	PartialSeries []SeriesGap   `json:"partial_series"`
+	// RequestErrors are the recent requests whose outcome was not ok.
+	RequestErrors []Request `json:"request_errors"`
+	FailedJobs    []Job     `json:"failed_jobs"`
 }
 
 // Daemon is the scheduler's last heartbeat. Zero fields are omitted.
@@ -187,8 +188,8 @@ type SeriesGap struct {
 	MissingWorkIDs []int64 `json:"missing_work_ids"`
 }
 
-// RequestError is one recent AO3 request whose outcome was not ok.
-type RequestError struct {
+// Request is one AO3 request the scraper made.
+type Request struct {
 	RequestedAt time.Time `json:"requested_at"`
 	// ReqID is the request id in the logs (hashed).
 	ReqID string `json:"req_id"`

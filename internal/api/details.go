@@ -39,6 +39,7 @@ var (
 	detailNoRoute          = problem.NewDetail("no route matches this path")
 	detailNoSource         = problem.NewDetail("no source has this id")
 	detailNoJob            = problem.NewDetail("no job of this kind has this id")
+	detailNoWork           = problem.NewDetail("no work has this id")
 	detailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
 	detailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")
 	detailSourceExists     = problem.NewDetail("this source is already added")
