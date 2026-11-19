@@ -751,7 +751,22 @@ Status: tick when the PR merges.
       (`request/source.go`); the poll_interval detail no longer says "(the default)".
     - On the public listener refresh is 404 and `PATCH /sources/{id}` 405 (`Allow: GET`).
   - [ ] **5c. Debug:** `GET /debug/jobs/{id}`, `/debug/works/{id}` (DTOs for job events,
-    request rows and the work diagnostics).
+    request rows and the work diagnostics), in two PRs:
+    - [x] **5c-1. Refactor: typed job event details** (no API or stored-format change). The
+      `controllers.Detail` map is gone: each job kind's handler returns its own struct
+      (`PollDetail`, `BackfillDetail`, `WorkDetail`, `TagInfoDetail`, `SeriesInfoDetail`,
+      `SourceAddDetail`, all `JobDetail`), and the scheduler fills `JobOutcome` (attempt,
+      target, ms, error, next_state, not_before). Every field is a pointer with `omitzero`, so a
+      stored detail holds exactly the fields that were set, zeros included.
+      - `store.JobEvent` takes parts and stores them merged into one flat object
+        (`store.JobDetailJSON`; a key in two parts is an error). The json keys are today's, so
+        older events still decode.
+      - `controllers.DecodeJobEvent(kind, raw)` decodes the same object twice: into
+        `JobOutcome` and into the kind's detail. The source add result reads `SourceAddDetail`.
+      - A test checks that every kind has a detail type, every field is a pointer or slice, and
+        no detail key is also a `JobOutcome` key.
+    - [ ] **5c-2. Debug routes**, with the event detail as typed fields: `outcome` plus the
+      job kind's detail object, every field present (`null` when unset).
 - [ ] **6. `internal/apiclient` + CLI conversion**
   - 6a: client (unix-socket transport, problem+json errors) and `source *` commands, including
     `add --wait` polling `/source-adds/{job}`.

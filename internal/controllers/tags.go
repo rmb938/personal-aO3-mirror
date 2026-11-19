@@ -14,7 +14,7 @@ import (
 // FetchTagInfo fetches /tags/<tag> and records canonical/synonym/parent/meta relations.
 // Steps: read the tag, fetch its page, then one write transaction for whatever the page said.
 // final says this is the job's last attempt.
-func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (Detail, error) {
+func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (*TagInfoDetail, error) {
 	t, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.TagRef, error) {
 		return tx.TagByID(ctx, id)
 	})
@@ -34,7 +34,7 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (D
 		return nil, giveUpInfo(ctx, err, final, attempted)
 	}
 	skelID := strconv.FormatInt(id, 10)
-	detail := Detail{"tag_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
+	detail := &TagInfoDetail{TagID: new(id), Class: new(string(resp.Class)), ReqID: new(resp.ReqID)}
 	if resp.Class == httpx.ClassNotFound {
 		return detail, attempted()
 	}
@@ -56,6 +56,6 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (D
 		Parents: info.Parents, MetaTags: info.MetaTags, Synonyms: info.Synonyms}); err != nil {
 		return detail, err
 	}
-	detail["type"], detail["canonical"], detail["parents"] = string(info.Type), info.Canonical, len(info.Parents)
+	detail.Type, detail.Canonical, detail.Parents = new(string(info.Type)), new(info.Canonical), new(len(info.Parents))
 	return detail, nil
 }

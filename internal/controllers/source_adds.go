@@ -88,7 +88,7 @@ func (c *Controllers) QueueSourceAdd(ctx context.Context, rawURL string, o AddSo
 // AddQueuedSource runs a queued source add (the add_source job, in the daemon): it fetches
 // page 1 and creates the source like AddSource, then drops the queued add. final says this is
 // the job's last attempt, so a retryable failure drops the add instead of leaving it behind.
-func (c *Controllers) AddQueuedSource(ctx context.Context, addID int64, final bool) (Detail, error) {
+func (c *Controllers) AddQueuedSource(ctx context.Context, addID int64, final bool) (*SourceAddDetail, error) {
 	a, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.SourceAdd, error) {
 		return tx.GetSourceAdd(ctx, addID)
 	})
@@ -101,8 +101,8 @@ func (c *Controllers) AddQueuedSource(ctx context.Context, addID int64, final bo
 	res, err := c.AddSource(ctx, a.URL, AddSourceOptions{Order: a.Order, Priority: a.Priority, PollInterval: a.PollInterval,
 		Confirm: a.Confirm, queuedAdd: a.ID})
 	if err == nil {
-		return Detail{"source_id": res.Source.ID, "state": string(res.Source.State), "blurbs": res.Blurbs,
-			"estimate": res.Estimate}, nil
+		return &SourceAddDetail{SourceID: new(res.Source.ID), State: new(string(res.Source.State)), Blurbs: new(res.Blurbs),
+			Estimate: new(res.Estimate)}, nil
 	}
 	opErr := sourceAddError(err)
 	if ctx.Err() != nil || isWait(opErr) {
@@ -163,11 +163,7 @@ func (c *Controllers) SourceAddOutcome(ctx context.Context, jobID int64) (Source
 		if err != nil {
 			return err
 		}
-		var d struct {
-			SourceID int64    `json:"source_id"`
-			Blurbs   int      `json:"blurbs"`
-			Estimate Estimate `json:"estimate"`
-		}
+		var d SourceAddDetail
 		for _, ev := range evs {
 			if ev.Event == "done" {
 				if err := json.Unmarshal([]byte(ev.Detail), &d); err != nil {
@@ -175,8 +171,8 @@ func (c *Controllers) SourceAddOutcome(ctx context.Context, jobID int64) (Source
 				}
 			}
 		}
-		res := AddSourceResult{Blurbs: d.Blurbs, Estimate: d.Estimate}
-		if res.Source, err = tx.GetSource(ctx, d.SourceID); err != nil {
+		res := AddSourceResult{Blurbs: deref(d.Blurbs), Estimate: deref(d.Estimate)}
+		if res.Source, err = tx.GetSource(ctx, deref(d.SourceID)); err != nil {
 			return err
 		}
 		out.Result = &res

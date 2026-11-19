@@ -10,10 +10,13 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -41,7 +44,7 @@ type Options struct {
 }
 
 // handler runs one job. Its detail is recorded as the job's event detail (content-free).
-type handler func(ctx context.Context, job model.Job) (controllers.Detail, error)
+type handler func(ctx context.Context, job model.Job) (controllers.JobDetail, error)
 
 type Scheduler struct {
 	options     Options
@@ -70,22 +73,22 @@ func New(opts Options) *Scheduler {
 	}
 	s := &Scheduler{options: opts, store: opts.Store, controllers: opts.Controllers, log: opts.Logger.With("component", "scheduler")}
 	s.handlers = map[string]handler{
-		jobs.KindPoll: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
+		jobs.KindPoll: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
 			return s.controllers.PollSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
-		jobs.KindBackfill: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
+		jobs.KindBackfill: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
 			return s.controllers.BackfillSourcePage(ctx, j.SourceID, atoi(j.Target))
 		},
-		jobs.KindWork: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
+		jobs.KindWork: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
 			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID, j.Attempts >= j.MaxAttempts)
 		},
-		jobs.KindTagInfo: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
+		jobs.KindTagInfo: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
 			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
-		jobs.KindSeries: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
+		jobs.KindSeries: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
 			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
-		jobs.KindSourceAdd: func(ctx context.Context, j model.Job) (controllers.Detail, error) {
+		jobs.KindSourceAdd: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
 			return s.controllers.AddQueuedSource(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
 		},
 	}
@@ -172,14 +175,12 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 	}
 	s.setPhase(ctx, job.ID, model.DaemonRunning)
 	book("event_start", func(ctx context.Context, tx *store.Tx) error {
-		return tx.JobEvent(ctx, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target})
+		return tx.JobEvent(ctx, job.ID, "start", controllers.JobOutcome{Attempt: new(job.Attempts), Target: new(job.Target)})
 	})
 	start := s.options.Now()
 	detail, err := s.runHandler(jctx, job, log)
-	if detail == nil {
-		detail = controllers.Detail{}
-	}
-	detail["ms"] = s.options.Now().Sub(start).Milliseconds()
+	// out is the scheduler's part of the outcome event, stored merged with the handler's detail.
+	out := controllers.JobOutcome{MS: new(s.options.Now().Sub(start).Milliseconds())}
 
 	// retry re-queues the job (or fails it once attempts are exhausted) and records event.
 	retry := func(event, code string, notBefore time.Time) string {
@@ -189,8 +190,8 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 			if state, err = tx.RetryJob(ctx, job.ID, notBefore, code); err != nil {
 				return err
 			}
-			detail["error"], detail["next_state"] = code, state
-			return tx.JobEvent(ctx, job.ID, event, detail)
+			out.Error, out.NextState = new(code), new(state)
+			return tx.JobEvent(ctx, job.ID, event, out, detail)
 		})
 		return state
 	}
@@ -199,7 +200,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 			if err := tx.FinishJob(ctx, job.ID, state, lastError); err != nil {
 				return err
 			}
-			return tx.JobEvent(ctx, job.ID, event, detail)
+			return tx.JobEvent(ctx, job.ID, event, out, detail)
 		})
 	}
 
@@ -210,7 +211,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 	case err == nil:
 		// Checked before cancellation: a job that finished as shutdown began is done, not redone.
 		finish("done", model.JobDone, "")
-		log.Info("job done", append([]any{"ms", detail["ms"]}, flatten(detail)...)...)
+		log.Info("job done", append([]any{"ms", *out.MS}, detailAttrs(detail)...)...)
 	case ctx.Err() != nil:
 		book("requeue", func(ctx context.Context, tx *store.Tx) error { return tx.RequeueJob(ctx, job.ID, s.options.Now()) })
 		log.Info("job interrupted; requeued")
@@ -221,12 +222,12 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 		if floor := s.options.Now().Add(time.Minute); nb.Before(floor) {
 			nb = floor
 		}
-		detail["error"], detail["not_before"] = string(we.Code), nb.UTC().Format(time.RFC3339)
+		out.Error, out.NotBefore = new(string(we.Code)), new(nb.UTC().Truncate(time.Second))
 		book("wait", func(ctx context.Context, tx *store.Tx) error {
 			if err := tx.RequeueJob(ctx, job.ID, nb); err != nil {
 				return err
 			}
-			return tx.JobEvent(ctx, job.ID, "wait", detail)
+			return tx.JobEvent(ctx, job.ID, "wait", out, detail)
 		})
 		log.Info("job waiting", "error", string(we.Code), "not_before", nb)
 	case errors.As(err, &re):
@@ -234,11 +235,11 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 		if st := s.options.Pacer.PacerState(); st.BackoffTill.After(nb) {
 			nb = st.BackoffTill
 		}
-		detail["not_before"] = nb.UTC().Format(time.RFC3339)
+		out.NotBefore = new(nb.UTC().Truncate(time.Second))
 		state := retry("retry", re.Code, nb)
 		log.Warn("job retry", "error", re.Code, "next_state", state, "not_before", nb)
 	case errors.As(err, &pe):
-		detail["error"] = pe.Error()
+		out.Error = new(pe.Error())
 		finish("failed", model.JobFailed, pe.Error())
 		log.Warn("job failed", "error", pe.Error())
 	default:
@@ -253,7 +254,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 // runHandler runs a job's handler, turning a panic into a permanent failure so one bad page or
 // bug cannot take down the daemon (or crash-loop it via restart recovery). Only the panic's type
 // is logged: its value could carry page content.
-func (s *Scheduler) runHandler(ctx context.Context, job model.Job, log *slog.Logger) (detail controllers.Detail, err error) {
+func (s *Scheduler) runHandler(ctx context.Context, job model.Job, log *slog.Logger) (detail controllers.JobDetail, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("job handler panicked", "panic_type", fmt.Sprintf("%T", r))
@@ -274,12 +275,20 @@ func errCode(err error) string {
 	return msg
 }
 
-func flatten(m map[string]any) []any {
+// detailAttrs returns a job detail's set fields as log key/value pairs, keyed as stored and
+// sorted by key (none for a nil detail).
+func detailAttrs(d controllers.JobDetail) []any {
+	b, err := store.JobDetailJSON(d)
+	if err != nil {
+		return []any{"detail_error", err.Error()}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return []any{"detail_error", err.Error()}
+	}
 	out := make([]any, 0, 2*len(m))
-	for k, v := range m {
-		if k != "ms" {
-			out = append(out, k, v)
-		}
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		out = append(out, k, m[k])
 	}
 	return out
 }

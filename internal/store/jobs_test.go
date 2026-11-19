@@ -179,6 +179,32 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	require.JSONEq(t, `{"class":3}`, ev[0].Detail)
 }
 
+func TestJobDetailJSON(t *testing.T) {
+	type a struct {
+		N *int   `json:"n,omitzero"`
+		S string `json:"s"`
+	}
+	type b struct {
+		M int `json:"m"`
+	}
+	got, err := JobDetailJSON(a{N: new(0), S: "x"}, &b{M: 2})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"m":2,"n":0,"s":"x"}`, string(got), "merged, zeros kept")
+
+	got, err = JobDetailJSON(nil, (*b)(nil), a{S: "y"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"s":"y"}`, string(got), "nil parts and nil pointers add nothing")
+
+	got, err = JobDetailJSON()
+	require.NoError(t, err)
+	require.Equal(t, `{}`, string(got))
+
+	_, err = JobDetailJSON(a{S: "x"}, map[string]any{"s": 1})
+	require.ErrorContains(t, err, `key "s" is in two parts`)
+	_, err = JobDetailJSON(3)
+	require.ErrorContains(t, err, "not a JSON object")
+}
+
 func TestFindJobsPagedAndCount(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
