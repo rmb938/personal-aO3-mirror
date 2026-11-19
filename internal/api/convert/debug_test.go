@@ -30,8 +30,8 @@ func TestJobDebug(t *testing.T) {
 	assert.Equal(t, time.UTC, got.Events[0].OccurredAt.Location())
 
 	empty := JobDebug(controllers.JobDebug{})
-	assert.Equal(t, []dto.JobEvent{}, empty.Events, "nil gives [], not null")
-	assert.Equal(t, []dto.Request{}, empty.Requests)
+	assert.Nil(t, empty.Events, "empty lists are nil")
+	assert.Nil(t, empty.Requests)
 }
 
 func TestWorkDebug(t *testing.T) {
@@ -47,8 +47,8 @@ func TestWorkDebug(t *testing.T) {
 	assert.Equal(t, []dto.Request{{RequestedAt: at.UTC(), Kind: "work", Path: "/works/7", Status: 200, Class: "ok"}}, got.Requests)
 
 	empty := WorkDebug(controllers.WorkDebug{})
-	assert.Equal(t, []dto.Job{}, empty.Jobs, "nil gives [], not null")
-	assert.Equal(t, []dto.Request{}, empty.Requests)
+	assert.Nil(t, empty.Jobs, "empty lists are nil")
+	assert.Nil(t, empty.Requests)
 }
 
 // Each kind's detail lands in the member named after the kind.

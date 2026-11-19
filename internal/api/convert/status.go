@@ -42,13 +42,13 @@ func Status(r controllers.StatusReport) dto.Status {
 			Bytes: r.ImageBytes,
 		},
 		TagInfo: dto.TagInfo{
-			Types: mapSlice(r.TagInfo.Types, func(t string) dto.TagInfoType { return dto.TagInfoType(t) }),
+			Types: convSlice(r.TagInfo.Types, func(t string) dto.TagInfoType { return dto.TagInfoType(t) }),
 			Total: r.TagInfo.Total, Fetched: r.TagInfo.Fetched, Due: r.TagInfo.Due,
 		},
 		Jobs:          jobCounts(r.Jobs),
-		PartialSeries: mapSlice(r.PartialSeries, seriesGap),
-		RequestErrors: mapSlice(r.RequestErrors, requestRow),
-		FailedJobs:    mapSlice(r.FailedJobs, Job),
+		PartialSeries: convSlice(r.PartialSeries, seriesGap),
+		RequestErrors: convSlice(r.RequestErrors, requestRow),
+		FailedJobs:    convSlice(r.FailedJobs, Job),
 	}
 }
 
@@ -73,9 +73,9 @@ func daemon(h model.Heartbeat, running bool) dto.Daemon {
 	}
 }
 
-// counts maps a value → count map to a list sorted by value ([] when empty).
+// counts maps a value → count map to a list sorted by value (nil when empty).
 func counts[D any](m map[string]int, conv func(string, int) D) []D {
-	out := make([]D, 0, len(m))
+	var out []D
 	for _, k := range slices.Sorted(maps.Keys(m)) {
 		out = append(out, conv(k, m[k]))
 	}
@@ -84,7 +84,7 @@ func counts[D any](m map[string]int, conv func(string, int) D) []D {
 
 // jobCounts flattens kind → state → count into a list sorted by kind, then state.
 func jobCounts(m map[string]map[string]int) []dto.JobCount {
-	out := []dto.JobCount{}
+	var out []dto.JobCount
 	for kind, states := range m {
 		for state, n := range states {
 			out = append(out, dto.JobCount{Kind: dto.JobKind(kind), State: dto.JobState(state), Count: n})
@@ -99,7 +99,7 @@ func jobCounts(m map[string]map[string]int) []dto.JobCount {
 func seriesGap(p store.PartialSeries) dto.SeriesGap {
 	return dto.SeriesGap{
 		ID: p.ID, WorksTotal: p.WorksTotal, Mirrored: p.Mirrored,
-		MissingPositions: nonNil(p.MissingPositions), MissingWorkIDs: nonNil(p.MissingWorkIDs),
+		MissingPositions: p.MissingPositions, MissingWorkIDs: p.MissingWorkIDs,
 	}
 }
 

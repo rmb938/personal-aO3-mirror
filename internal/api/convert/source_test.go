@@ -52,7 +52,7 @@ func TestSourceEdgeCases(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			got := Source(c.in)
 			assert.Equal(t, c.targetID, got.TargetID)
-			assert.Equal(t, []dto.Filter{}, got.Filters, "no filters is [] (not null)")
+			assert.Nil(t, got.Filters, "no filters is nil")
 			assert.Nil(t, got.Backfill)
 			require.NotNil(t, got.TotalWorks, "0 is known (only -1 is null)")
 			assert.Equal(t, 0, *got.TotalWorks)
@@ -62,7 +62,7 @@ func TestSourceEdgeCases(t *testing.T) {
 
 func TestSourceUnreadableColumns(t *testing.T) {
 	got := Source(model.Source{FiltersJSON: "not json", BackfillCursor: "not json", TotalWorks: -1})
-	assert.Equal(t, []dto.Filter{}, got.Filters)
+	assert.Nil(t, got.Filters)
 	assert.Nil(t, got.Backfill)
 	assert.Nil(t, got.TotalWorks)
 	got = Source(model.Source{BackfillCursor: "{}"})
@@ -71,7 +71,7 @@ func TestSourceUnreadableColumns(t *testing.T) {
 
 func TestSourceList(t *testing.T) {
 	got := SourceList(nil, 0, 1, 20)
-	assert.Equal(t, dto.List[dto.Source]{Items: []dto.Source{}, Page: 1, PerPage: 20}, got, "empty page is items: []")
+	assert.Equal(t, dto.List[dto.Source]{Page: 1, PerPage: 20}, got, "empty page: nil items")
 	got = SourceList([]model.Source{{ID: 1}, {ID: 2}}, 7, 2, 2)
 	assert.Len(t, got.Items, 2)
 	assert.Equal(t, 7, got.Total)

@@ -81,13 +81,9 @@ func TestConvPtr(t *testing.T) {
 	assert.Equal(t, new(dto.JobState("done")), enumPtr[dto.JobState](new("done")))
 }
 
-func TestMapSlice(t *testing.T) {
+func TestConvSlice(t *testing.T) {
 	double := func(n int) int { return 2 * n }
-	assert.Equal(t, []int{}, mapSlice(nil, double), "nil maps to [], not null")
-	assert.Equal(t, []int{2, 4}, mapSlice([]int{1, 2}, double))
-}
-
-func TestNonNil(t *testing.T) {
-	assert.Equal(t, []int{}, nonNil[int](nil))
-	assert.Equal(t, []int{1}, nonNil([]int{1}))
+	assert.Nil(t, convSlice(nil, double))
+	assert.Nil(t, convSlice([]int{}, double), "empty gives nil (written as [])")
+	assert.Equal(t, []int{2, 4}, convSlice([]int{1, 2}, double))
 }

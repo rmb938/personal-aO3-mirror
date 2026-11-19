@@ -34,7 +34,7 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, 2, s.Requests.Last1h)
 	assert.Equal(t, []dto.RequestClassCount{{Class: "ok", Count: 1}, {Class: "rate_limited", Count: 1}}, s.Requests.ByClass24h)
 	assert.Equal(t, []dto.WorkStatusCount{{Status: "ok", Count: 1}}, s.Works.ByStatus)
-	assert.Equal(t, []dto.ImageStatusCount{}, s.Images.ByStatus, "empty lists are [], not null")
+	assert.Equal(t, []dto.ImageStatusCount{}, s.Images.ByStatus, "empty lists are [], not null (json/v2 writes a nil slice as [])")
 	assert.Equal(t, []dto.TagInfoType{}, s.TagInfo.Types, "tag info off")
 	assert.Equal(t, []dto.SeriesGap{}, s.PartialSeries)
 

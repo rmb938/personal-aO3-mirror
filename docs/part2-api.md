@@ -80,6 +80,11 @@ its tests beside it. Each model or result has its own file (`source.go`, `source
 with its `_test.go`); `convert.go` holds only the helpers several models share (`list`,
 `splitError`, `known`, `utc`, `unix`) and the cross-model enum-set test.
 Handlers parse input, call a controller and return `convert.X(result)`.
+
+**Empty list rule (from stage 5c-2's follow-up):** converters return nil for an empty list and
+never turn nil into `[]` themselves (`convSlice` gives nil for empty input). `api.respond`
+marshals with `encoding/json/v2`, which writes a nil slice as `[]`, so a list is never null on
+the wire.
 CLAUDE.md's API design rules get this line in 3a-4.
 
 **Pagination rule (from stage 3a-2):** a paged route pages in SQL. The store takes

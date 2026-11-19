@@ -36,7 +36,7 @@ func TestJob(t *testing.T) {
 
 func TestJobList(t *testing.T) {
 	got := JobList(nil, 0, 1, 20)
-	assert.Equal(t, dto.List[dto.Job]{Items: []dto.Job{}, Page: 1, PerPage: 20}, got, "empty page is items: []")
+	assert.Equal(t, dto.List[dto.Job]{Page: 1, PerPage: 20}, got, "empty page: nil items")
 	got = JobList([]model.Job{{ID: 2}, {ID: 1}}, 5, 1, 2)
 	assert.Equal(t, []int64{2, 1}, []int64{got.Items[0].ID, got.Items[1].ID})
 	assert.Equal(t, 5, got.Total)
