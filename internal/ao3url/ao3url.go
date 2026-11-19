@@ -50,6 +50,74 @@ var (
 	ErrUnsupported = errors.New("ao3url: unsupported AO3 URL")
 )
 
+// Reason is why Parse rejected a URL. Every Parse error is a *URLError carrying one, so a
+// caller (the API) can explain it without parsing the message.
+type Reason string
+
+const (
+	ReasonNotAO3            Reason = "not_ao3"            // another host, or a relative path
+	ReasonMalformed         Reason = "malformed"          // unparseable, or bad percent-encoding
+	ReasonChapter           Reason = "chapter"            // /chapters/<id> without the work id
+	ReasonTagPage           Reason = "tag_page"           // /tags/<tag>/<not works>
+	ReasonPseudBookmarks    Reason = "pseud_bookmarks"    // /users/<login>/pseuds/<pseud>/bookmarks
+	ReasonCollectionPage    Reason = "collection_page"    // /collections/<name>/<not works>
+	ReasonWorksIndex        Reason = "works_index"        // /works?... (robots-disallowed index)
+	ReasonWorkSearch        Reason = "work_search"        // /works/search (robots-disallowed)
+	ReasonUnsupportedSource Reason = "unsupported_source" // any other AO3 path
+)
+
+// Reasons lists every Reason.
+func Reasons() []Reason {
+	return []Reason{ReasonNotAO3, ReasonMalformed, ReasonChapter, ReasonTagPage, ReasonPseudBookmarks,
+		ReasonCollectionPage, ReasonWorksIndex, ReasonWorkSearch, ReasonUnsupportedSource}
+}
+
+// reasonHints is the fixed advice per Reason: what is wrong and what to use instead.
+var reasonHints = map[Reason]string{
+	ReasonNotAO3:         "use an archiveofourown.org or ao3.org URL, or a path starting with /",
+	ReasonMalformed:      "malformed URL",
+	ReasonChapter:        "chapter URLs without a work id; open the work and use its /works/<id> URL",
+	ReasonTagPage:        "only /tags/<tag> and /tags/<tag>/works are supported",
+	ReasonPseudBookmarks: "pseud bookmarks are not supported; use /users/<login>/bookmarks",
+	ReasonCollectionPage: "only /collections/<name> and /collections/<name>/works are supported",
+	ReasonWorksIndex: "the /works index is not supported; use the tag, user or collection page " +
+		"(e.g. /tags/<tag>/works) and filter there",
+	ReasonWorkSearch: "work search is disallowed by robots.txt; use a tag page with filters instead",
+	ReasonUnsupportedSource: "supported: /tags/<tag>, /users/<login>, /users/<login>/pseuds/<pseud>, " +
+		"/users/<login>/bookmarks, /collections/<name>, /series/<id>, /works/<id>",
+}
+
+// Hint is r's fixed advice. It never holds input, so callers may show it anywhere.
+func (r Reason) Hint() string { return reasonHints[r] }
+
+// URLError is a rejected URL. It never quotes the URL (it holds tag and user names). It
+// matches ErrNotAO3 (ReasonNotAO3) or ErrUnsupported (every other reason) with errors.Is.
+type URLError struct {
+	Reason Reason
+	// extra is a content-free addition to the message (the Go type of a parse error).
+	extra string
+}
+
+func (e *URLError) base() error {
+	if e.Reason == ReasonNotAO3 {
+		return ErrNotAO3
+	}
+	return ErrUnsupported
+}
+
+func (e *URLError) Error() string {
+	msg := e.base().Error() + ": " + e.Reason.Hint()
+	if e.extra != "" {
+		msg += " (" + e.extra + ")"
+	}
+	return msg
+}
+
+// Is matches ErrNotAO3 or ErrUnsupported.
+func (e *URLError) Is(target error) bool { return target == e.base() }
+
+func urlErr(r Reason) error { return &URLError{Reason: r} }
+
 // PerPage is AO3's works-per-listing-page.
 const PerPage = 20
 
@@ -62,7 +130,7 @@ var hosts = map[string]bool{"archiveofourown.org": true, "www.archiveofourown.or
 // dropped on purpose: url.Error and url.EscapeError quote the input, which holds tag/user names
 // and ends up in job errors and logs. Only its type is kept.
 func errMalformed(err error) error {
-	return fmt.Errorf("%w: malformed URL (%T)", ErrUnsupported, err)
+	return &URLError{Reason: ReasonMalformed, extra: fmt.Sprintf("%T", err)}
 }
 
 // Parse turns any AO3 URL (or bare path) into a Source.
@@ -73,10 +141,10 @@ func Parse(raw string) (Source, error) {
 		return Source{}, errMalformed(err)
 	}
 	if u.Host != "" && !hosts[strings.ToLower(u.Hostname())] {
-		return Source{}, ErrNotAO3
+		return Source{}, urlErr(ReasonNotAO3)
 	}
 	if u.Host == "" && !strings.HasPrefix(u.Path, "/") {
-		return Source{}, ErrNotAO3
+		return Source{}, urlErr(ReasonNotAO3)
 	}
 	segs := splitPath(u.EscapedPath())
 	q := u.Query()
@@ -86,7 +154,7 @@ func Parse(raw string) (Source, error) {
 	case len(segs) >= 2 && segs[0] == "works" && isNum(segs[1]):
 		return Source{Kind: KindWork, Target: segs[1]}, nil
 	case len(segs) >= 2 && segs[0] == "chapters" && isNum(segs[1]):
-		return Source{}, fmt.Errorf("%w: chapter URLs without a work id; open the work and use its /works/<id> URL", ErrUnsupported)
+		return Source{}, urlErr(ReasonChapter)
 	case len(segs) >= 2 && segs[0] == "series" && isNum(segs[1]):
 		return Source{Kind: KindSeries, Target: segs[1]}, nil
 	case len(segs) >= 2 && segs[0] == "tags":
@@ -95,7 +163,7 @@ func Parse(raw string) (Source, error) {
 			return Source{}, err
 		}
 		if len(segs) > 2 && segs[2] != "works" {
-			return Source{}, fmt.Errorf("%w: only /tags/<tag> and /tags/<tag>/works are supported", ErrUnsupported)
+			return Source{}, urlErr(ReasonTagPage)
 		}
 		return Source{Kind: KindTag, Target: name, Filters: filters}, nil
 	case len(segs) >= 2 && segs[0] == "users":
@@ -110,7 +178,7 @@ func Parse(raw string) (Source, error) {
 				return Source{}, errMalformed(err)
 			}
 			if len(segs) > 4 && segs[4] == "bookmarks" {
-				return Source{}, fmt.Errorf("%w: pseud bookmarks; use /users/<login>/bookmarks", ErrUnsupported)
+				return Source{}, urlErr(ReasonPseudBookmarks)
 			}
 			return Source{Kind: KindPseud, Target: login + "/" + pseud, Filters: filters}, nil
 		case len(segs) >= 3 && segs[2] == "bookmarks":
@@ -124,19 +192,18 @@ func Parse(raw string) (Source, error) {
 			return Source{}, errMalformed(err)
 		}
 		if len(segs) > 2 && segs[2] != "works" {
-			return Source{}, fmt.Errorf("%w: only /collections/<name> and /collections/<name>/works are supported", ErrUnsupported)
+			return Source{}, urlErr(ReasonCollectionPage)
 		}
 		return Source{Kind: KindCollection, Target: name, Filters: filters}, nil
 	case len(segs) == 1 && segs[0] == "works":
 		// The filtered index (/works?tag_id=X&work_search[...]) is robots-disallowed, and its ids
 		// are not decoded like path params, so one tag could become two sources. Not accepted:
 		// the same listing is the /tags, /users or /collections page with the same filters.
-		return Source{}, fmt.Errorf("%w: the /works index is not supported; use the tag, user or collection "+
-			"page (e.g. /tags/<tag>/works) and filter there", ErrUnsupported)
+		return Source{}, urlErr(ReasonWorksIndex)
 	case len(segs) >= 2 && segs[0] == "works" && segs[1] == "search":
-		return Source{}, fmt.Errorf("%w: work search is disallowed by robots.txt; use a tag page with filters instead", ErrUnsupported)
+		return Source{}, urlErr(ReasonWorkSearch)
 	}
-	return Source{}, ErrUnsupported
+	return Source{}, urlErr(ReasonUnsupportedSource)
 }
 
 func splitPath(p string) []string {

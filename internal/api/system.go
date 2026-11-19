@@ -9,7 +9,7 @@ import (
 
 // healthz is GET /api/v1/healthz: the process is up and serving.
 func (a *API) healthz(r *http.Request) (any, error) {
-	if _, err := parseQuery(r); err != nil {
+	if err := noParams(r); err != nil {
 		return nil, err
 	}
 	return dto.Health{Status: dto.HealthOK}, nil
@@ -17,7 +17,7 @@ func (a *API) healthz(r *http.Request) (any, error) {
 
 // version is GET /api/v1/version.
 func (a *API) version(r *http.Request) (any, error) {
-	if _, err := parseQuery(r); err != nil {
+	if err := noParams(r); err != nil {
 		return nil, err
 	}
 	return dto.Version{Version: a.opts.Version, ParserVersion: parse.Version}, nil

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
@@ -33,16 +35,16 @@ func oneOf(e interface{ EnumValues() []string }) detail {
 
 var (
 	// Validation errors (dto.TypeValidation).
-	detailInvalidParams = newDetail("one or more parameters are invalid; see errors")
-	detailUnknownParam  = newDetail("this route does not take this parameter")
-	detailDuplicate     = newDetail("must be given at most once")
-	detailID            = newDetail("must be an integer from 1 to " + itoa(MaxID))
-	detailPerPage       = newDetail("must be an integer from 1 to " + itoa(maxPerPage))
-	detailPage          = newDetail("must be an integer from 1, with (page-1)*per_page at most " + itoa(maxOffset))
-	detailText          = newDetail("must be valid UTF-8 text without control characters, within the length limit")
-	detailRevealValue   = newDetail("must be 1")
-	detailJobState      = oneOf(dto.JobState(""))
-	detailJobKind       = oneOf(dto.JobKind(""))
+	detailInvalidRequest = newDetail("one or more parts of the request are invalid; see errors")
+	detailUnknownParam   = newDetail("this route does not take this parameter")
+	detailDuplicate      = newDetail("must be given at most once")
+	detailID             = newDetail("must be an integer from 1 to " + itoa(MaxID))
+	detailPerPage        = newDetail("must be an integer from 1 to " + itoa(maxPerPage))
+	detailPage           = newDetail("must be an integer from 1, with (page-1)*per_page at most " + itoa(maxOffset))
+	detailText           = newDetail("must be valid UTF-8 text without control characters, within the length limit")
+	detailRevealValue    = newDetail("must be 1")
+	detailJobState       = oneOf(dto.JobState(""))
+	detailJobKind        = oneOf(dto.JobKind(""))
 
 	// Other problem types.
 	detailMalformedQuery   = newDetail("the query string is malformed")
@@ -64,6 +66,27 @@ var (
 	detailBusy             = newDetail("the server is busy; retry after the Retry-After delay")
 	detailTimeout          = newDetail("the request did not finish in time; retry later")
 )
+
+// urlDetails explains each reason ao3url.Parse rejects a source URL, with ao3url's fixed hint
+// (it never holds the URL).
+var urlDetails = func() map[ao3url.Reason]detail {
+	m := make(map[ao3url.Reason]detail, len(ao3url.Reasons()))
+	for _, r := range ao3url.Reasons() {
+		m[r] = newDetail(r.Hint())
+	}
+	return m
+}()
+
+// urlDetail is the detail for a rejected source URL (err from ao3url.Parse), and whether err
+// is one.
+func urlDetail(err error) (detail, bool) {
+	ue, ok := errors.AsType[*ao3url.URLError](err)
+	if !ok {
+		return detail{}, false
+	}
+	d, ok := urlDetails[ue.Reason]
+	return d, ok
+}
 
 // detailCatalogue returns every message, sorted and deduplicated.
 func detailCatalogue() []string {

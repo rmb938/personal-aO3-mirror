@@ -67,7 +67,16 @@ func TestListJobs(t *testing.T) {
 		requireParamProblem(t, get(h, target), field, target)
 	}
 	requireParamProblem(t, get(h, "/api/v1/jobs?target=1"), "", "unknown param")
-	w := get(h, "/api/v1/jobs?state=bogus")
+
+	// Every invalid parameter is listed in one response.
+	w := get(h, "/api/v1/jobs?state=x&kind=y&source_id=0&per_page=0&target=1")
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	var params []dto.ParamName
+	for _, e := range decodeProblem(t, w).Errors {
+		params = append(params, e.Parameter)
+	}
+	assert.Equal(t, []dto.ParamName{"", dto.ParamState, dto.ParamKind, dto.ParamSourceID, dto.ParamPerPage}, params)
+	w = get(h, "/api/v1/jobs?state=bogus")
 	assert.Equal(t, detailJobState.msg, decodeProblem(t, w).Errors[0].Detail, "the detail lists the values")
 }
 

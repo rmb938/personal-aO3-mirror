@@ -179,6 +179,7 @@ components:
             properties:
               detail: { type: string }
               parameter: { type: string, description: "The query or path parameter at fault, when it is a declared name." }
+              pointer: { type: string, description: "RFC 6901 JSON Pointer to the body member at fault." }
     Health:
       type: object
       required: [status]

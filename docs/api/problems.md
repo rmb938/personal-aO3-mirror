@@ -23,13 +23,15 @@ problem details object, sent as `application/problem+json`:
 | `detail` | Optional. What went wrong in this occurrence and how to fix it. Clients should not parse it. |
 | `errors` | Extension member on `validation-error`: one item per invalid part of the request. |
 
-Each `errors` item has a `detail` and, when the API can name it, a `parameter`: the query or
-path parameter at fault. (Body fields will be named by a JSON Pointer member, `pointer`, once
-routes take bodies.)
+Each `errors` item has a `detail` and, when the API can name it, where the problem is:
+`parameter` for a query or path parameter, or `pointer` for a body member, as an
+[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer (`/url`, `/filters/2/tag_id`).
+The server checks every part of a request before answering, so `errors` lists all of them.
 
 **Fanwork safety.** Every string in a problem comes from a fixed set built into the server:
-the type URIs, the titles, a catalogue of `detail` messages, and the declared parameter names.
-The response enforcer passes only those unhashed, so a problem never carries fanwork content
+the type URIs, the titles, a catalogue of `detail` messages, the declared parameter names, and
+pointers made of the request types' own member names and array indices. The response enforcer
+passes only those unhashed, so a problem never carries fanwork content
 and never echoes client input. A parameter name the API does not declare is left out of its
 error item rather than echoed. There is no `instance` member: the `X-Request-Id` response
 header identifies the request.
@@ -41,9 +43,10 @@ percent-encoding, `;` separators) or more than 32 query parameters.
 
 ## validation-error
 
-**422 Validation Error.** The request is well formed, but one or more parameters are invalid:
-out of range, not one of the allowed values, given more than once, or not taken by this route.
-`errors` lists them.
+**422 Validation Error.** The request is well formed, but one or more parameters or body
+members are invalid: out of range, not one of the allowed values, given more than once, not
+taken by this route, or (for a URL) not a supported AO3 page. `errors` lists every one, each
+with its own `detail`.
 
 ## invalid-body
 

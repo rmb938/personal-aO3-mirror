@@ -20,15 +20,18 @@ type Error struct {
 	// replaces a non-JSON response is a 403).
 	Status int
 	Detail detail
-	Errors []ParamError
+	Errors []ErrorItem
 }
 
-// ParamError is one invalid parameter.
-type ParamError struct {
+// ErrorItem is one invalid part of a request: a parameter (Param) or a body member (Pointer).
+type ErrorItem struct {
 	// Param may hold a client-chosen name; the problem keeps it only when it is a
 	// dto.ParamName the API declares.
-	Param  string
-	Detail detail
+	Param string
+	// Pointer is a JSON Pointer into the body, built from the request DTO's json keys
+	// (validation.member).
+	Pointer string
+	Detail  detail
 }
 
 func (e *Error) Error() string {
@@ -48,9 +51,9 @@ func errType(t dto.ProblemType) *Error { return &Error{Type: t} }
 // errDetail is a problem of type t with detail d.
 func errDetail(t dto.ProblemType, d detail) *Error { return &Error{Type: t, Detail: d} }
 
-// errParam is a validation error for one parameter.
+// errParam is a validation error for one parameter (middleware; handlers collect with params).
 func errParam(param string, d detail) *Error {
-	return &Error{Type: dto.TypeValidation, Detail: detailInvalidParams, Errors: []ParamError{{Param: param, Detail: d}}}
+	return &Error{Type: dto.TypeValidation, Detail: detailInvalidRequest, Errors: []ErrorItem{{Param: param, Detail: d}}}
 }
 
 // problem builds the problem body for e. Unknown types become internal; undeclared parameter
@@ -66,7 +69,7 @@ func (e *Error) problem() dto.Problem {
 		p.Status = e.Status
 	}
 	for _, pe := range e.Errors {
-		item := dto.ProblemError{Detail: pe.Detail.msg}
+		item := dto.ProblemError{Detail: pe.Detail.msg, Pointer: pe.Pointer}
 		if f := dto.ParamName(pe.Param); f.Known() {
 			item.Parameter = f
 		}

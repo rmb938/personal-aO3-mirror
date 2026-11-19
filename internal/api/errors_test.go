@@ -64,7 +64,7 @@ func TestProblemFor(t *testing.T) {
 func TestProblemParameter(t *testing.T) {
 	p := errParam("per_page", detailPerPage).problem()
 	assert.Equal(t, dto.TypeValidation, p.Type)
-	assert.Equal(t, detailInvalidParams.msg, p.Detail)
+	assert.Equal(t, detailInvalidRequest.msg, p.Detail)
 	assert.Equal(t, []dto.ProblemError{{Detail: detailPerPage.msg, Parameter: dto.ParamPerPage}}, p.Errors)
 
 	// A name the API doesn't declare is never echoed.
