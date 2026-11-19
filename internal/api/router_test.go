@@ -300,6 +300,35 @@ func TestLeakHarnessDetectsContent(t *testing.T) {
 	assert.NotContains(t, logs.String(), sentinel, "revealed content is still never logged")
 }
 
+// TestEnumScopedToField checks that an enum field allows only its own type's values: every
+// other DTO enum value (a WorkStatus, a JobKind, ...) in dto.Health.Status is hashed and
+// warned about, while each type's own values pass in their own fields.
+func TestEnumScopedToField(t *testing.T) {
+	a, logs := newTestAPI(t, nil)
+	var value string
+	a.public.Get("/enum", a.handle(func(*http.Request) (any, error) {
+		return dto.Health{Status: dto.HealthStatus(value)}, nil
+	}))
+	others := slices.Concat(dto.WorkStatus("").EnumValues(), dto.ImageStatus("").EnumValues(),
+		dto.JobKind("").EnumValues(), dto.JobState("").EnumValues(), dto.SourceKind("").EnumValues(),
+		dto.SourceState("").EnumValues(), dto.RequestKind("").EnumValues())
+	for _, v := range others {
+		if slices.Contains(dto.HealthStatus("").EnumValues(), v) {
+			continue
+		}
+		value = v
+		w := get(a.public, "/enum")
+		require.Equal(t, http.StatusOK, w.Code)
+		var h dto.Health
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &h))
+		assert.True(t, strings.HasPrefix(string(h.Status), "h_"), "%q hashed in dto.Health.Status", v)
+	}
+	assert.Contains(t, logs.String(), "dto.Health.Status", "off-set enum warning names the field")
+
+	value = string(dto.HealthOK)
+	assert.JSONEq(t, `{"status":"ok"}`, get(a.public, "/enum").Body.String())
+}
+
 // openAPISpec is the part of docs/api/openapi.yaml the coverage test reads.
 type openAPISpec struct {
 	Paths map[string]map[string]yaml.Node `yaml:"paths"`

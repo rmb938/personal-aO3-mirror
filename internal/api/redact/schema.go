@@ -194,6 +194,9 @@ func (c *compiler) addFields(obj *node, owner, t reflect.Type, path string) erro
 		if !ok || name == "" {
 			return fmt.Errorf("redact: %s: exported field needs a json tag", fpath)
 		}
+		if !keyPattern.MatchString(name) {
+			return fmt.Errorf("redact: %s: json key %q is not snake_case", fpath, name)
+		}
 		if err := checkTagOptions(opts, fpath); err != nil {
 			return err
 		}

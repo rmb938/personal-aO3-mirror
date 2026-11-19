@@ -92,6 +92,34 @@ func TestEnforceInvalidJSON(t *testing.T) {
 	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
 }
 
+// JSON written around respond has no Go type to check against: refused even when it would
+// match a DTO.
+func TestEnforceUntypedJSON(t *testing.T) {
+	a, logs := newTestAPI(t, nil)
+	a.public.Get("/raw", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", contentTypeJSON)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	for _, target := range []string{"/raw", "/raw" + revealQuery} {
+		w := get(a.public, target)
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+	}
+	assert.Contains(t, logs.String(), "not written by respond")
+}
+
+// A body that doesn't match its declared type (an unregistered type, here) is refused.
+func TestEnforceUnregisteredType(t *testing.T) {
+	type other struct {
+		Status string `json:"status"`
+	}
+	a, _ := newTestAPI(t, nil)
+	a.public.Get("/other", a.handle(func(*http.Request) (any, error) { return other{Status: "ok"}, nil }))
+	w := get(a.public, "/other")
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+}
+
 func TestEnforceEmptyBody(t *testing.T) {
 	a, _ := newTestAPI(t, nil)
 	a.public.Delete("/gone", func(w http.ResponseWriter, _ *http.Request) {

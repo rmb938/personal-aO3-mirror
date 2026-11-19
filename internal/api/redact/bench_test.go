@@ -3,7 +3,6 @@ package redact
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +19,7 @@ func benchBody(b *testing.B) []byte {
 		w := testWork{
 			ID: int64(i + 1), Title: fmt.Sprintf("Fixture Title %d", i), State: "done",
 			Complete: i%2 == 0, Words: &words, UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-			PublishedOn: "2025-12-31", Kinds: []string{"a", "b"},
+			PublishedOn: "2025-12-31", Kinds: []testKind{"a", "b"},
 			Notes: []string{strings.Repeat("lorem ipsum dolor sit amet ", 40)},
 		}
 		for j := range 12 {
@@ -36,22 +35,12 @@ func benchBody(b *testing.B) []byte {
 func BenchmarkEnforce(b *testing.B) {
 	e, _ := newTestEnforcer(b)
 	body := benchBody(b)
-	typ := reflect.TypeFor[testList]()
 	for _, mode := range []Mode{Hashed, Revealed} {
 		b.Run(mode.String(), func(b *testing.B) {
 			b.SetBytes(int64(len(body)))
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := e.Enforce(mode, body); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-		b.Run(mode.String()+"/typed", func(b *testing.B) {
-			b.SetBytes(int64(len(body)))
-			b.ReportAllocs()
-			for b.Loop() {
-				if _, err := e.EnforceAs(mode, typ, body); err != nil {
+				if _, err := e.Enforce(mode, listType, body); err != nil {
 					b.Fatal(err)
 				}
 			}

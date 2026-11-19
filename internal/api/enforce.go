@@ -8,6 +8,7 @@ import (
 	"maps"
 	"mime"
 	"net/http"
+	"reflect"
 	"strconv"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
@@ -22,7 +23,10 @@ const (
 	headerFanworkEpoch = "X-Fanwork-Key-Epoch"
 )
 
-var errResponseTooLarge = errors.New("api: response too large")
+var (
+	errResponseTooLarge = errors.New("api: response too large")
+	errUntypedJSON      = errors.New("api: JSON response not written by respond")
+)
 
 // bufferWriter buffers a response (headers, status, body) so the enforcer can check it before
 // anything reaches the client. It has its own header map: a replaced response drops the inner
@@ -32,9 +36,30 @@ type bufferWriter struct {
 	status   int
 	body     bytes.Buffer
 	overflow bool
+	// typ is the Go type respond marshaled the body from; the enforcer checks the body
+	// against its schema. A JSON body without one is refused.
+	typ reflect.Type
 }
 
 func (b *bufferWriter) Header() http.Header { return b.header }
+
+func (b *bufferWriter) setBodyType(t reflect.Type) { b.typ = t }
+
+// setBodyType records t as the body type on the enforcer's bufferWriter under w, if any (w may
+// wrap it). Outside the enforcer (the recoverer, unit tests) there is none and it does nothing.
+func setBodyType(w http.ResponseWriter, t reflect.Type) {
+	for {
+		if bw, ok := w.(interface{ setBodyType(reflect.Type) }); ok {
+			bw.setBodyType(t)
+			return
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
+}
 
 func (b *bufferWriter) WriteHeader(code int) {
 	if b.status == 0 {
@@ -55,15 +80,16 @@ func (b *bufferWriter) Write(p []byte) (int, error) {
 
 // enforce is the response enforcer middleware (docs/part2-api.md, "Fanwork protection"). Every
 // response from the handlers below it is buffered, then:
-//   - a JSON body (application/json or application/problem+json) goes through redact.Enforcer:
-//     in hashed mode every string not provably safe is hashed, and an unregistered key or
-//     invalid JSON gives a 500 problem;
+//   - a JSON body (application/json or application/problem+json) goes through redact.Enforcer,
+//     checked against the schema of the Go type respond marshaled it from: in hashed mode every
+//     string not provably safe for its field is hashed, and an undeclared key, a shape
+//     mismatch, invalid JSON or a JSON body not written by respond gives a 500 problem;
 //   - an empty body passes;
 //   - any other body passes only in revealed mode; in hashed mode it is replaced with 403
 //     reveal_required;
 //   - a body over maxResponseBytes gives a 500 problem.
 //
-// An enum key holding a value outside its set is logged as a warning (keys only).
+// An enum field holding a value outside its set is logged as a warning (Go field paths only).
 //
 // Every response gets X-Fanwork (hashed|revealed); hashed JSON gets X-Fanwork-Key-Epoch, and
 // revealed responses get Cache-Control: no-store. The mode is read after the handler returns,
@@ -90,7 +116,11 @@ func (a *API) enforce(next http.Handler) http.Handler {
 		case len(body) == 0:
 			a.write(w, mode, bw.header, status, nil, "")
 		case isJSONResponse(bw.header.Get("Content-Type")):
-			res, err := a.enf.Enforce(mode, body)
+			if bw.typ == nil {
+				a.enforceFailed(w, r, mode, errUntypedJSON)
+				return
+			}
+			res, err := a.enf.Enforce(mode, bw.typ, body)
 			if err != nil {
 				a.enforceFailed(w, r, mode, err)
 				return
@@ -100,7 +130,7 @@ func (a *API) enforce(next http.Handler) http.Handler {
 				a.log.LogAttrs(r.Context(), slog.LevelWarn, "api enum value outside its set",
 					slog.String("req_id", state(r.Context()).id),
 					slog.String("route", routePattern(r)),
-					slog.Any("keys", res.OffEnum))
+					slog.Any("fields", res.OffEnum))
 			}
 			a.write(w, mode, bw.header, status, res.Body, res.Epoch)
 		case mode == redact.Revealed:
@@ -129,7 +159,7 @@ func (a *API) writeProblem(w http.ResponseWriter, mode redact.Mode, e *Error) {
 	if err != nil {
 		panic(err) // a Problem always marshals
 	}
-	res, err := a.enf.Enforce(mode, body)
+	res, err := a.enf.Enforce(mode, reflect.TypeOf(p), body)
 	if err != nil {
 		panic(err) // problems are registered DTOs: a failure here is a programming error
 	}

@@ -19,8 +19,8 @@ type Mode int
 const (
 	// Hashed replaces every string that is not provably safe with a keyed hash (the default).
 	Hashed Mode = iota
-	// Revealed checks the structure (keys) but returns strings as they are. Only a request
-	// with the reveal param gets it.
+	// Revealed checks the structure (keys and shapes) but returns strings as they are. Only a
+	// request with the reveal param gets it.
 	Revealed
 )
 
@@ -35,31 +35,14 @@ func (m Mode) String() string {
 	}
 }
 
-// UnknownKeyError reports an object key that no registered DTO declares. It carries only the
-// key's hash, never the key.
+// UnknownKeyError reports an object key that the struct at that position doesn't declare. It
+// carries only the key's hash, never the key.
 type UnknownKeyError struct {
 	KeyHash string
 }
 
 func (e *UnknownKeyError) Error() string {
 	return "redact: unregistered JSON key " + e.KeyHash
-}
-
-// ErrInvalidJSON wraps input that is not exactly one well-formed JSON value. Its message never
-// holds the input.
-var ErrInvalidJSON = errors.New("redact: invalid JSON")
-
-// Result is an enforced response body.
-type Result struct {
-	Body []byte
-	// Epoch is the ID of the key epoch that hashed Body (the X-Fanwork-Key-Epoch header). It
-	// is empty in Revealed mode.
-	Epoch string
-	// OffEnum lists, once each and in order of first sight, the enum keys that held a value
-	// outside their set (hashed in Hashed mode, like any string). It is a programming error
-	// (a model value missing from its DTO type) for the caller to log: keys are registered
-	// DTO keys, never content.
-	OffEnum []string
 }
 
 // SchemaError reports a JSON value whose shape doesn't match the Go type it was enforced as
@@ -72,33 +55,38 @@ func (e *SchemaError) Error() string {
 	return "redact: JSON does not match " + e.Path
 }
 
+// ErrInvalidJSON wraps input that is not exactly one well-formed JSON value. Its message never
+// holds the input.
+var ErrInvalidJSON = errors.New("redact: invalid JSON")
+
+// Result is an enforced response body.
+type Result struct {
+	Body []byte
+	// Epoch is the ID of the key epoch that hashed Body (the X-Fanwork-Key-Epoch header). It
+	// is empty in Revealed mode.
+	Epoch string
+	// OffEnum lists, once each and in order of first sight, the enum fields (Go field paths,
+	// e.g. "dto.Health.Status") that held a value outside their set (hashed in Hashed mode,
+	// like any string). It is a programming error (a model value missing from its DTO type)
+	// for the caller to log: paths are code, never content.
+	OffEnum []string
+}
+
 // Enforcer rewrites JSON response bodies according to a registry snapshot. It is safe for
 // concurrent use.
 type Enforcer struct {
 	hasher *Hasher
-	keys   map[string]struct{}
-	enums  map[string]map[string]struct{}
-	// schemas are the compiled registered types, for EnforceAs.
+	// schemas are the compiled registered types.
 	schemas map[reflect.Type]*node
 }
 
-// NewEnforcer snapshots reg (later registrations don't affect it), checks that every enum key
-// is a registered key, and compiles each registered type into a schema for EnforceAs. Every
-// RegisterFieldEnum field must exist in a registered type.
+// NewEnforcer snapshots reg (later registrations don't affect it) and compiles each registered
+// type into a schema. Every RegisterFieldEnum field must exist in a registered type.
 func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 	if h == nil {
 		return nil, errors.New("redact: NewEnforcer: nil hasher")
 	}
-	e := &Enforcer{
-		hasher: h, keys: maps.Clone(reg.keys), enums: make(map[string]map[string]struct{}, len(reg.enums)),
-		schemas: make(map[reflect.Type]*node, len(reg.roots)),
-	}
-	for k, set := range reg.enums {
-		if _, ok := e.keys[k]; !ok {
-			return nil, fmt.Errorf("redact: enum key %q is not a registered DTO key", k)
-		}
-		e.enums[k] = maps.Clone(set)
-	}
+	e := &Enforcer{hasher: h, schemas: make(map[reflect.Type]*node, len(reg.roots))}
 	fieldEnums := make(map[fieldEnumKey]map[string]struct{}, len(reg.fieldEnums))
 	for fk, set := range reg.fieldEnums {
 		fieldEnums[fk] = maps.Clone(set)
@@ -119,43 +107,33 @@ func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 	return e, nil
 }
 
-// Enforce checks and rewrites one JSON value. Every object key must be registered (else
-// *UnknownKeyError). In Hashed mode a string value passes through only when allowed for the
-// key it sits under (directly, or inside arrays): an enum value in the key's set, an RFC3339
-// UTC timestamp under a key ending in "_at", or a YYYY-MM-DD date under a key ending in "_on".
-// Every other string becomes "h_" + 24 hex. Numbers, booleans and null pass through. The whole
-// body is hashed with one epoch.
-func (e *Enforcer) Enforce(mode Mode, in []byte) (Result, error) {
-	return e.enforce(mode, nil, in)
-}
-
-// EnforceAs is Enforce driven by the schema of t, a type registered through RegisterTypes
-// (or a pointer to one), whose marshaled value in is. Each object must be the struct at that
-// position: a key it doesn't declare is an *UnknownKeyError, and a value of the wrong JSON kind
-// a *SchemaError (null is always allowed). A string passes unhashed only when its own field
-// allows it: a value of the field's Enum type or RegisterFieldEnum set, or an RFC3339 UTC
-// timestamp or YYYY-MM-DD date under a key ending in "_at" or "_on". So two fields sharing a
-// key (two `status` enums) each allow only their own values. Result.OffEnum lists Go field
-// paths instead of keys.
-func (e *Enforcer) EnforceAs(mode Mode, t reflect.Type, in []byte) (Result, error) {
+// Enforce checks and rewrites in, one JSON value marshaled from t: a type registered through
+// RegisterTypes, or a pointer to one (else an error). The walk follows t's schema:
+//   - each object must be the struct at that position: a key it doesn't declare is an
+//     *UnknownKeyError;
+//   - a value of the wrong JSON kind is a *SchemaError; null is allowed anywhere;
+//   - numbers and booleans pass through;
+//   - in Hashed mode a string passes unhashed only when its own field allows it: a value of
+//     the field's Enum type or RegisterFieldEnum set, or an RFC3339 UTC timestamp or a
+//     YYYY-MM-DD date in a field whose key ends in "_at" or "_on" (strings in arrays use the
+//     array field's rule). Two fields sharing a key (two `status` enums) each allow only their
+//     own values. Every other string becomes "h_" + 24 hex.
+//
+// The whole body is hashed with one epoch.
+func (e *Enforcer) Enforce(mode Mode, t reflect.Type, in []byte) (Result, error) {
+	if mode != Hashed && mode != Revealed {
+		return Result{}, fmt.Errorf("redact: unknown mode %d", int(mode))
+	}
 	n, ok := e.schemas[rootType(t)]
 	if !ok {
 		return Result{}, fmt.Errorf("redact: type %v is not registered", t)
 	}
-	return e.enforce(mode, n, in)
-}
-
-// enforce walks in against n, or by key alone when n is nil (Enforce).
-func (e *Enforcer) enforce(mode Mode, n *node, in []byte) (Result, error) {
-	if mode != Hashed && mode != Revealed {
-		return Result{}, fmt.Errorf("redact: unknown mode %d", int(mode))
-	}
 	ep := e.hasher.Current()
-	w := walker{e: e, mode: mode, mac: ep.newMac()}
+	w := walker{mode: mode, mac: ep.newMac()}
 	w.out.Grow(len(in) + len(in)/4)
 	dec := json.NewDecoder(bytes.NewReader(in))
 	dec.UseNumber()
-	if err := w.value(dec, "", n); err != nil {
+	if err := w.value(dec, n); err != nil {
 		return Result{}, err
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
@@ -169,7 +147,6 @@ func (e *Enforcer) enforce(mode Mode, n *node, in []byte) (Result, error) {
 }
 
 type walker struct {
-	e    *Enforcer
 	mode Mode
 	mac  *mac
 	out  bytes.Buffer
@@ -177,9 +154,8 @@ type walker struct {
 	offEnum []string
 }
 
-// value reads and writes one JSON value; key is the object key it sits under ("" at the top)
-// and n its schema node (nil when enforcing by key alone).
-func (w *walker) value(dec *json.Decoder, key string, n *node) error {
+// value reads and writes one JSON value sitting at schema node n.
+func (w *walker) value(dec *json.Decoder, n *node) error {
 	tok, err := dec.Token()
 	if err != nil {
 		return invalid(err)
@@ -196,11 +172,7 @@ func (w *walker) value(dec *json.Decoder, key string, n *node) error {
 			if err := n.want(kindArray); err != nil {
 				return err
 			}
-			var elem *node
-			if n != nil {
-				elem = n.elem
-			}
-			return w.array(dec, key, elem)
+			return w.array(dec, n.elem)
 		default:
 			return fmt.Errorf("%w: unexpected %c", ErrInvalidJSON, rune(t))
 		}
@@ -208,8 +180,10 @@ func (w *walker) value(dec *json.Decoder, key string, n *node) error {
 		if err := n.want(kindString); err != nil {
 			return err
 		}
-		w.noteOffEnum(key, n, t)
-		if w.mode == Revealed || w.e.allowed(key, n, t) {
+		if n.offEnum(t) && !slices.Contains(w.offEnum, n.path) {
+			w.offEnum = append(w.offEnum, n.path)
+		}
+		if w.mode == Revealed || n.allows(t) {
 			w.writeString(t)
 		} else {
 			w.writeRawString(w.mac.hash(t))
@@ -236,16 +210,15 @@ func (w *walker) value(dec *json.Decoder, key string, n *node) error {
 	return nil
 }
 
-// want checks that a JSON value of kind k may sit at n (any value may when n is nil). An opaque
-// node takes any scalar.
+// want checks that a JSON value of kind k may sit at n. An opaque node takes any scalar.
 func (n *node) want(k nodeKind) error {
-	if n == nil || n.kind == k || (n.kind == kindOpaque && k != kindObject && k != kindArray) {
+	if n.kind == k || (n.kind == kindOpaque && k != kindObject && k != kindArray) {
 		return nil
 	}
 	return &SchemaError{Path: n.path}
 }
 
-// object walks an object at n (nil: keys are checked against every registered key).
+// object walks an object at struct node n.
 func (w *walker) object(dec *json.Decoder, n *node) error {
 	w.out.WriteByte('{')
 	for i := 0; dec.More(); i++ {
@@ -257,12 +230,7 @@ func (w *walker) object(dec *json.Decoder, n *node) error {
 		if !ok {
 			return fmt.Errorf("%w: object key is %T", ErrInvalidJSON, tok)
 		}
-		var child *node
-		if n != nil {
-			child, ok = n.fields[k]
-		} else {
-			_, ok = w.e.keys[k]
-		}
+		child, ok := n.fields[k]
 		if !ok {
 			return &UnknownKeyError{KeyHash: w.mac.hash(k)}
 		}
@@ -271,21 +239,21 @@ func (w *walker) object(dec *json.Decoder, n *node) error {
 		}
 		w.writeRawString(k) // registered keys are snake_case: no escaping needed
 		w.out.WriteByte(':')
-		if err := w.value(dec, k, child); err != nil {
+		if err := w.value(dec, child); err != nil {
 			return err
 		}
 	}
 	return w.closing(dec, '}')
 }
 
-// array walks an array whose elements sit at elem (nil when enforcing by key alone).
-func (w *walker) array(dec *json.Decoder, key string, elem *node) error {
+// array walks an array whose elements sit at elem.
+func (w *walker) array(dec *json.Decoder, elem *node) error {
 	w.out.WriteByte('[')
 	for i := 0; dec.More(); i++ {
 		if i > 0 {
 			w.out.WriteByte(',')
 		}
-		if err := w.value(dec, key, elem); err != nil {
+		if err := w.value(dec, elem); err != nil {
 			return err
 		}
 	}
@@ -325,49 +293,6 @@ func invalid(err error) error {
 		return fmt.Errorf("%w: syntax error at offset %d", ErrInvalidJSON, se.Offset)
 	}
 	return ErrInvalidJSON
-}
-
-// allowed reports whether s may pass unhashed at n, or under key when n is nil.
-func (e *Enforcer) allowed(key string, n *node, s string) bool {
-	if n != nil {
-		return n.allows(s)
-	}
-	if set, ok := e.enums[key]; ok {
-		_, ok := set[s]
-		return ok
-	}
-	switch {
-	case strings.HasSuffix(key, "_at"):
-		return isUTCTimestamp(s)
-	case strings.HasSuffix(key, "_on"):
-		return isDate(s)
-	}
-	return false
-}
-
-// noteOffEnum records an enum whose set lacks s in Result.OffEnum: n's field path, or key when
-// n is nil.
-func (w *walker) noteOffEnum(key string, n *node, s string) {
-	var name string
-	switch {
-	case n != nil:
-		if !n.offEnum(s) {
-			return
-		}
-		name = n.path
-	default:
-		set, ok := w.e.enums[key]
-		if !ok {
-			return
-		}
-		if _, in := set[s]; in {
-			return
-		}
-		name = key
-	}
-	if !slices.Contains(w.offEnum, name) {
-		w.offEnum = append(w.offEnum, name)
-	}
 }
 
 // isUTCTimestamp accepts exactly what time.Time.MarshalJSON produces for a UTC time.

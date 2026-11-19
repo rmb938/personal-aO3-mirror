@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Synthetic DTOs for EnforceAs: two `status` enums with disjoint values, and a `kind` enum
-// shared by name with a plain field.
+// Synthetic DTOs for the schema tests: three `status` enums with disjoint values, and a
+// `version` field that is plain here but a RegisterFieldEnum set on tVersion.
 type healthStat string
 
 func (healthStat) EnumValues() []string { return []string{"ok"} }
@@ -68,10 +68,10 @@ func newTypedEnforcer(tb testing.TB) (*Enforcer, *Hasher) {
 
 func enforceAs[T any](t *testing.T, e *Enforcer, mode Mode, in string) (Result, error) {
 	t.Helper()
-	return e.EnforceAs(mode, reflect.TypeFor[T](), []byte(in))
+	return e.Enforce(mode, reflect.TypeFor[T](), []byte(in))
 }
 
-func TestEnforceAsEnumsPerField(t *testing.T) {
+func TestEnforceEnumsPerField(t *testing.T) {
 	e, h := newTypedEnforcer(t)
 	hs := h.Current().Hash
 	q := func(s string) string { b, _ := json.Marshal(s); return string(b) }
@@ -114,7 +114,7 @@ func TestEnforceAsEnumsPerField(t *testing.T) {
 	assert.Equal(t, []string{"redact.tVersion.Version"}, res.OffEnum)
 }
 
-func TestEnforceAsOffEnumPaths(t *testing.T) {
+func TestEnforceOffEnumPaths(t *testing.T) {
 	e, _ := newTypedEnforcer(t)
 	in := `{"status":"fetched","works":[{"status":"ok"},{"status":"stored"}],"images":[{"status":"stored"}]}`
 	for _, mode := range []Mode{Hashed, Revealed} {
@@ -124,7 +124,7 @@ func TestEnforceAsOffEnumPaths(t *testing.T) {
 	}
 }
 
-func TestEnforceAsKeysPerStruct(t *testing.T) {
+func TestEnforceKeysPerStruct(t *testing.T) {
 	e, _ := newTypedEnforcer(t)
 	for name, in := range map[string]string{
 		"other struct's key at top": `{"count":1}`,
@@ -144,7 +144,7 @@ func TestEnforceAsKeysPerStruct(t *testing.T) {
 	}
 }
 
-func TestEnforceAsSchemaMismatch(t *testing.T) {
+func TestEnforceSchemaMismatch(t *testing.T) {
 	e, _ := newTypedEnforcer(t)
 	for name, c := range map[string]struct{ in, path string }{
 		"object for enum":      {`{"status":{}}`, "redact.tStatus.Health"},
@@ -176,7 +176,7 @@ func TestEnforceAsSchemaMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "not registered", "only registered roots, not nested types")
 }
 
-func TestEnforceAsRevealed(t *testing.T) {
+func TestEnforceTypedRevealed(t *testing.T) {
 	e, _ := newTypedEnforcer(t)
 	in := `{"status":"SENTINEL-s","works":[{"title":"SENTINEL <b>&</b>","status":"x"}]}`
 	res, err := enforceAs[tStatus](t, e, Revealed, in)
@@ -185,8 +185,8 @@ func TestEnforceAsRevealed(t *testing.T) {
 	assert.Empty(t, res.Epoch)
 }
 
-// TestEnforceAsRealMarshal runs a json/v2-marshaled value through EnforceAs, as api.respond does.
-func TestEnforceAsRealMarshal(t *testing.T) {
+// TestEnforceRealMarshal runs a json/v2-marshaled value through Enforce, as api.respond does.
+func TestEnforceRealMarshal(t *testing.T) {
 	e, _ := newTypedEnforcer(t)
 	ts := time.Date(2026, 3, 4, 5, 6, 7, 800, time.UTC)
 	v := tStatus{
@@ -197,7 +197,7 @@ func TestEnforceAsRealMarshal(t *testing.T) {
 	}
 	in, err := jsonv2.Marshal(v)
 	require.NoError(t, err)
-	res, err := e.EnforceAs(Hashed, reflect.TypeOf(&v), in)
+	res, err := e.Enforce(Hashed, reflect.TypeOf(&v), in)
 	require.NoError(t, err)
 	assert.NotContains(t, string(res.Body), "SENTINEL")
 	assert.Empty(t, res.OffEnum)
@@ -268,41 +268,6 @@ func TestRegisterFieldEnum(t *testing.T) {
 			r := NewRegistry()
 			require.NoError(t, r.RegisterTypes(tStatus{}, tVersion{}))
 			require.NoError(t, r.RegisterFieldEnum(c.v, c.key, "a"))
-			_, err := NewEnforcer(r, h)
-			assert.Error(t, err)
-		})
-	}
-}
-
-func TestNewEnforcerRejectsSchemas(t *testing.T) {
-	h, err := NewHasher(0, nil)
-	require.NoError(t, err)
-	type withBytes struct {
-		B []byte `json:"b"`
-	}
-	type withByteArray struct {
-		B [4]byte `json:"b"`
-	}
-	type withStringOpt struct {
-		N int `json:"n,string"`
-	}
-	type withFormat struct {
-		T time.Time `json:"t,format:RFC1123"`
-	}
-	type dupInner struct {
-		ID int `json:"id"`
-	}
-	type withDup struct {
-		dupInner
-		ID int `json:"id"`
-	}
-	for name, v := range map[string]any{
-		"byte slice": withBytes{}, "byte array": withByteArray{}, "string option": withStringOpt{},
-		"format option": withFormat{}, "duplicate key via embedding": withDup{},
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := NewRegistry()
-			require.NoError(t, r.RegisterTypes(v), "the key walk accepts it")
 			_, err := NewEnforcer(r, h)
 			assert.Error(t, err)
 		})

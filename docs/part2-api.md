@@ -52,14 +52,15 @@ read models go in `controllers` with one `InReadTx` each. New SQL goes in `store
 **DTO rule (by design, no lint):** `internal/api/dto` imports only the standard library. It
 never uses or imports `controllers`, `store` or `model` types, and never embeds them. Handlers
 map controller results into DTOs field by field. The API contract then changes only when a DTO
-is edited on purpose, and the enforcer's key registry is exactly the DTO fields. Reviewers check
+is edited on purpose, and the enforcer's schemas are exactly the DTO types. Reviewers check
 this rule, and it is added to CLAUDE.md in stage 0.
 
 **Enum rule (from stage 3a-3):** a string field with a closed value set has a named string
 type in `dto` (`dto.SourceState`) with an `EnumValues() []string` method listing its values.
-The registry finds these by reflection and registers the field's key as an enum; nothing else
-lists enums. A plain `string` field is free text and is always hashed. The only exception is
-`version`, whose single value is known at runtime (`RegisterEnum`).
+The registry finds these by reflection; nothing else lists enums. Each enum field allows only
+its own type's values (from 3c-3: `status` on `Health`, `WorkStatus` and `ImageStatus` are three
+separate sets). A plain `string` field is free text and is always hashed. The only exception is
+`dto.Version.Version`, whose single value is known at runtime (`RegisterFieldEnum`).
 
 **Conversion rule (from stage 3a-4):** the field-by-field mapping lives in
 `internal/api/convert`, not in handlers. It exports one function per model or controller
@@ -86,16 +87,20 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
 2. **Enforcer middleware** (`redact.Enforcer`) wraps the whole router, outermost after
    recovery. In hashed mode (the default) it buffers the body (with a cap) and requires a JSON
    content type. Any other content type is replaced with 403 `reveal_required`. It then walks the
-   JSON:
-   - numbers, booleans and null pass through;
-   - every **object key** must be in the key registry, which is built by reflecting over the
-     `json` tags of the registered DTO types. An unknown key gives 500 and a log line with the
-     hashed key. This rules out maps with dynamic keys;
-   - **string** values pass through only when allowed for their key:
-     - an enum key whose value is in that key's registered closed set (e.g. `state`, `kind`,
-       `status`, `type`, `code`, `order`);
-     - a key ending in `_at` whose value is strict RFC3339 UTC;
-     - a key ending in `_on` whose value is `YYYY-MM-DD`.
+   JSON against the **schema of the Go type** `respond` marshaled it from (from 3c-3), compiled
+   at startup by reflecting over the registered DTO types. JSON not written by `respond` (no
+   type) or of an unregistered type gives 500.
+   - numbers and booleans pass through where the type has a number or bool field; null passes
+     anywhere;
+   - every **object key** must be a field of the struct at that position. An unknown key gives
+     500 and a log line with the hashed key. A value of the wrong JSON kind (an object where
+     the field is a string) gives 500. This rules out maps with dynamic keys;
+   - **string** values pass through only when their own field allows them:
+     - an enum field (a `dto` type with `EnumValues()`) whose value is in that type's set.
+       Fields sharing a key don't share values: a `WorkStatus` value in `Health.status` is
+       hashed;
+     - a field whose key ends in `_at` and whose value is strict RFC3339 UTC;
+     - a field whose key ends in `_on` and whose value is `YYYY-MM-DD`.
    - **every other string is replaced with `h_` + 24 hex of HMAC-SHA256(key, value)**.
      - Within one key epoch the hash is deterministic, so equal names hash equally across fields,
        routes and requests (Claude can match a work's tag hash with `/tags/{id}`).
@@ -563,6 +568,30 @@ Status: tick when the PR merges.
           - A request error's time is `requested_at`; durations are `_ms`.
           - Seed gains a heartbeat and a failed request with sentinel req id, path and reason.
           - OpenAPI: `SourceState` became a shared schema.
+      - [x] **3c-3. Refactor: type-scoped enforcement** (no change to valid responses). Keyed
+        by JSON key alone, enums sharing a key were merged (`status`: health ∪ work ∪ image;
+        `kind`: job ∪ source ∪ request; `state`: source ∪ job), so one type's value passed in
+        another's field. Two PRs: `redact` first (additive), then the API switch.
+        - `redact.NewEnforcer` compiles each registered type into a schema tree (object node:
+          key → field; array node: element; string node: its own enum set, an `_at`/`_on` rule
+          or hashed; opaque node for self-marshaling types like `time.Time`). Struct nodes are
+          shared per type, so recursive types work.
+        - `Enforcer.Enforce(mode, reflect.Type, body)` walks the body against that tree: keys
+          per struct (`*UnknownKeyError`), JSON kinds per field (`*SchemaError`, Go field path
+          only), each string by its own field's rule. `Result.OffEnum` lists Go field paths
+          (`dto.Health.Status`), logged as `fields`.
+        - `Registry.RegisterFieldEnum(dto.Version{}, "version", v)` replaces
+          `RegisterEnum("version", v)`. The key-only mode, `RegisterEnum` and the typed/plain
+          key-mixing rules are gone: a key may be an enum in one struct and free text in another.
+        - `RegisterTypes` also rejects byte slices and arrays (base64), json tag options other
+          than `omitempty`/`omitzero`, and a key appearing twice in one struct via embedding.
+        - `respond` records the body's type on the enforcer's `bufferWriter` (found through
+          `Unwrap`); JSON without one is refused (500). Middleware problems go through
+          `respondError`, so they are typed too; `writeProblem` passes `dto.Problem`.
+        - Tests: per-field enums and per-struct keys, `TestEnumScopedToField` (every other dto
+          enum value in `Health.status` is hashed), untyped and unregistered responses refused,
+          and two fuzzers whose oracle reads allowed values from the Go type by reflection
+          (structured random values marshaled with json/v2, and raw JSON).
 - [ ] **4. Add source (public)**
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.
