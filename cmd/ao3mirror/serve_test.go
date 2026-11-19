@@ -71,6 +71,11 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, status)
 	assert.Equal(t, string(dto.CodeRevealDisabled), body["code"])
 
+	// The store is open: a store-backed route answers on a fresh data dir.
+	status, _, body = get(t, tcp, base+"/api/v1/sources")
+	assert.Equal(t, http.StatusOK, status, "public sources")
+	assert.Equal(t, map[string]any{"items": []any{}, "page": 1.0, "per_page": 20.0, "total": 0.0}, body)
+
 	sockPath := cfg.Path(cfg.API.AdminSocket)
 	status, _, _ = get(t, unixClient(sockPath), "http://admin/api/v1/version")
 	assert.Equal(t, http.StatusOK, status, "admin version")

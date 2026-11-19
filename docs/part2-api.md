@@ -65,7 +65,10 @@ lists enums. A plain `string` field is free text and is always hashed. The only 
 `internal/api/convert`, not in handlers. It exports one function per model or controller
 result, named after it (`convert.Source(model.Source) dto.Source`, `convert.Job(...)`), and
 keeps every helper (filter/cursor mapping, last_error split, null-for-unknown) unexported, with
-its tests beside it. Handlers parse input, call a controller and return `convert.X(result)`.
+its tests beside it. Each model or result has its own file (`source.go`, `source_add.go`, each
+with its `_test.go`); `convert.go` holds only the helpers several models share (`list`,
+`splitError`, `known`, `utc`, `unix`) and the cross-model enum-set test.
+Handlers parse input, call a controller and return `convert.X(result)`.
 CLAUDE.md's API design rules get this line in 3a-4.
 
 **Pagination rule (from stage 3a-2):** a paged route pages in SQL. The store takes
@@ -413,7 +416,7 @@ Status: tick when the PR merges.
           (constants + `Known()`, used by `problem()` and the access log). `api.RevealParam`
           is `string(dto.ParamReveal)`. `api.Error.Code` is a `dto.ProblemCode`; `Field`
           stays a string (it can hold a client-chosen name, dropped unless `Known`).
-    - [ ] **3a-4. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
+    - [x] **3a-4. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
       `/source-adds/{job_id}`, with mapping in `internal/api/convert`. Design (from a first
       attempt, reworked into 3a-1..4):
       - `serve` opens the store and builds controllers with no AO3 client
@@ -451,6 +454,23 @@ Status: tick when the PR merges.
         a failed source add, a non-add job). Samples gain a `content` flag: those also run
         revealed and must contain a sentinel (per-route positive control). The serve test
         checks `/sources` answers on a fresh data dir.
+      - As built:
+        - Lists are the generic `dto.List[T]` (`{items, page, per_page, total}`; `items` is
+          `[]`, never null). `convert.SourceList(items, total, page, per_page)` builds it.
+        - An unreadable `filters_json` or backfill cursor maps to `filters: []` / no
+          `backfill` rather than an error (the scheduler reports those on the source). The
+          cursor's internal counters (`span_days`, `rescan_listed`, …) are not exposed.
+        - Value lists for the convert tests: `model.SourceStates()`, `model.JobStates()`,
+          `ao3url.Kinds()`, `ao3url.OrderNames()`, `controllers.JobErrorCodes()`. The tests
+          use `ElementsMatch`, so a dto value with no model value fails too. A controllers
+          test parses the package source so every `ErrorCode` constant must be in
+          `JobErrorCodes()`. The scheduler's `internal:` prefix is now
+          `controllers.CodeInternal`.
+        - A bad path ID is 400 `invalid_param` with `field` `id` / `job_id`. Handlers read
+          it with `pathID(r, dto.ParamX)`.
+        - `serve` closes the store when `serve()` returns, and `newServer` closes it on any
+          error after opening it. The store and controllers log through the API's logger, so
+          the leak test also checks their lines.
     - [ ] **3b. Jobs**: store offset/limit + `CountJobs` for `JobFilter`, a controller
       returning `(page, total)`; `GET /jobs` (state, kind, source_id, page, per_page), and
       `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a

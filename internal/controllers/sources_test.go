@@ -15,6 +15,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
+	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -165,4 +166,20 @@ func TestStateTransitions(t *testing.T) {
 	_, err = e.svc.CancelSource(ctx, id)
 	require.Error(t, err, "double cancel must fail")
 	require.NoError(t, e.svc.RemoveSource(ctx, id))
+}
+
+// SourceAddOutcome only reports on source add jobs: any other job, or no job, is ErrNoJob.
+func TestSourceAddOutcomeOnlyForSourceAdds(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	var other int64
+	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		other, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: "1", DedupeKey: jobs.WorkKey(1)})
+		return err
+	}))
+	_, err := e.svc.SourceAddOutcome(ctx, other)
+	require.ErrorIs(t, err, store.ErrNoJob)
+	_, err = e.svc.SourceAddOutcome(ctx, other+100)
+	require.ErrorIs(t, err, store.ErrNoJob)
 }

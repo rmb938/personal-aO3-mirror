@@ -38,7 +38,68 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Version" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources:
+    get:
+      operationId: listSources
+      summary: One page of sources, ordered by id.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of sources.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{id}:
+    get:
+      operationId: getSource
+      summary: One source.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The source.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Source" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/source-adds/{job_id}:
+    get:
+      operationId: getSourceAdd
+      summary: Where a queued source add stands.
+      description: |
+        404 when the job does not exist or is not a source add, and when a done add's source
+        was removed since.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ID" }
+      responses:
+        "200":
+          description: The add's job state, its last error and, once done, the result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceAdd" }
+        default: { $ref: "#/components/responses/Problem" }
 components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    Page:
+      name: page
+      in: query
+      description: 1-based page number; (page-1)*per_page is at most 100000.
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
   responses:
     Problem:
       description: An RFC 9457 problem. Every field is an enumerable value.
@@ -68,3 +129,112 @@ components:
       properties:
         version: { type: string }
         parser_version: { type: integer }
+    ID:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339 UTC.
+    SourceList:
+      type: object
+      required: [items, page, per_page, total]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Source" } }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: "Sources over all pages." }
+    Order:
+      type: string
+      description: Listing sort, `<field>_<asc|desc>`.
+      enum: [author_asc, author_desc, bookmarks_asc, bookmarks_desc, comments_asc, comments_desc,
+        created_asc, created_desc, hits_asc, hits_desc, kudos_asc, kudos_desc, revised_asc,
+        revised_desc, title_asc, title_desc, words_asc, words_desc]
+    Source:
+      type: object
+      required: [id, kind, target, filters, path, state, poll_interval_s, priority, total_works,
+        est_requests, member_works, fetched_works]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        kind: { type: string, enum: [tag, user, pseud, user_bookmarks, series, collection, work] }
+        target: { type: string, description: "Tag, user or collection name, or series/work id (hashed)." }
+        target_id: { $ref: "#/components/schemas/ID", description: "Numeric target of a series or work source." }
+        filters:
+          type: array
+          description: work_search filters, sorted by name.
+          items:
+            type: object
+            required: [name, values]
+            additionalProperties: false
+            properties:
+              name: { type: string }
+              values: { type: array, items: { type: string } }
+        path: { type: string, description: "AO3 listing path (hashed)." }
+        state: { type: string, enum: [pending_confirm, active, paused, cancelled, done_backfill] }
+        order: { $ref: "#/components/schemas/Order" }
+        poll_interval_s: { type: integer }
+        priority: { type: integer }
+        total_works: { type: [integer, "null"], description: "null until known." }
+        est_requests: { type: [integer, "null"], description: "null until known." }
+        member_works: { type: integer }
+        fetched_works: { type: integer }
+        backfill: { $ref: "#/components/schemas/Backfill" }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+        last_poll_at: { $ref: "#/components/schemas/Timestamp" }
+        next_poll_at: { $ref: "#/components/schemas/Timestamp" }
+        last_full_scan_at: { $ref: "#/components/schemas/Timestamp" }
+        backfill_done_at: { $ref: "#/components/schemas/Timestamp" }
+        last_error: { type: string, description: "Last poll or backfill error (hashed whole)." }
+    Backfill:
+      type: object
+      required: [next_page]
+      additionalProperties: false
+      properties:
+        next_page: { type: integer, description: "0 once the listing walk is done." }
+        order: { $ref: "#/components/schemas/Order" }
+        window_start_on: { type: string, format: date }
+        window_end_on: { type: string, format: date }
+        rescan: { type: boolean }
+        rescan_started_at: { $ref: "#/components/schemas/Timestamp" }
+        blocked_parser: { type: integer, description: "Parser version that failed on next_page." }
+        retry_at: { $ref: "#/components/schemas/Timestamp" }
+    SourceAdd:
+      type: object
+      required: [job_id, state]
+      additionalProperties: false
+      properties:
+        job_id: { $ref: "#/components/schemas/ID" }
+        state: { type: string, enum: [queued, running, done, failed, cancelled] }
+        last_error_code:
+          type: string
+          description: The job's last error code (before the first `:`).
+          enum: [parse_unexpected, parse_error, not_found, restricted, hidden, adult_gate, too_large,
+            robots_disallowed, robots_unavailable, unexpected_response, bad_source, bad_filters,
+            bad_cursor, bad_work_id, bad_series_id, no_source, no_tag, panic, internal,
+            source_exists, no_source_add, rate_limited, unavailable, crashed]
+        last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
+        result:
+          type: object
+          required: [source, blurbs, estimate]
+          additionalProperties: false
+          properties:
+            source: { $ref: "#/components/schemas/Source" }
+            blurbs: { type: integer, description: "Listing blurbs stored from page 1." }
+            estimate: { $ref: "#/components/schemas/Estimate" }
+    Estimate:
+      type: object
+      required: [total, pages, listing_requests, work_fetches, requests, duration_s, disk_bytes, windowed]
+      additionalProperties: false
+      properties:
+        total: { type: integer }
+        pages: { type: integer }
+        listing_requests: { type: integer }
+        work_fetches: { type: integer }
+        requests: { type: integer }
+        duration_s: { type: integer }
+        disk_bytes: { type: integer }
+        windowed: { type: boolean, description: "Backfill sliced into revised-date windows (over 100k results)." }

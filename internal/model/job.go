@@ -11,6 +11,9 @@ const (
 	JobCancelled = "cancelled"
 )
 
+// JobStates lists every job state.
+func JobStates() []string { return []string{JobQueued, JobRunning, JobDone, JobFailed, JobCancelled} }
+
 // Job is one queued unit of work. Target is content-free (page number, work id, path pattern).
 type Job struct {
 	ID          int64

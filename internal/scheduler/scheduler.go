@@ -243,7 +243,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 		log.Warn("job failed", "error", pe.Error())
 	default:
 		// Unexpected (store/transport) errors: retry; the store caps attempts.
-		code := "internal:" + errCode(err)
+		code := string(controllers.CodeInternal) + ":" + errCode(err)
 		state := retry("error", code, s.options.Now().Add(5*time.Minute))
 		log.Error("job error", "error", err.Error(), "next_state", state)
 	}

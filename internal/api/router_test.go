@@ -68,9 +68,14 @@ func (s *syncBuffer) accessLine(t *testing.T) map[string]any {
 	return found[0]
 }
 
-func testOptions(logs io.Writer) Options {
+// testOptions are valid options logging JSON to logs, with controllers over a seeded temp
+// store (seed_test.go).
+func testOptions(t *testing.T, logs io.Writer) Options {
+	t.Helper()
+	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return Options{
-		Logger:         slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Logger:         log,
+		Controllers:    newTestControllers(t, log),
 		Version:        testVersion,
 		TrustedProxies: []string{"127.0.0.1/32", "::1/128"},
 		RequestTimeout: 10 * time.Second,
@@ -82,7 +87,7 @@ func testOptions(logs io.Writer) Options {
 func newTestAPI(t *testing.T, mutate func(*Options)) (*API, *syncBuffer) {
 	t.Helper()
 	logs := &syncBuffer{}
-	opts := testOptions(logs)
+	opts := testOptions(t, logs)
 	if mutate != nil {
 		mutate(&opts)
 	}
@@ -117,6 +122,7 @@ const revealQuery = "?" + RevealParam + "=1"
 func TestNewValidatesOptions(t *testing.T) {
 	cases := map[string]func(*Options){
 		"nil logger":    func(o *Options) { o.Logger = nil },
+		"nil ctl":       func(o *Options) { o.Controllers = nil },
 		"no version":    func(o *Options) { o.Version = "" },
 		"no proxies":    func(o *Options) { o.TrustedProxies = nil },
 		"bad proxy":     func(o *Options) { o.TrustedProxies = []string{"127.0.0.1"} },
@@ -127,7 +133,7 @@ func TestNewValidatesOptions(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			opts := testOptions(io.Discard)
+			opts := testOptions(t, io.Discard)
 			mutate(&opts)
 			_, err := New(opts)
 			assert.Error(t, err)
@@ -172,13 +178,20 @@ func TestNotFoundAndMethodNotAllowed(t *testing.T) {
 type routeSample struct {
 	target string
 	status int
+	// content: the response holds seeded fanwork content, so revealed it must contain a
+	// sentinel (the per-route positive control).
+	content bool
 }
 
 // routeSamples has a sample request for every route, keyed "METHOD pattern". The leak test fails
-// when a route has no sample or a sample has no route. Add one with every new route.
+// when a route has no sample or a sample has no route. Add one with every new route; the ids are
+// the seeded rows (seed_test.go).
 var routeSamples = map[string]routeSample{
-	"GET /api/v1/healthz": {target: "/api/v1/healthz", status: http.StatusOK},
-	"GET /api/v1/version": {target: "/api/v1/version", status: http.StatusOK},
+	"GET /api/v1/healthz":              {target: "/api/v1/healthz", status: http.StatusOK},
+	"GET /api/v1/version":              {target: "/api/v1/version", status: http.StatusOK},
+	"GET /api/v1/sources":              {target: "/api/v1/sources", status: http.StatusOK, content: true},
+	"GET /api/v1/sources/{id}":         {target: "/api/v1/sources/1", status: http.StatusOK, content: true},
+	"GET /api/v1/source-adds/{job_id}": {target: "/api/v1/source-adds/1", status: http.StatusOK, content: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.
@@ -248,6 +261,14 @@ func TestAllRoutesLeak(t *testing.T) {
 				w = do(r, req)
 				assert.Equal(t, http.StatusBadRequest, w.Code)
 				assertNoSentinel(t, w, logs)
+
+				if s.content {
+					w = do(r, httptest.NewRequest(method, s.target+sep+RevealParam+"=1", nil))
+					assert.Equal(t, s.status, w.Code)
+					assert.Equal(t, "revealed", w.Header().Get(headerFanwork))
+					assert.Contains(t, w.Body.String(), sentinel, "revealed response holds the seeded content")
+					assert.NotContains(t, logs.String(), sentinel, "revealed content is never logged")
+				}
 			})
 		}
 	}

@@ -65,8 +65,12 @@ Claude must NOT:
 Design rules for API code:
 - Handlers call controllers (see Layering) and return values; only `api.respond` writes JSON.
 - `internal/api/dto` imports only the standard library. It never uses, imports or embeds
-  `controllers`, `store` or `model` types; handlers map controller results into DTOs field by
-  field.
+  `controllers`, `store` or `model` types; `internal/api/convert` maps controller results into
+  DTOs field by field.
+- Conversion lives in `internal/api/convert`, not handlers: one exported function per model or
+  controller result, named after it (`convert.Source`), every helper unexported and tested
+  beside it. Each model gets its own file (`source.go`, `source_add.go`, with matching
+  `_test.go`); `convert.go` holds only helpers shared across models. Handlers parse input, call a controller and return `convert.X(result)`.
 - A string field with a closed value set is a named string type in `dto` with an
   `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
   `string` field is free text and always hashed.
