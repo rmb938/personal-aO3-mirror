@@ -209,16 +209,7 @@ func TestAddSourceRejectedURLIsContentFree(t *testing.T) {
 // memberErrors POSTs body and returns the validation error's items as pointer → detail.
 func memberErrors(t *testing.T, h http.Handler, body string) map[string]string {
 	t.Helper()
-	w := postJSON(h, "/api/v1/sources", body)
-	require.Equal(t, http.StatusUnprocessableEntity, w.Code, body)
-	p := decodeProblem(t, w)
-	assert.Equal(t, dto.TypeValidation, p.Type, body)
-	out := map[string]string{}
-	for _, e := range p.Errors {
-		assert.Empty(t, e.Parameter, body)
-		out[e.Pointer] = e.Detail
-	}
-	return out
+	return problemPointers(t, postJSON(h, "/api/v1/sources", body), body)
 }
 
 // testDetailOrder is request's detail for a bad order (the same catalogue message).
@@ -345,20 +336,126 @@ func TestSourceAdminActions(t *testing.T) {
 	assert.Equal(t, dto.SourceState("active"), sourceState(t, h, seedSeriesSource), "an invalid request changes nothing")
 }
 
+// sendJSON sends body to target as application/json with method.
+func sendJSON(h http.Handler, method, target, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", contentTypeJSON)
+	return do(h, req)
+}
+
+// problemPointers requires a 422 validation-error and returns its items as pointer → detail.
+func problemPointers(t *testing.T, w *httptest.ResponseRecorder, msg string) map[string]string {
+	t.Helper()
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, msg+": "+w.Body.String())
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeValidation, p.Type, msg)
+	out := map[string]string{}
+	for _, e := range p.Errors {
+		out[e.Pointer] = e.Detail
+	}
+	return out
+}
+
+func TestRefreshSource(t *testing.T) {
+	a, _ := newTestAPI(t, nil)
+	h := a.Admin()
+
+	w := postJSON(h, "/api/v1/sources/1/refresh", `{}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"poll_now":true,"requeued_works":0,"rescan_started":false,"unblocked_parser":false}`, w.Body.String())
+	assert.Equal(t, seedTime, getJSON[dto.Source](t, h, "/api/v1/sources/1").NextPollAt, "poll due now")
+
+	// full clears the backfill's retry wait (the seeded cursor has one).
+	require.NotZero(t, getJSON[dto.Source](t, h, "/api/v1/sources/1").Backfill.RetryAt)
+	w = postJSON(h, "/api/v1/sources/1/refresh", `{"full":true}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Zero(t, getJSON[dto.Source](t, h, "/api/v1/sources/1").Backfill.RetryAt)
+
+	// A pending_confirm source can't be refreshed.
+	w = postJSON(h, "/api/v1/sources/2/refresh", `{}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeStateConflict, p.Type)
+	assert.Equal(t, detailStateConflict.Message(), p.Detail)
+
+	w = postJSON(h, "/api/v1/sources/99/refresh", `{}`)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, detailNoSource.Message(), decodeProblem(t, w).Detail)
+
+	requireParamProblem(t, postJSON(h, "/api/v1/sources/x/refresh", `{}`), dto.ParamID, "bad id")
+	for _, body := range []string{``, `{"full":1}`, `{"full":true,"extra":1}`} {
+		w := postJSON(h, "/api/v1/sources/1/refresh", body)
+		require.Equal(t, http.StatusBadRequest, w.Code, body)
+		assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type, body)
+	}
+	assert.Equal(t, http.StatusUnsupportedMediaType, post(h, "/api/v1/sources/1/refresh").Code, "a body is required")
+}
+
+func TestSetSourceSettings(t *testing.T) {
+	a, _ := newTestAPI(t, nil)
+	h := a.Admin()
+	patch := func(target, body string) *httptest.ResponseRecorder {
+		return sendJSON(h, http.MethodPatch, target, body)
+	}
+	settings := func() (time.Duration, int) {
+		s := getJSON[dto.Source](t, h, "/api/v1/sources/1")
+		return s.PollInterval.Duration(), s.Priority
+	}
+
+	requireNoContent(t, patch("/api/v1/sources/1", `{"poll_interval":"2h","priority":-5}`), "both")
+	poll, prio := settings()
+	assert.Equal(t, 2*time.Hour, poll)
+	assert.Equal(t, -5, prio)
+
+	// Absent (or null) members keep their value.
+	requireNoContent(t, patch("/api/v1/sources/1", `{"priority":7}`), "priority only")
+	requireNoContent(t, patch("/api/v1/sources/1", `{"poll_interval":"90m","priority":null}`), "poll only")
+	requireNoContent(t, patch("/api/v1/sources/1", `{}`), "nothing")
+	poll, prio = settings()
+	assert.Equal(t, 90*time.Minute, poll)
+	assert.Equal(t, 7, prio)
+
+	// Every invalid member at once, with an unknown param (listed first, by parameter).
+	w := patch("/api/v1/sources/1?page=1", `{"poll_interval":"1s","priority":1001}`)
+	got := problemPointers(t, w, "invalid")
+	assert.Equal(t, []string{"", "/poll_interval", "/priority"}, slices.Sorted(maps.Keys(got)))
+	assert.Equal(t, detailUnknownParam.Message(), got[""])
+	for ptr, d := range got {
+		assert.False(t, isHash(d), "%s: a catalogue detail passes unhashed", ptr)
+	}
+	poll, prio = settings()
+	assert.Equal(t, 90*time.Minute, poll, "an invalid request changes nothing")
+	assert.Equal(t, 7, prio)
+
+	w = patch("/api/v1/sources/99", `{"priority":1}`)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, detailNoSource.Message(), decodeProblem(t, w).Detail)
+	requireParamProblem(t, patch("/api/v1/sources/x", `{}`), dto.ParamID, "bad id")
+	for _, body := range []string{``, `{"priority":"1"}`, `{"poll_interval":3600}`, `{"name":"x"}`} {
+		w := patch("/api/v1/sources/1", body)
+		require.Equal(t, http.StatusBadRequest, w.Code, body)
+		assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type, body)
+	}
+}
+
 // The admin source actions do not exist on the public listener: the action paths are 404, and
-// DELETE on a source is 405 (the path has GET only there).
+// PATCH and DELETE on a source are 405 (the path has GET only there).
 func TestSourceAdminActionsNotPublic(t *testing.T) {
 	a, _ := newTestAPI(t, nil)
 	h := a.Public()
-	for _, action := range []string{"confirm", "pause", "resume", "cancel"} {
-		w := post(h, "/api/v1/sources/2/"+action)
+	for _, action := range []string{"confirm", "pause", "resume", "cancel", "refresh"} {
+		w := postJSON(h, "/api/v1/sources/1/"+action, `{}`)
 		require.Equal(t, http.StatusNotFound, w.Code, action)
 		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type, action)
 	}
-	w := do(h, httptest.NewRequest(http.MethodDelete, "/api/v1/sources/2", nil))
-	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	assert.Equal(t, []string{http.MethodGet}, w.Header().Values("Allow"))
-	assert.Equal(t, dto.SourceState("pending_confirm"), sourceState(t, h, seedSeriesSource), "nothing changed")
+	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
+		w := sendJSON(h, method, "/api/v1/sources/1", `{"priority":9}`)
+		require.Equal(t, http.StatusMethodNotAllowed, w.Code, method)
+		assert.Equal(t, []string{http.MethodGet}, w.Header().Values("Allow"), method)
+	}
+	s := getJSON[dto.Source](t, h, "/api/v1/sources/1")
+	assert.Equal(t, 0, s.Priority, "nothing changed")
+	assert.NotZero(t, s.Backfill.RetryAt, "not refreshed")
 }
 
 // The access log names the numeric path ID, never the response's content.

@@ -184,6 +184,29 @@ func TestSourceAddOutcomeOnlyForSourceAdds(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNoJob)
 }
 
+// A source in a state that can't be refreshed is a state conflict, and nothing changes.
+func TestRefreshSourceStateConflict(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	var id int64
+	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		id, err = tx.InsertSource(ctx, model.Source{Kind: "series", Target: "1", FiltersJSON: "{}", Path: "/series/1",
+			State: model.SourcePaused, PollInterval: time.Hour, TotalWorks: -1, EstRequests: -1})
+		return err
+	}))
+	before, err := e.svc.GetSource(ctx, id)
+	require.NoError(t, err)
+	_, err = e.svc.RefreshSource(ctx, id, true)
+	require.ErrorIs(t, err, store.ErrStateConflict)
+	after, err := e.svc.GetSource(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+
+	_, err = e.svc.RefreshSource(ctx, id+1, false)
+	require.ErrorIs(t, err, store.ErrNoSource)
+}
+
 // ListJobs returns a page and the total of all matching jobs.
 func TestListJobsPageAndTotal(t *testing.T) {
 	e := newEnv(t, 0)

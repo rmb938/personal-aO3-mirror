@@ -23,5 +23,7 @@ type Request interface {
 func Types() []any {
 	return []any{
 		SourceAdd{},
+		SourceRefresh{},
+		SourceSettings{},
 	}
 }

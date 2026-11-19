@@ -22,6 +22,7 @@ const (
 	routeSourcePause   = "/api/v1/sources/{id}/pause"
 	routeSourceResume  = "/api/v1/sources/{id}/resume"
 	routeSourceCancel  = "/api/v1/sources/{id}/cancel"
+	routeSourceRefresh = "/api/v1/sources/{id}/refresh"
 )
 
 // pathFor fills route's {param} segments with ids, in order: pathFor(routeSource, 3) is

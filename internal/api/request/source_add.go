@@ -3,32 +3,19 @@ package request
 import (
 	"slices"
 	"strconv"
-	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
-const (
-	// MaxSourceURLBytes caps a source add's url.
-	MaxSourceURLBytes = 2048
-	// MaxSourcePriority bounds a source add's priority (both signs).
-	MaxSourcePriority = 1000
-	// MinPollInterval and MaxPollInterval bound a source add's poll_interval (10m, as config
-	// sources.poll_interval, to 30 days).
-	MinPollInterval = 10 * time.Minute
-	MaxPollInterval = 30 * 24 * time.Hour
-)
+// MaxSourceURLBytes caps a source add's url.
+const MaxSourceURLBytes = 2048
 
 var (
 	detailSourceURLLength = problem.NewDetail("must be an AO3 URL of 1 to " + strconv.Itoa(MaxSourceURLBytes) + " bytes")
 	detailSourceURL       = problem.NewDetail("must be a supported AO3 source URL")
 	detailOrder           = problem.OneOf(dto.Order(""))
-	detailPriority        = problem.NewDetail("must be an integer from -" + strconv.Itoa(MaxSourcePriority) +
-		" to " + strconv.Itoa(MaxSourcePriority))
-	detailPollInterval = problem.NewDetail("must be omitted (the default) or a duration from " +
-		MinPollInterval.String() + " to " + MaxPollInterval.String())
 )
 
 // SourceAdd is the body of POST /api/v1/sources. Zero values use the config defaults.
@@ -64,10 +51,6 @@ func (s *SourceAdd) Validate(v *problem.Validation) {
 	if s.Order != "" && !slices.Contains(s.Order.EnumValues(), string(s.Order)) {
 		v.Member(detailOrder, "order")
 	}
-	if s.Priority < -MaxSourcePriority || s.Priority > MaxSourcePriority {
-		v.Member(detailPriority, "priority")
-	}
-	if p := s.PollInterval.Duration(); p != 0 && (p < MinPollInterval || p > MaxPollInterval) {
-		v.Member(detailPollInterval, "poll_interval")
-	}
+	validatePriority(v, s.Priority, "priority")
+	validatePollInterval(v, s.PollInterval, "poll_interval")
 }

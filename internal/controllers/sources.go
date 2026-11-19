@@ -308,7 +308,8 @@ type RefreshSourceResult struct {
 // RefreshSource makes a source catch up now instead of waiting: its next update poll is due
 // immediately and its failed work fetches are queued again. With full, the whole listing is
 // re-walked (a rescan, picking up anything missed) and a parse-failure block is cleared.
-// Only active and done_backfill sources can be refreshed.
+// Only active and done_backfill sources can be refreshed; any other state is
+// store.ErrStateConflict.
 func (c *Controllers) RefreshSource(ctx context.Context, id int64, full bool) (RefreshSourceResult, error) {
 	var res RefreshSourceResult
 	err := c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -331,7 +332,8 @@ func (c *Controllers) refreshSource(ctx context.Context, tx *store.Tx, id int64,
 		return res, err
 	}
 	if r.State != model.SourceActive && r.State != model.SourceDoneBackfill {
-		return res, fmt.Errorf("sources: source %d is %s; only active or done_backfill sources can be refreshed", id, r.State)
+		return res, fmt.Errorf("%w: source %d is %s; only active or done_backfill sources can be refreshed",
+			store.ErrStateConflict, id, r.State)
 	}
 	now := c.options.Now()
 	r.NextPollAt = now

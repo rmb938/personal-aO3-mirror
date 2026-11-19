@@ -16,7 +16,7 @@ import (
 )
 
 // errorsOf validates s and returns the recorded items as pointer → detail message.
-func errorsOf(t *testing.T, s SourceAdd) map[string]string {
+func errorsOf(t *testing.T, s Request) map[string]string {
 	t.Helper()
 	var v problem.Validation
 	s.Validate(&v)
@@ -48,7 +48,7 @@ func TestSourceAddValid(t *testing.T) {
 		{URL: "/tags/a/works", Priority: MaxSourcePriority, PollInterval: dto.Duration(MaxPollInterval)},
 		{URL: "/tags/a/works", Confirm: true}, // the listener check is the handler's
 	} {
-		assert.Empty(t, errorsOf(t, s), "%+v", s)
+		assert.Empty(t, errorsOf(t, &s), "%+v", s)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestSourceAddInvalid(t *testing.T) {
 			map[string]string{"/url": urlHint(t, ao3url.ReasonChapter), "/order": detailOrder.Message(),
 				"/priority": detailPriority.Message(), "/poll_interval": detailPollInterval.Message()}},
 	} {
-		assert.Equal(t, tc.want, errorsOf(t, tc.in), name)
+		assert.Equal(t, tc.want, errorsOf(t, &tc.in), name)
 	}
 }
 
