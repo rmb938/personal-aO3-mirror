@@ -23,6 +23,12 @@ const (
 	ClassUnexpected  Class = "parse_unexpected"
 )
 
+// Classes lists every Class.
+func Classes() []Class {
+	return []Class{ClassOK, ClassNotFound, ClassRestricted, ClassHidden, ClassAdultGate, ClassRateLimited,
+		ClassUnavailable, ClassUnexpected}
+}
+
 // Kind is what the caller expected to fetch. It selects which markers must be present.
 type Kind string
 
@@ -34,6 +40,11 @@ const (
 	KindSeries  Kind = "series"
 	KindPage    Kind = "page" // any other AO3 HTML page
 )
+
+// Kinds lists every Kind.
+func Kinds() []Kind {
+	return []Kind{KindRobots, KindListing, KindWork, KindTag, KindSeries, KindPage}
+}
 
 // Cloudflare/edge markers in response bodies. Matching is case-insensitive.
 var cfMarkers = []string{

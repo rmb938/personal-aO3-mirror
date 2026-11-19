@@ -120,6 +120,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Job" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/status:
+    get:
+      operationId: getStatus
+      summary: Daemon, queue and progress overview.
+      responses:
+        "200":
+          description: The overview. Count lists hold only values with rows, sorted by value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
     ID:
@@ -209,7 +220,7 @@ components:
               name: { type: string }
               values: { type: array, items: { type: string } }
         path: { type: string, description: "AO3 listing path (hashed)." }
-        state: { type: string, enum: [pending_confirm, active, paused, cancelled, done_backfill] }
+        state: { $ref: "#/components/schemas/SourceState" }
         order: { $ref: "#/components/schemas/Order" }
         poll_interval_s: { type: integer }
         priority: { type: integer }
@@ -309,3 +320,169 @@ components:
         created_at: { $ref: "#/components/schemas/Timestamp" }
         started_at: { $ref: "#/components/schemas/Timestamp" }
         finished_at: { $ref: "#/components/schemas/Timestamp" }
+    SourceState:
+      type: string
+      enum: [pending_confirm, active, paused, cancelled, done_backfill]
+    Status:
+      type: object
+      required: [daemon, works, tags, creators, series, raw_pages, requests, sources, images, tag_info,
+        jobs, partial_series, request_errors, failed_jobs]
+      additionalProperties: false
+      properties:
+        daemon: { $ref: "#/components/schemas/Daemon" }
+        works:
+          type: object
+          required: [by_status, fetched, never_fetched, parse_failures]
+          additionalProperties: false
+          properties:
+            by_status:
+              type: array
+              items:
+                type: object
+                required: [status, count]
+                additionalProperties: false
+                properties:
+                  status: { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
+                  count: { type: integer }
+            fetched: { type: integer }
+            never_fetched: { type: integer, description: "Ok works with no fetched page yet." }
+            parse_failures: { type: integer, description: "Fetched works the current parser could not parse." }
+        tags: { type: integer }
+        creators: { type: integer }
+        series: { type: integer }
+        raw_pages:
+          type: object
+          required: [count, bytes, zstd_bytes]
+          additionalProperties: false
+          properties:
+            count: { type: integer }
+            bytes: { type: integer, description: "Uncompressed size." }
+            zstd_bytes: { type: integer, description: "Stored size." }
+        requests:
+          type: object
+          required: [last_1h, last_24h, by_class_24h]
+          additionalProperties: false
+          properties:
+            last_1h: { type: integer }
+            last_24h: { type: integer }
+            by_class_24h:
+              type: array
+              items:
+                type: object
+                required: [class, count]
+                additionalProperties: false
+                properties:
+                  class: { $ref: "#/components/schemas/RequestClass" }
+                  count: { type: integer }
+        sources:
+          type: array
+          items:
+            type: object
+            required: [state, count]
+            additionalProperties: false
+            properties:
+              state: { $ref: "#/components/schemas/SourceState" }
+              count: { type: integer }
+        images:
+          type: object
+          required: [by_status, bytes]
+          additionalProperties: false
+          properties:
+            by_status:
+              type: array
+              items:
+                type: object
+                required: [status, count]
+                additionalProperties: false
+                properties:
+                  status: { type: string, enum: [queued, ok, failed, skipped, too_large, disallowed] }
+                  count: { type: integer }
+            bytes: { type: integer, description: "Size of the stored images." }
+        tag_info:
+          type: object
+          description: Tag info fetch progress over tags of the configured types used by a mirrored work.
+          required: [types, total, fetched, due]
+          additionalProperties: false
+          properties:
+            types:
+              type: array
+              description: The configured tag types (empty when tag info is off).
+              items: { type: string, enum: [Fandom, Relationship, Character, Freeform] }
+            total: { type: integer }
+            fetched: { type: integer }
+            due: { type: integer, description: "Never fetched or older than the refresh interval." }
+        jobs:
+          type: array
+          description: Job counts by kind and state, sorted by kind, then state.
+          items:
+            type: object
+            required: [kind, state, count]
+            additionalProperties: false
+            properties:
+              kind: { $ref: "#/components/schemas/JobKind" }
+              state: { $ref: "#/components/schemas/JobState" }
+              count: { type: integer }
+        partial_series:
+          type: array
+          description: Series that are not sources and have fewer mirrored works than AO3 lists.
+          items:
+            type: object
+            required: [id, works_total, mirrored, missing_positions, missing_work_ids]
+            additionalProperties: false
+            properties:
+              id: { $ref: "#/components/schemas/ID" }
+              works_total: { type: integer, description: "AO3's count." }
+              mirrored: { type: integer }
+              missing_positions: { type: array, items: { type: integer }, description: "Part numbers none of our works has." }
+              missing_work_ids: { type: array, items: { $ref: "#/components/schemas/ID" }, description: "Known members not fetched." }
+        request_errors:
+          type: array
+          description: The most recent requests whose outcome was not ok, newest first.
+          items: { $ref: "#/components/schemas/RequestError" }
+        failed_jobs:
+          type: array
+          description: The most recent failed jobs, newest first.
+          items: { $ref: "#/components/schemas/Job" }
+    Daemon:
+      type: object
+      required: [running, pacer]
+      additionalProperties: false
+      properties:
+        running: { type: boolean, description: "A heartbeat within 2 minutes that is not a clean stop." }
+        heartbeat_at: { $ref: "#/components/schemas/Timestamp", description: "Omitted when the daemon never ran." }
+        pid: { type: integer }
+        phase: { type: string, enum: [idle, running, between, stopped] }
+        current_job: { $ref: "#/components/schemas/ID" }
+        waiting_until_at: { $ref: "#/components/schemas/Timestamp", description: "When a waiting request gets its slot." }
+        pacer:
+          type: object
+          required: [interval_ms, slow_factor, consec_fails, breaker_open, day_count, daily_budget]
+          additionalProperties: false
+          properties:
+            interval_ms: { type: integer }
+            slow_factor: { type: number }
+            consec_fails: { type: integer }
+            breaker_open: { type: boolean }
+            day_count: { type: integer }
+            daily_budget: { type: integer, description: "0: no budget." }
+            backoff_until_at: { $ref: "#/components/schemas/Timestamp" }
+    RequestClass:
+      type: string
+      enum: [ok, not_found, restricted, hidden, adult_gate, rate_limited, unavailable, parse_unexpected]
+    RequestError:
+      type: object
+      required: [requested_at, req_id, kind, path, status, class, reason, bytes, duration_ms, waited_ms, hop]
+      additionalProperties: false
+      properties:
+        requested_at: { $ref: "#/components/schemas/Timestamp" }
+        req_id: { type: string, description: "Request id in the logs (hashed)." }
+        job_id: { $ref: "#/components/schemas/ID", description: "The job that made it." }
+        kind: { type: string, enum: [robots, listing, work, tag, series, page] }
+        path: { type: string, description: "Request path (hashed)." }
+        status: { type: integer, description: "HTTP status (0 when the request failed in transport)." }
+        class: { $ref: "#/components/schemas/RequestClass" }
+        reason: { type: string, description: "Classifier reason (hashed)." }
+        bytes: { type: integer }
+        duration_ms: { type: integer }
+        waited_ms: { type: integer }
+        hop: { type: integer, description: "Redirect hop (0: the first request)." }

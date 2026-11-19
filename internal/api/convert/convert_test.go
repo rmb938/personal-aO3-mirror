@@ -1,15 +1,20 @@
 package convert
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // The model-side value lists must be exactly the dto enum sets: a value added on one side
@@ -29,6 +34,22 @@ func TestEnumSetsMatchModel(t *testing.T) {
 	assert.Equal(t, model.JobQueued, string(dto.JobQueued))
 	assert.ElementsMatch(t, ao3url.OrderNames(), dto.Order("").EnumValues(), "orders")
 	assert.ElementsMatch(t, controllers.JobErrorCodes(), dto.JobErrorCode("").EnumValues(), "job error codes")
+	assert.ElementsMatch(t, strs(model.DaemonPhases()), dto.DaemonPhase("").EnumValues(), "daemon phases")
+	assert.ElementsMatch(t, strs(model.WorkStatuses()), dto.WorkStatus("").EnumValues(), "work statuses")
+	assert.ElementsMatch(t, store.ImageStatuses(), dto.ImageStatus("").EnumValues(), "image statuses")
+	assert.ElementsMatch(t, strs(httpx.Classes()), dto.RequestClass("").EnumValues(), "request classes")
+	assert.ElementsMatch(t, strs(httpx.Kinds()), dto.RequestKind("").EnumValues(), "request kinds")
+	assert.ElementsMatch(t, slices.Collect(maps.Keys(config.TagInfoTypes)), dto.TagInfoType("").EnumValues(),
+		"tag info types")
+}
+
+// strs converts a list of string-kind values.
+func strs[S ~string](vs []S) []string {
+	out := make([]string, len(vs))
+	for i, v := range vs {
+		out[i] = string(v)
+	}
+	return out
 }
 
 func TestSplitError(t *testing.T) {
@@ -45,4 +66,15 @@ func TestSplitError(t *testing.T) {
 		assert.Equal(t, dto.JobErrorCode(c.code), code, c.in)
 		assert.Equal(t, c.detail, detail, c.in)
 	}
+}
+
+func TestMapSlice(t *testing.T) {
+	double := func(n int) int { return 2 * n }
+	assert.Equal(t, []int{}, mapSlice(nil, double), "nil maps to [], not null")
+	assert.Equal(t, []int{2, 4}, mapSlice([]int{1, 2}, double))
+}
+
+func TestNonNil(t *testing.T) {
+	assert.Equal(t, []int{}, nonNil[int](nil))
+	assert.Equal(t, []int{1}, nonNil([]int{1}))
 }

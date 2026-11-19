@@ -348,7 +348,7 @@ Status: tick when the PR merges.
       - Tests (`cmd/ao3mirror/serve_test.go`): both listeners, `--no-reveal` → 403
         `reveal_disabled`, socket/dir modes, live/stale/non-socket/unsafe-dir cases, shutdown
         removes the socket.
-- [ ] **3. Read-only ops API**
+- [x] **3. Read-only ops API**
   - `GET /sources`, `/sources/{id}`, `/jobs` (filters: state, kind, source_id, page),
     `/jobs/{id}`, `/status`, `/source-adds/{job_id}`.
   - DTOs are built from the existing controllers (`ListSources`, `GetSource`, `FindJobs`,
@@ -520,7 +520,7 @@ Status: tick when the PR merges.
           - New `jobs.Kinds()` (a jobs test parses `jobs.go` so every `Kind*` constant is in
             it) and controller `GetJob` (`store.ErrNoJob` → 404).
           - Seed gains a queued backfill job of the tag source with a sentinel target.
-    - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
+    - [x] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
       becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
       `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,
       images, requests by class) become lists of `{key-enum, count}`. In two PRs:
@@ -539,13 +539,30 @@ Status: tick when the PR merges.
           - `StatusReport` no longer lists sources. `Counts.SourcesByState` has the totals,
             and CLI `status` pages its sources table through `ListSources` (100 at a time, like
             `source list`), as stage 6 will through `/sources`.
-      - [ ] **3c-2. Status route**: `GET /status` from `StatusReport`: heartbeat fields
+      - [x] **3c-2. Status route**: `GET /status` from `StatusReport`: heartbeat fields
         (`heartbeat_at`, `running`, `dto.DaemonPhase`), count lists with enum keys (work
         status, image status, request class, source state, job kind × state), tag info,
         partial series, recent request errors (path, reason and req id are plain strings, so
         hashed) and failed jobs (`dto.Job`). Convert tests check each key enum against its
         model-side values (`model.DaemonPhases()`, work and image statuses, `httpx` classes
         and kinds).
+        - As built:
+          - `dto.Status` (`dto/status.go`): `daemon` (running, `heartbeat_at`, pid, phase,
+            current_job, `waiting_until_at`, `pacer` with `interval_ms` and
+            `backoff_until_at`), `works` (`by_status` + fetched/never_fetched/parse_failures),
+            tags/creators/series, `raw_pages`, `requests` (`last_1h`, `last_24h`,
+            `by_class_24h`), `sources` (by state), `images` (`by_status`, bytes), `tag_info`,
+            `jobs` (`{kind, state, count}`), `partial_series`, `request_errors`, `failed_jobs`.
+            Count lists hold only values with rows, sorted by value (jobs by kind, then
+            state); every list is `[]`, never null.
+          - New enum types: `DaemonPhase` (`phase`), `WorkStatus` and `ImageStatus` (both on
+            key `status`, with `HealthStatus`), `RequestClass` (`class`), `RequestKind` (joins
+            `kind`) and `TagInfoType` (`types`). New value lists: `model.WorkStatuses()`,
+            `store.ImageStatuses()`, `httpx.Classes()`, `httpx.Kinds()`; tag info types are
+            checked against `config.TagInfoTypes`.
+          - A request error's time is `requested_at`; durations are `_ms`.
+          - Seed gains a heartbeat and a failed request with sentinel req id, path and reason.
+          - OpenAPI: `SourceState` became a shared schema.
 - [ ] **4. Add source (public)**
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.

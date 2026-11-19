@@ -16,11 +16,24 @@ import (
 
 // list maps one page of items with conv.
 func list[M, D any](items []M, conv func(M) D, total int, page, perPage int64) dto.List[D] {
-	out := dto.List[D]{Items: make([]D, len(items)), Page: page, PerPage: perPage, Total: total}
+	return dto.List[D]{Items: mapSlice(items, conv), Page: page, PerPage: perPage, Total: total}
+}
+
+// mapSlice maps every item with conv ([] for an empty or nil slice: lists are never null).
+func mapSlice[M, D any](items []M, conv func(M) D) []D {
+	out := make([]D, len(items))
 	for i, it := range items {
-		out.Items[i] = conv(it)
+		out[i] = conv(it)
 	}
 	return out
+}
+
+// nonNil returns s, or [] for nil (lists are never null).
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // splitError splits a job's last error ("code" or "code:detail") at the first ':'.

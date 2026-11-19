@@ -132,6 +132,7 @@ func (a *API) router(admin bool) *chi.Mux {
 	r.Get("/api/v1/source-adds/{job_id}", a.handle(a.getSourceAdd))
 	r.Get("/api/v1/jobs", a.handle(a.listJobs))
 	r.Get("/api/v1/jobs/{id}", a.handle(a.getJob))
+	r.Get("/api/v1/status", a.handle(a.status))
 
 	if admin {
 		r.Group(func(chi.Router) {
