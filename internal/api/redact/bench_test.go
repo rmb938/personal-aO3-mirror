@@ -3,6 +3,7 @@ package redact
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,12 +36,22 @@ func benchBody(b *testing.B) []byte {
 func BenchmarkEnforce(b *testing.B) {
 	e, _ := newTestEnforcer(b)
 	body := benchBody(b)
+	typ := reflect.TypeFor[testList]()
 	for _, mode := range []Mode{Hashed, Revealed} {
 		b.Run(mode.String(), func(b *testing.B) {
 			b.SetBytes(int64(len(body)))
 			b.ReportAllocs()
 			for b.Loop() {
 				if _, err := e.Enforce(mode, body); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(mode.String()+"/typed", func(b *testing.B) {
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := e.EnforceAs(mode, typ, body); err != nil {
 					b.Fatal(err)
 				}
 			}

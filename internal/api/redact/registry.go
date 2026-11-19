@@ -38,16 +38,21 @@ type Registry struct {
 	typed  map[string]string
 	plain  map[string]string
 	manual map[string]bool
+	// roots are the registered types (pointers unwrapped) that EnforceAs accepts, and
+	// fieldEnums the RegisterFieldEnum sets; NewEnforcer compiles both into schemas.
+	roots      []reflect.Type
+	fieldEnums map[fieldEnumKey]map[string]struct{}
 }
 
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		keys:   map[string]struct{}{},
-		enums:  map[string]map[string]struct{}{},
-		typed:  map[string]string{},
-		plain:  map[string]string{},
-		manual: map[string]bool{},
+		keys:       map[string]struct{}{},
+		enums:      map[string]map[string]struct{}{},
+		typed:      map[string]string{},
+		plain:      map[string]string{},
+		manual:     map[string]bool{},
+		fieldEnums: map[fieldEnumKey]map[string]struct{}{},
 	}
 }
 
@@ -69,6 +74,38 @@ func (r *Registry) RegisterTypes(vals ...any) error {
 		if err := r.walk(t, t.String(), map[reflect.Type]bool{}); err != nil {
 			return err
 		}
+		r.roots = append(r.roots, rootType(t))
+	}
+	return nil
+}
+
+// RegisterFieldEnum declares the closed value set of one plain string field for EnforceAs:
+// the field with json key key in v's struct type (the type that declares it, for a promoted
+// field). It is for values known only at runtime (e.g. the build version); a fixed set belongs
+// on an Enum type. The field must exist and be a string, slice of strings or pointer to one,
+// checked by NewEnforcer. Calling it again for the same field adds values.
+func (r *Registry) RegisterFieldEnum(v any, key string, values ...string) error {
+	t := rootType(reflect.TypeOf(v))
+	if t == nil || t.Kind() != reflect.Struct {
+		return fmt.Errorf("redact: RegisterFieldEnum: %T is not a struct", v)
+	}
+	if !keyPattern.MatchString(key) {
+		return fmt.Errorf("redact: RegisterFieldEnum: key %q is not snake_case", key)
+	}
+	if len(values) == 0 {
+		return fmt.Errorf("redact: RegisterFieldEnum %s.%s: no values", t, key)
+	}
+	fk := fieldEnumKey{t: t, key: key}
+	set := r.fieldEnums[fk]
+	if set == nil {
+		set = map[string]struct{}{}
+		r.fieldEnums[fk] = set
+	}
+	for _, s := range values {
+		if s == "" {
+			return fmt.Errorf("redact: RegisterFieldEnum %s.%s: empty value", t, key)
+		}
+		set[s] = struct{}{}
 	}
 	return nil
 }
