@@ -195,6 +195,10 @@ type routeSample struct {
 	content bool
 	// body is a JSON request body (sent as application/json), or "" for none.
 	body string
+	// fresh: the route changes state, so each request goes to a new API over a freshly seeded
+	// store (first sent the POSTs in before, e.g. a pause before a resume).
+	fresh  bool
+	before []string
 }
 
 // request builds the sample's request, with suffix appended to its target.
@@ -222,6 +226,14 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/jobs":                 {target: "/api/v1/jobs?state=failed&kind=source_add", status: http.StatusOK, content: true},
 	"GET /api/v1/jobs/{id}":            {target: "/api/v1/jobs/2", status: http.StatusOK, content: true},
 	"GET /api/v1/status":               {target: "/api/v1/status", status: http.StatusOK, content: true},
+
+	// Admin socket only.
+	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},
+	"POST /api/v1/sources/{id}/pause":   {target: "/api/v1/sources/1/pause", status: http.StatusNoContent, fresh: true},
+	"POST /api/v1/sources/{id}/resume": {target: "/api/v1/sources/1/resume", status: http.StatusNoContent, fresh: true,
+		before: []string{"/api/v1/sources/1/pause"}},
+	"POST /api/v1/sources/{id}/cancel": {target: "/api/v1/sources/1/cancel", status: http.StatusOK, fresh: true},
+	"DELETE /api/v1/sources/{id}":      {target: "/api/v1/sources/1", status: http.StatusNoContent, fresh: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.
@@ -274,7 +286,23 @@ func TestAllRoutesLeak(t *testing.T) {
 			}
 			method, _, _ := strings.Cut(rt, " ")
 			t.Run(name+" "+rt, func(t *testing.T) {
-				w := do(r, s.request(method, ""))
+				// to is the router a request goes to: r, or for a fresh sample a new one.
+				to := func() http.Handler {
+					if !s.fresh {
+						return r
+					}
+					b, err := New(testOptions(t, logs))
+					require.NoError(t, err)
+					h := b.public
+					if name == "admin" {
+						h = b.admin
+					}
+					for _, target := range s.before {
+						require.Less(t, do(h, httptest.NewRequest(http.MethodPost, target, nil)).Code, 300, target)
+					}
+					return h
+				}
+				w := do(to(), s.request(method, ""))
 				assert.Equal(t, s.status, w.Code)
 				assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 				assertNoSentinel(t, w, logs)
@@ -291,7 +319,7 @@ func TestAllRoutesLeak(t *testing.T) {
 				if s.body != "" {
 					req.Header.Set("Content-Type", contentTypeJSON)
 				}
-				w = do(r, req)
+				w = do(to(), req)
 				if s.body == "" {
 					requireParamProblem(t, w, "", "unknown param, never echoed")
 				} else {
@@ -302,7 +330,7 @@ func TestAllRoutesLeak(t *testing.T) {
 				assertNoSentinel(t, w, logs)
 
 				if s.content {
-					w = do(r, s.request(method, sep+RevealParam+"=1"))
+					w = do(to(), s.request(method, sep+RevealParam+"=1"))
 					assert.Equal(t, s.status, w.Code)
 					assert.Equal(t, "revealed", w.Header().Get(headerFanwork))
 					assert.Contains(t, w.Body.String(), sentinel, "revealed response holds the seeded content")

@@ -38,12 +38,8 @@ func (a *API) listJobs(r *http.Request) (any, error) {
 
 // getJob is GET /api/v1/jobs/{id}.
 func (a *API) getJob(r *http.Request) (any, error) {
-	q, err := parseParams(r)
+	id, err := onlyPathID(r, dto.ParamID)
 	if err != nil {
-		return nil, err
-	}
-	id := q.pathID(dto.ParamID)
-	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	j, err := a.ctl.GetJob(r.Context(), id)

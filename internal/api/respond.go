@@ -31,7 +31,11 @@ type Response struct {
 	Body     any
 }
 
-// handle adapts h: it caps the request body, calls h and writes its result with respond.
+// noContent is a 204 response: no body, so nothing for the enforcer to check.
+func noContent() *Response { return &Response{Status: http.StatusNoContent} }
+
+// handle adapts h: it caps the request body, calls h and writes its result with respond (or,
+// for a 204, the status alone).
 func handle(log *slog.Logger, h handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -49,6 +53,10 @@ func handle(log *slog.Logger, h handlerFunc) http.HandlerFunc {
 				w.Header().Set("Location", res.Location)
 			}
 			v = res.Body
+			if status == http.StatusNoContent {
+				w.WriteHeader(status)
+				return
+			}
 		}
 		respond(w, r, log, status, contentTypeJSON, v)
 	}

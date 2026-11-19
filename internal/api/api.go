@@ -140,9 +140,12 @@ func (a *API) router(admin bool) *chi.Mux {
 	r.Get(routeStatus, a.handle(a.status))
 
 	if admin {
-		r.Group(func(chi.Router) {
-			// Admin-only routes (stage 5) go here; the public router never has them.
-		})
+		// Admin-only routes; the public router never has them.
+		r.Post(routeSourceConfirm, a.handle(a.sourceAction(a.ctl.ConfirmSource)))
+		r.Post(routeSourcePause, a.handle(a.sourceAction(a.ctl.PauseSource)))
+		r.Post(routeSourceResume, a.handle(a.sourceAction(a.ctl.ResumeSource)))
+		r.Post(routeSourceCancel, a.handle(a.cancelSource))
+		r.Delete(routeSource, a.handle(a.sourceAction(a.ctl.RemoveSource)))
 	}
 	return r
 }

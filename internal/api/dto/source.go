@@ -133,6 +133,12 @@ type Estimate struct {
 	Windowed bool `json:"windowed"`
 }
 
+// SourceCancelled is a cancelled source (POST /api/v1/sources/{id}/cancel, admin socket).
+type SourceCancelled struct {
+	// DroppedJobs is the number of the source's queued jobs that were cancelled.
+	DroppedJobs int64 `json:"dropped_jobs"`
+}
+
 // SourceAddQueued is a queued source add (POST /api/v1/sources, 202).
 type SourceAddQueued struct {
 	JobID int64 `json:"job_id"`

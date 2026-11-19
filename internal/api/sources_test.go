@@ -280,6 +280,87 @@ func TestAddSourceRateLimit(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 }
 
+// post sends a bodyless POST to target.
+func post(h http.Handler, target string) *httptest.ResponseRecorder {
+	return do(h, httptest.NewRequest(http.MethodPost, target, nil))
+}
+
+// requireNoContent asserts w is an empty 204 that still went through the enforcer.
+func requireNoContent(t *testing.T, w *httptest.ResponseRecorder, msg string) {
+	t.Helper()
+	require.Equal(t, http.StatusNoContent, w.Code, msg+": "+w.Body.String())
+	assert.Empty(t, w.Body.String(), msg)
+	assert.Empty(t, w.Header().Get("Content-Length"), msg)
+	assert.Empty(t, w.Header().Get("Content-Type"), msg)
+	assert.Equal(t, "hashed", w.Header().Get(headerFanwork), msg)
+}
+
+func sourceState(t *testing.T, h http.Handler, id int64) dto.SourceState {
+	t.Helper()
+	return getJSON[dto.Source](t, h, "/api/v1/sources/"+strconv.FormatInt(id, 10)).State
+}
+
+func TestSourceAdminActions(t *testing.T) {
+	a, _ := newTestAPI(t, nil)
+	h := a.Admin()
+
+	requireNoContent(t, post(h, "/api/v1/sources/2/confirm"), "confirm")
+	assert.Equal(t, dto.SourceState("active"), sourceState(t, h, seedSeriesSource))
+	requireNoContent(t, post(h, "/api/v1/sources/1/pause"), "pause")
+	assert.Equal(t, dto.SourceState("paused"), sourceState(t, h, seedTagSource))
+	requireNoContent(t, post(h, "/api/v1/sources/1/resume"), "resume")
+	assert.Equal(t, dto.SourceState("active"), sourceState(t, h, seedTagSource))
+
+	// A change the source's state does not allow is a conflict.
+	for _, target := range []string{"/api/v1/sources/2/confirm", "/api/v1/sources/1/resume"} {
+		w := post(h, target)
+		require.Equal(t, http.StatusConflict, w.Code, target)
+		p := decodeProblem(t, w)
+		assert.Equal(t, dto.TypeStateConflict, p.Type, target)
+		assert.Equal(t, detailStateConflict.Message(), p.Detail, target)
+	}
+
+	// Cancel drops the source's queued backfill job.
+	w := post(h, "/api/v1/sources/1/cancel")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"dropped_jobs":1}`, w.Body.String())
+	assert.Equal(t, dto.SourceState("cancelled"), sourceState(t, h, seedTagSource))
+	assert.Equal(t, dto.JobState("cancelled"), getJSON[dto.Job](t, h, "/api/v1/jobs/4").State)
+	assert.Equal(t, http.StatusConflict, post(h, "/api/v1/sources/1/cancel").Code, "already cancelled")
+
+	requireNoContent(t, do(h, httptest.NewRequest(http.MethodDelete, "/api/v1/sources/1", nil)), "delete")
+	assert.Equal(t, http.StatusNotFound, get(h, "/api/v1/sources/1").Code)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/v1/sources/99/pause", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/sources/99/cancel", nil),
+		httptest.NewRequest(http.MethodDelete, "/api/v1/sources/1", nil),
+	} {
+		w := do(h, req)
+		require.Equal(t, http.StatusNotFound, w.Code, req.URL.Path)
+		assert.Equal(t, detailNoSource.Message(), decodeProblem(t, w).Detail, req.URL.Path)
+	}
+	requireParamProblem(t, post(h, "/api/v1/sources/x/pause"), dto.ParamID, "bad id")
+	requireParamProblem(t, post(h, "/api/v1/sources/2/pause?page=1"), dto.ParamPage, "no query params")
+	assert.Equal(t, dto.SourceState("active"), sourceState(t, h, seedSeriesSource), "an invalid request changes nothing")
+}
+
+// The admin source actions do not exist on the public listener: the action paths are 404, and
+// DELETE on a source is 405 (the path has GET only there).
+func TestSourceAdminActionsNotPublic(t *testing.T) {
+	a, _ := newTestAPI(t, nil)
+	h := a.Public()
+	for _, action := range []string{"confirm", "pause", "resume", "cancel"} {
+		w := post(h, "/api/v1/sources/2/"+action)
+		require.Equal(t, http.StatusNotFound, w.Code, action)
+		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type, action)
+	}
+	w := do(h, httptest.NewRequest(http.MethodDelete, "/api/v1/sources/2", nil))
+	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	assert.Equal(t, []string{http.MethodGet}, w.Header().Values("Allow"))
+	assert.Equal(t, dto.SourceState("pending_confirm"), sourceState(t, h, seedSeriesSource), "nothing changed")
+}
+
 // The access log names the numeric path ID, never the response's content.
 func TestSourceAccessLog(t *testing.T) {
 	a, logs := newTestAPI(t, nil)

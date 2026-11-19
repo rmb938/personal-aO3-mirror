@@ -19,6 +19,7 @@ var responseTypes = []any{
 	dto.SourceAdd{},
 	dto.SourceAddResult{},
 	dto.SourceAddQueued{},
+	dto.SourceCancelled{},
 	dto.List[dto.Job]{},
 	dto.Job{},
 	dto.Status{},
