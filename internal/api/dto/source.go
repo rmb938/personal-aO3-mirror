@@ -107,6 +107,9 @@ type SourceAdd struct {
 	// LastErrorCode and LastErrorDetail are the job's last error, split at the first ':'.
 	LastErrorCode   JobErrorCode `json:"last_error_code,omitzero"`
 	LastErrorDetail string       `json:"last_error_detail,omitzero"`
+	// ExistingSourceID is the source that already existed when the add failed with
+	// source_exists (the detail is hashed, so the id is given here).
+	ExistingSourceID int64 `json:"existing_source_id,omitzero"`
 	// Result is set once the add is done.
 	Result *SourceAddResult `json:"result,omitzero"`
 }

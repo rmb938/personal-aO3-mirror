@@ -14,8 +14,9 @@ import (
 )
 
 func TestSourceAdd(t *testing.T) {
-	got := SourceAdd(9, controllers.SourceAddOutcome{State: model.JobFailed, Error: "source_exists:12"})
-	assert.Equal(t, dto.SourceAdd{JobID: 9, State: "failed", LastErrorCode: "source_exists", LastErrorDetail: "12"}, got)
+	got := SourceAdd(9, controllers.SourceAddOutcome{State: model.JobFailed, Error: "source_exists:12", ExistingSourceID: 12})
+	assert.Equal(t, dto.SourceAdd{JobID: 9, State: "failed", LastErrorCode: "source_exists", LastErrorDetail: "12",
+		ExistingSourceID: 12}, got)
 
 	got = SourceAdd(9, controllers.SourceAddOutcome{State: model.JobDone, Result: &controllers.AddSourceResult{
 		Source: model.Source{ID: 3, Kind: "work", Target: "8"}, Blurbs: 20,

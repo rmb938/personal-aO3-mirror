@@ -72,8 +72,8 @@ func waitSourceAdd(ctx context.Context, a *app, q controllers.QueuedSourceAdd, w
 			printAdded(out, a, *o.Result, names)
 			return 0
 		case model.JobFailed, model.JobCancelled:
-			if id, ok := strings.CutPrefix(o.Error, string(controllers.CodeSourceExists)+":"); ok {
-				fmt.Fprintf(errOut, "already added as source %s (see: ao3mirror source show %s)\n", id, id)
+			if id := o.ExistingSourceID; id != 0 {
+				fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", id, id)
 				return 1
 			}
 			fmt.Fprintf(errOut, "add failed: %s\n", dash(o.Error))

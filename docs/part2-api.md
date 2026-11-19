@@ -801,10 +801,13 @@ Status: tick when the PR merges.
       constants and `pathFor` (now `route.Path(pattern, ids...)`, same panics) move out of
       `internal/api` into a stdlib-only package, so the client builds its paths from the
       same patterns the router registers. No API change.
-    - [ ] **6a-2. `existing_source_id` on a failed source add.** A source add that fails
+    - [x] **6a-2. `existing_source_id` on a failed source add.** A source add that fails
       because the source exists (`source_exists:<id>`) gives the id as a number on
       `dto.SourceAdd`, since `last_error_detail` is hashed. (The synchronous 409
-      `already-exists` already carries `Location`, from stage 4.)
+      `already-exists` already carries `Location`, from stage 4.) As built: the controller
+      owns the format, so `controllers.SourceAddOutcome` gains `ExistingSourceID`, parsed by
+      `existingSourceID` (a malformed stored id is an error, not 0); `convert.SourceAdd`
+      copies it and `source add --wait` uses it instead of cutting the error string itself.
     - [ ] **6a-3. `internal/apiclient` + `source *` commands.**
   - 6b: `status`, `jobs`, `debug`.
   - CLI `--names` maps to the reveal param. It is still user-only (the guard already blocks it).
