@@ -30,16 +30,16 @@ type testStore struct {
 	content *sql.DB
 }
 
-func openTest(t *testing.T) (*testStore, *tclock, *bytes.Buffer) {
-	t.Helper()
+func openTest(tb testing.TB) (*testStore, *tclock, *bytes.Buffer) {
+	tb.Helper()
 	clk := &tclock{t: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
 	logs := &bytes.Buffer{}
-	s, err := Open(context.Background(), t.TempDir(), Options{
+	s, err := Open(context.Background(), tb.TempDir(), Options{
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Now:    clk.now,
 	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, s.Close()) })
 	return &testStore{Tx: s.AutoCommitForTestOnly(), st: s, meta: s.meta, content: s.content}, clk, logs
 }
 
@@ -68,10 +68,10 @@ func TestMigrationsIdempotent(t *testing.T) {
 	for i := range 2 {
 		s, err := Open(ctx, dir, Options{})
 		require.NoError(t, err, "open %d", i)
-		for _, db := range []string{"meta", "content"} {
+		for db, want := range map[string]int{"meta": 2, "content": 1} {
 			v, err := s.schemaVersion(ctx, db)
 			require.NoError(t, err)
-			require.Equal(t, 1, v, "%s schema", db)
+			require.Equal(t, want, v, "%s schema", db)
 		}
 		require.NoError(t, s.Close())
 	}

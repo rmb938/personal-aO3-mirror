@@ -12,11 +12,11 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
-func addSource(t *testing.T, s *testStore, target string, state model.SourceState, prio int) int64 {
-	t.Helper()
+func addSource(tb testing.TB, s *testStore, target string, state model.SourceState, prio int) int64 {
+	tb.Helper()
 	id, err := s.InsertSource(context.Background(), model.Source{Kind: "tag", Target: target, FiltersJSON: "{}", Path: "/p",
 		State: state, BackfillOrder: "kudos_desc", PollInterval: time.Hour, Priority: prio, TotalWorks: -1, EstRequests: -1, BackfillCursor: "{}"})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return id
 }
 
@@ -182,4 +182,56 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "x", m["heartbeat"])
 	require.False(t, at.IsZero())
+}
+
+func TestFindJobsPagedAndCount(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	src := addSource(t, s, "Fixture Tag", model.SourceActive, 0)
+	var ids []int64
+	for i := range 7 {
+		j := NewJob{Kind: "work", Target: strconv.Itoa(i), Priority: 2, DedupeKey: "work:" + strconv.Itoa(i)}
+		if i%2 == 0 {
+			j.Kind, j.SourceID = "poll", src
+		}
+		ids = append(ids, enqueue(t, s, j))
+	}
+	require.NoError(t, s.FinishJob(ctx, ids[0], model.JobDone, ""))
+	require.NoError(t, s.FinishJob(ctx, ids[1], model.JobFailed, "not_found"))
+
+	for _, c := range []struct {
+		f    JobFilter
+		want []int64 // newest first
+	}{
+		{JobFilter{}, []int64{ids[6], ids[5], ids[4], ids[3], ids[2], ids[1], ids[0]}},
+		{JobFilter{State: model.JobQueued}, []int64{ids[6], ids[5], ids[4], ids[3], ids[2]}},
+		{JobFilter{Kind: "poll"}, []int64{ids[6], ids[4], ids[2], ids[0]}},
+		{JobFilter{SourceID: src, State: model.JobQueued}, []int64{ids[6], ids[4], ids[2]}},
+		{JobFilter{Kind: "work", State: model.JobFailed}, []int64{ids[1]}},
+		{JobFilter{SourceID: src + 1}, nil},
+	} {
+		n, err := s.CountJobs(ctx, c.f)
+		require.NoError(t, err)
+		require.Equal(t, len(c.want), n, "%+v", c.f)
+		var got []int64
+		for offset := 0; offset < n; offset += 2 {
+			f := c.f
+			f.Offset, f.Limit = offset, 2
+			page, err := s.FindJobs(ctx, f)
+			require.NoError(t, err)
+			for _, j := range page {
+				got = append(got, j.ID)
+			}
+		}
+		require.Equal(t, c.want, got, "%+v: pages cover every match once, newest first", c.f)
+		f := c.f
+		f.Offset, f.Limit = n, 2
+		page, err := s.FindJobs(ctx, f)
+		require.NoError(t, err)
+		require.Empty(t, page, "%+v: offset past the end", c.f)
+	}
+	for _, bad := range [][2]int{{-1, 10}, {0, 0}, {0, -1}} {
+		_, err := s.FindJobs(ctx, JobFilter{Offset: bad[0], Limit: bad[1]})
+		require.Error(t, err, "offset %d limit %d", bad[0], bad[1])
+	}
 }

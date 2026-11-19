@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -190,7 +191,8 @@ func (s *ReadTx) GetJob(ctx context.Context, id int64) (model.Job, error) {
 	return j, err
 }
 
-// JobFilter selects jobs; zero fields match everything.
+// JobFilter selects jobs; zero fields match everything. Offset, Limit and Order only apply to
+// FindJobs (CountJobs ignores them).
 type JobFilter struct {
 	State        string
 	Kind         string
@@ -198,7 +200,8 @@ type JobFilter struct {
 	DedupeKey    string // exact match
 	DedupePrefix string
 	NotQueued    bool // only jobs that left the queue (running, done, failed, cancelled)
-	Limit        int
+	Offset       int  // rows to skip (≥ 0)
+	Limit        int  // max rows (≥ 1)
 	Order        JobOrder
 }
 
@@ -211,9 +214,50 @@ const (
 	JobsLastStarted                 // most recently started first
 )
 
-// FindJobs returns jobs matching f.
+// FindJobs returns up to f.Limit jobs matching f, skipping the first f.Offset.
 func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]model.Job, error) {
-	q := `SELECT ` + jobCols + ` FROM jobs WHERE 1=1`
+	if f.Offset < 0 || f.Limit < 1 {
+		return nil, fmt.Errorf("store: find jobs: bad page (offset %d, limit %d)", f.Offset, f.Limit)
+	}
+	where, args := jobWhere(f)
+	q := `SELECT ` + jobCols + ` FROM jobs` + where
+	switch f.Order {
+	case JobsOldest:
+		q += ` ORDER BY id ASC`
+	case JobsLastStarted:
+		q += ` ORDER BY started_at DESC, id DESC`
+	default:
+		q += ` ORDER BY id DESC`
+	}
+	q += ` LIMIT ? OFFSET ?`
+	args = append(args, f.Limit, f.Offset)
+	rows, err := s.meta.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// CountJobs returns the number of jobs matching f's filters.
+func (s *ReadTx) CountJobs(ctx context.Context, f JobFilter) (int, error) {
+	where, args := jobWhere(f)
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`+where, args...).Scan(&n)
+	return n, err
+}
+
+// jobWhere builds the WHERE clause (with a leading space) and its args for f's filters.
+func jobWhere(f JobFilter) (string, []any) {
+	q := ` WHERE 1=1`
 	var args []any
 	if f.State != "" {
 		q += ` AND state = ?`
@@ -238,29 +282,7 @@ func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]model.Job, error)
 	if f.NotQueued {
 		q += ` AND state != 'queued'`
 	}
-	switch f.Order {
-	case JobsOldest:
-		q += ` ORDER BY id ASC LIMIT ?`
-	case JobsLastStarted:
-		q += ` ORDER BY started_at DESC, id DESC LIMIT ?`
-	default:
-		q += ` ORDER BY id DESC LIMIT ?`
-	}
-	args = append(args, f.Limit)
-	rows, err := s.meta.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []model.Job
-	for rows.Next() {
-		j, err := scanJob(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
+	return q, args
 }
 
 // JobEvent appends a content-free trace event (detail is marshalled to JSON).

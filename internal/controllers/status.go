@@ -142,6 +142,20 @@ func (c *Controllers) GetSource(ctx context.Context, id int64) (model.Source, er
 	})
 }
 
+// ListJobs returns one page of the jobs matching f (f.Offset ≥ 0, f.Limit ≥ 1, ordered by
+// f.Order) and the number of matching jobs over all pages, read in one transaction so they agree.
+func (c *Controllers) ListJobs(ctx context.Context, f store.JobFilter) (page []model.Job, total int, err error) {
+	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		var err error
+		if page, err = tx.FindJobs(ctx, f); err != nil {
+			return err
+		}
+		total, err = tx.CountJobs(ctx, f)
+		return err
+	})
+	return page, total, err
+}
+
 // FindJobs lists jobs matching f.
 func (c *Controllers) FindJobs(ctx context.Context, f store.JobFilter) ([]model.Job, error) {
 	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Job, error) {
