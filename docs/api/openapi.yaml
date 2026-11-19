@@ -84,6 +84,42 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SourceAdd" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/jobs:
+    get:
+      operationId: listJobs
+      summary: One page of jobs, newest first (state=queued lists them in queue order).
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: "#/components/schemas/JobState" }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/JobKind" }
+        - name: source_id
+          in: query
+          schema: { $ref: "#/components/schemas/ID" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the matching jobs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/jobs/{id}:
+    get:
+      operationId: getJob
+      summary: One job.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
     ID:
@@ -208,14 +244,8 @@ components:
       additionalProperties: false
       properties:
         job_id: { $ref: "#/components/schemas/ID" }
-        state: { type: string, enum: [queued, running, done, failed, cancelled] }
-        last_error_code:
-          type: string
-          description: The job's last error code (before the first `:`).
-          enum: [parse_unexpected, parse_error, not_found, restricted, hidden, adult_gate, too_large,
-            robots_disallowed, robots_unavailable, unexpected_response, bad_source, bad_filters,
-            bad_cursor, bad_work_id, bad_series_id, no_source, no_tag, panic, internal,
-            source_exists, no_source_add, rate_limited, unavailable, crashed]
+        state: { $ref: "#/components/schemas/JobState" }
+        last_error_code: { $ref: "#/components/schemas/JobErrorCode" }
         last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
         result:
           type: object
@@ -238,3 +268,44 @@ components:
         duration_s: { type: integer }
         disk_bytes: { type: integer }
         windowed: { type: boolean, description: "Backfill sliced into revised-date windows (over 100k results)." }
+    JobState:
+      type: string
+      enum: [queued, running, done, failed, cancelled]
+    JobKind:
+      type: string
+      enum: [poll, backfill, work, tag_info, series_info, source_add]
+    JobErrorCode:
+      type: string
+      description: A job's last error code (before the first `:`).
+      enum: [parse_unexpected, parse_error, not_found, restricted, hidden, adult_gate, too_large,
+        robots_disallowed, robots_unavailable, unexpected_response, bad_source, bad_filters,
+        bad_cursor, bad_work_id, bad_series_id, no_source, no_tag, panic, internal,
+        source_exists, no_source_add, rate_limited, unavailable, crashed]
+    JobList:
+      type: object
+      required: [items, page, per_page, total]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Job" } }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: "Matching jobs over all pages." }
+    Job:
+      type: object
+      required: [id, kind, target, priority, state, attempts, max_attempts]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        kind: { $ref: "#/components/schemas/JobKind" }
+        target: { type: string, description: "Page number, work/tag/series id or source add id (hashed)." }
+        source_id: { $ref: "#/components/schemas/ID", description: "The job's source, when it has one." }
+        priority: { type: integer, description: "Class: lower runs first." }
+        state: { $ref: "#/components/schemas/JobState" }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        last_error_code: { $ref: "#/components/schemas/JobErrorCode" }
+        last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
+        not_before_at: { $ref: "#/components/schemas/Timestamp", description: "A queued job waits until then." }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        started_at: { $ref: "#/components/schemas/Timestamp" }
+        finished_at: { $ref: "#/components/schemas/Timestamp" }

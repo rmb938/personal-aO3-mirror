@@ -20,7 +20,8 @@ const (
 	seedSeriesSource int64 = 2
 	seedDoneAdd      int64 = 1 // add_source job, done, created seedTagSource
 	seedFailedAdd    int64 = 2 // add_source job, failed with a sentinel detail
-	seedOtherJob     int64 = 3 // a work job (not a source add)
+	seedOtherJob     int64 = 3 // a work job (not a source add), queued
+	seedBackfillJob  int64 = 4 // a backfill job of seedTagSource with a sentinel target, queued
 )
 
 // seedTime is the store clock while seeding.
@@ -98,6 +99,13 @@ func seed(t *testing.T, st *store.Store) {
 			return err
 		}
 		require.Equal(t, seedOtherJob, id)
+
+		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindBackfill, SourceID: seedTagSource,
+			Target: sentinel + "jobtarget", Priority: jobs.ClassBackfill, DedupeKey: "seed-backfill"})
+		if err != nil {
+			return err
+		}
+		require.Equal(t, seedBackfillJob, id)
 		return nil
 	}))
 }

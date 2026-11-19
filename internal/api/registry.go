@@ -14,6 +14,8 @@ var responseTypes = []any{
 	dto.List[dto.Source]{},
 	dto.Source{},
 	dto.SourceAdd{},
+	dto.List[dto.Job]{},
+	dto.Job{},
 }
 
 // newEnforcer builds the response enforcer from the DTO types. version is the running build

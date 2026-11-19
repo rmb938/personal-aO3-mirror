@@ -192,6 +192,8 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/sources":              {target: "/api/v1/sources", status: http.StatusOK, content: true},
 	"GET /api/v1/sources/{id}":         {target: "/api/v1/sources/1", status: http.StatusOK, content: true},
 	"GET /api/v1/source-adds/{job_id}": {target: "/api/v1/source-adds/1", status: http.StatusOK, content: true},
+	"GET /api/v1/jobs":                 {target: "/api/v1/jobs?state=failed&kind=source_add", status: http.StatusOK, content: true},
+	"GET /api/v1/jobs/{id}":            {target: "/api/v1/jobs/2", status: http.StatusOK, content: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.

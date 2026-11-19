@@ -27,14 +27,6 @@ func (SourceState) EnumValues() []string {
 	return []string{"pending_confirm", "active", "paused", "cancelled", "done_backfill"}
 }
 
-// JobState is a job's state (an enum; key `state`, shared with SourceState).
-type JobState string
-
-// EnumValues lists every JobState.
-func (JobState) EnumValues() []string {
-	return []string{"queued", "running", "done", "failed", "cancelled"}
-}
-
 // Order is a listing sort, "<field>_<asc|desc>" (an enum).
 type Order string
 
@@ -48,20 +40,6 @@ func (Order) EnumValues() []string {
 		vals = append(vals, f+"_asc", f+"_desc")
 	}
 	return vals
-}
-
-// JobErrorCode is the code part of a job's last error, before the first ':' (an enum).
-type JobErrorCode string
-
-// EnumValues lists every JobErrorCode.
-func (JobErrorCode) EnumValues() []string {
-	return []string{
-		"parse_unexpected", "parse_error", "not_found", "restricted", "hidden", "adult_gate",
-		"too_large", "robots_disallowed", "robots_unavailable", "unexpected_response",
-		"bad_source", "bad_filters", "bad_cursor", "bad_work_id", "bad_series_id", "no_source", "no_tag",
-		"panic", "internal", "source_exists", "no_source_add",
-		"rate_limited", "unavailable", "crashed",
-	}
 }
 
 // Source is one mirrored source (GET /api/v1/sources, /api/v1/sources/{id}).

@@ -156,6 +156,13 @@ func (c *Controllers) ListJobs(ctx context.Context, f model.JobFilter) (page []m
 	return page, total, err
 }
 
+// GetJob returns one job, or store.ErrNoJob.
+func (c *Controllers) GetJob(ctx context.Context, id int64) (model.Job, error) {
+	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (model.Job, error) {
+		return tx.GetJob(ctx, id)
+	})
+}
+
 // FindJobs lists jobs matching f.
 func (c *Controllers) FindJobs(ctx context.Context, f model.JobFilter) ([]model.Job, error) {
 	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Job, error) {

@@ -70,6 +70,18 @@ func (q query) int(name string, def, lo, hi int64) (int64, error) {
 	return parseInt(name, s, lo, hi)
 }
 
+// enum returns parameter name when it is one of e's values, or "" when it is absent.
+func (q query) enum(name string, e interface{ EnumValues() []string }) (string, error) {
+	s, ok := q[name]
+	if !ok {
+		return "", nil
+	}
+	if !slices.Contains(e.EnumValues(), s) {
+		return "", errField(dto.CodeInvalidParam, name)
+	}
+	return s, nil
+}
+
 // parseInt parses s as a base-10 integer (digits only, optional leading '-') in [lo, hi].
 func parseInt(field, s string, lo, hi int64) (int64, error) {
 	if s == "" || s[0] == '+' {
