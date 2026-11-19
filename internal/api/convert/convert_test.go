@@ -39,6 +39,9 @@ func TestEnumSetsMatchModel(t *testing.T) {
 	assert.ElementsMatch(t, store.ImageStatuses(), dto.ImageStatus("").EnumValues(), "image statuses")
 	assert.ElementsMatch(t, strs(httpx.Classes()), dto.RequestClass("").EnumValues(), "request classes")
 	assert.ElementsMatch(t, strs(httpx.Kinds()), dto.RequestKind("").EnumValues(), "request kinds")
+	assert.ElementsMatch(t, model.JobEvents(), dto.JobEventType("").EnumValues(), "job events")
+	assert.ElementsMatch(t, strs(store.ContentChanges()), dto.ContentChange("").EnumValues(), "content changes")
+	assert.ElementsMatch(t, strs(model.TagTypes()), dto.TagType("").EnumValues(), "tag types")
 	assert.ElementsMatch(t, slices.Collect(maps.Keys(config.TagInfoTypes)), dto.TagInfoType("").EnumValues(),
 		"tag info types")
 }
@@ -66,6 +69,16 @@ func TestSplitError(t *testing.T) {
 		assert.Equal(t, dto.JobErrorCode(c.code), code, c.in)
 		assert.Equal(t, c.detail, detail, c.in)
 	}
+}
+
+func TestConvPtr(t *testing.T) {
+	double := func(n int) int { return 2 * n }
+	assert.Nil(t, convPtr(nil, double))
+	assert.Equal(t, new(0), convPtr(new(0), double), "zero is kept")
+	assert.Equal(t, new(4), convPtr(new(2), double))
+
+	assert.Nil(t, enumPtr[dto.JobState](nil))
+	assert.Equal(t, new(dto.JobState("done")), enumPtr[dto.JobState](new("done")))
 }
 
 func TestMapSlice(t *testing.T) {

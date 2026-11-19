@@ -47,7 +47,7 @@ func Status(r controllers.StatusReport) dto.Status {
 		},
 		Jobs:          jobCounts(r.Jobs),
 		PartialSeries: mapSlice(r.PartialSeries, seriesGap),
-		RequestErrors: mapSlice(r.RequestErrors, requestError),
+		RequestErrors: mapSlice(r.RequestErrors, requestRow),
 		FailedJobs:    mapSlice(r.FailedJobs, Job),
 	}
 }
@@ -103,8 +103,9 @@ func seriesGap(p store.PartialSeries) dto.SeriesGap {
 	}
 }
 
-func requestError(r store.RequestRow) dto.RequestError {
-	return dto.RequestError{
+// requestRow maps one request row (shared with the debug results).
+func requestRow(r store.RequestRow) dto.Request {
+	return dto.Request{
 		RequestedAt: utc(r.Time), ReqID: r.ReqID, JobID: r.JobID, Kind: dto.RequestKind(r.Kind), Path: r.Path,
 		Status: r.Status, Class: dto.RequestClass(r.Class), Reason: r.Reason, Bytes: r.Bytes,
 		Duration: dto.Duration(r.Duration), Waited: dto.Duration(r.Waited), Hop: r.Hop,

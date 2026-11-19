@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -81,11 +82,21 @@ func daemonRunning(h model.Heartbeat, now time.Time) bool {
 // JobDebug is the content-free trace of one job.
 type JobDebug struct {
 	Job      model.Job
-	Events   []store.JobEventRow
+	Events   []JobEvent
 	Requests []store.RequestRow
 }
 
-// DebugJob returns one job with its events and requests.
+// JobEvent is one decoded job trace event.
+type JobEvent struct {
+	Time    time.Time
+	Event   string // model.JobEvent*
+	Outcome JobOutcome
+	// Detail is the job kind's detail (nil for an unknown kind). A start event has none of its
+	// fields set.
+	Detail JobDetail
+}
+
+// DebugJob returns one job with its decoded events and its requests.
 func (c *Controllers) DebugJob(ctx context.Context, id int64) (JobDebug, error) {
 	var d JobDebug
 	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
@@ -93,8 +104,16 @@ func (c *Controllers) DebugJob(ctx context.Context, id int64) (JobDebug, error) 
 		if d.Job, err = tx.GetJob(ctx, id); err != nil {
 			return err
 		}
-		if d.Events, err = tx.JobEvents(ctx, id); err != nil {
+		rows, err := tx.JobEvents(ctx, id)
+		if err != nil {
 			return err
+		}
+		for _, r := range rows {
+			o, det, err := DecodeJobEvent(d.Job.Kind, r.Detail)
+			if err != nil {
+				return fmt.Errorf("job %d event at %d: %w", id, r.Time.Unix(), err)
+			}
+			d.Events = append(d.Events, JobEvent{Time: r.Time, Event: r.Event, Outcome: o, Detail: det})
 		}
 		d.Requests, err = tx.RecentRequests(ctx, false, id, "", 20)
 		return err
@@ -104,6 +123,7 @@ func (c *Controllers) DebugJob(ctx context.Context, id int64) (JobDebug, error) 
 
 // WorkDebug is the content-free state of one work with its fetch jobs and requests.
 type WorkDebug struct {
+	ID       int64
 	Diag     store.WorkDiag
 	Jobs     []model.Job
 	Requests []store.RequestRow
@@ -111,7 +131,7 @@ type WorkDebug struct {
 
 // DebugWork returns one work's diagnostic view, its fetch jobs and its requests.
 func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error) {
-	var d WorkDebug
+	d := WorkDebug{ID: id}
 	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
 		var err error
 		if d.Diag, err = tx.WorkDiag(ctx, id); err != nil {

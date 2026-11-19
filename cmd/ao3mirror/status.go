@@ -156,7 +156,13 @@ func runDebug(ctx context.Context, a *app, args []string, out, errOut io.Writer)
 		printJob(out, d.Job)
 		fmt.Fprintln(out, "\nevents:")
 		for _, e := range d.Events {
-			fmt.Fprintf(out, "  %s  %-7s %s\n", e.Time.Local().Format("01-02 15:04:05"), e.Event, e.Detail)
+			// The fields that were set, as stored.
+			detail, err := store.JobDetailJSON(e.Outcome, e.Detail)
+			if err != nil {
+				fmt.Fprintf(errOut, "debug job: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(out, "  %s  %-7s %s\n", e.Time.Local().Format("01-02 15:04:05"), e.Event, detail)
 		}
 		printRequests(out, d.Requests)
 	case "work":

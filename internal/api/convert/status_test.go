@@ -49,7 +49,7 @@ func TestStatus(t *testing.T) {
 	}, got.Jobs, "sorted by kind, then state")
 	assert.Equal(t, []dto.SeriesGap{{ID: 8, WorksTotal: 3, Mirrored: 1, MissingPositions: []int{2, 3},
 		MissingWorkIDs: []int64{}}}, got.PartialSeries)
-	assert.Equal(t, []dto.RequestError{{RequestedAt: at.UTC(), ReqID: "r1", Kind: "work", Path: "/works/1", Status: 503,
+	assert.Equal(t, []dto.Request{{RequestedAt: at.UTC(), ReqID: "r1", Kind: "work", Path: "/works/1", Status: 503,
 		Class: "unavailable", Reason: "status=503", Duration: dto.Duration(1500 * time.Millisecond), Waited: dto.Duration(2 * time.Second), Hop: 1}}, got.RequestErrors)
 	assert.Equal(t, time.UTC, got.RequestErrors[0].RequestedAt.Location())
 	assert.Equal(t, []dto.Job{{ID: 3, Kind: "work", State: "failed", LastErrorCode: "not_found"}}, got.FailedJobs)
@@ -59,7 +59,7 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, []dto.WorkStatusCount{}, empty.Works.ByStatus, "nil maps give [], not null")
 	assert.Equal(t, []dto.JobCount{}, empty.Jobs)
 	assert.Equal(t, []dto.TagInfoType{}, empty.TagInfo.Types)
-	assert.Equal(t, []dto.RequestError{}, empty.RequestErrors)
+	assert.Equal(t, []dto.Request{}, empty.RequestErrors)
 	assert.Equal(t, []dto.Job{}, empty.FailedJobs)
 }
 
@@ -96,8 +96,8 @@ func TestSeriesGap(t *testing.T) {
 		seriesGap(store.PartialSeries{ID: 1, WorksTotal: 2, Mirrored: 1, MissingWorkIDs: []int64{5}}))
 }
 
-func TestRequestError(t *testing.T) {
-	got := requestError(store.RequestRow{Kind: "robots", Class: "ok", Status: 200})
-	assert.Equal(t, dto.RequestError{Kind: "robots", Class: "ok", Status: 200}, got)
+func TestRequestRow(t *testing.T) {
+	got := requestRow(store.RequestRow{Kind: "robots", Class: "ok", Status: 200})
+	assert.Equal(t, dto.Request{Kind: "robots", Class: "ok", Status: 200}, got)
 	assert.Zero(t, got.JobID, "no job: omitted")
 }

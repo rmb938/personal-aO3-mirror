@@ -31,10 +31,10 @@ func TestStatus(t *testing.T) {
 		{Kind: "source_add", State: "failed", Count: 1},
 		{Kind: "work", State: "queued", Count: 1},
 	}, s.Jobs)
-	assert.Equal(t, 1, s.Requests.Last1h)
-	assert.Equal(t, []dto.RequestClassCount{{Class: "rate_limited", Count: 1}}, s.Requests.ByClass24h)
-	assert.Equal(t, []dto.WorkStatusCount{}, s.Works.ByStatus, "empty lists are [], not null")
-	assert.Equal(t, []dto.ImageStatusCount{}, s.Images.ByStatus)
+	assert.Equal(t, 2, s.Requests.Last1h)
+	assert.Equal(t, []dto.RequestClassCount{{Class: "ok", Count: 1}, {Class: "rate_limited", Count: 1}}, s.Requests.ByClass24h)
+	assert.Equal(t, []dto.WorkStatusCount{{Status: "ok", Count: 1}}, s.Works.ByStatus)
+	assert.Equal(t, []dto.ImageStatusCount{}, s.Images.ByStatus, "empty lists are [], not null")
 	assert.Equal(t, []dto.TagInfoType{}, s.TagInfo.Types, "tag info off")
 	assert.Equal(t, []dto.SeriesGap{}, s.PartialSeries)
 
