@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -61,26 +62,59 @@ type Result struct {
 	OffEnum []string
 }
 
+// SchemaError reports a JSON value whose shape doesn't match the Go type it was enforced as
+// (e.g. an object where the field is a string). It names only the Go field, never content.
+type SchemaError struct {
+	Path string
+}
+
+func (e *SchemaError) Error() string {
+	return "redact: JSON does not match " + e.Path
+}
+
 // Enforcer rewrites JSON response bodies according to a registry snapshot. It is safe for
 // concurrent use.
 type Enforcer struct {
 	hasher *Hasher
 	keys   map[string]struct{}
 	enums  map[string]map[string]struct{}
+	// schemas are the compiled registered types, for EnforceAs.
+	schemas map[reflect.Type]*node
 }
 
-// NewEnforcer snapshots reg (later registrations don't affect it) and checks that every enum
-// key is a registered key.
+// NewEnforcer snapshots reg (later registrations don't affect it), checks that every enum key
+// is a registered key, and compiles each registered type into a schema for EnforceAs. Every
+// RegisterFieldEnum field must exist in a registered type.
 func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 	if h == nil {
 		return nil, errors.New("redact: NewEnforcer: nil hasher")
 	}
-	e := &Enforcer{hasher: h, keys: maps.Clone(reg.keys), enums: make(map[string]map[string]struct{}, len(reg.enums))}
+	e := &Enforcer{
+		hasher: h, keys: maps.Clone(reg.keys), enums: make(map[string]map[string]struct{}, len(reg.enums)),
+		schemas: make(map[reflect.Type]*node, len(reg.roots)),
+	}
 	for k, set := range reg.enums {
 		if _, ok := e.keys[k]; !ok {
 			return nil, fmt.Errorf("redact: enum key %q is not a registered DTO key", k)
 		}
 		e.enums[k] = maps.Clone(set)
+	}
+	fieldEnums := make(map[fieldEnumKey]map[string]struct{}, len(reg.fieldEnums))
+	for fk, set := range reg.fieldEnums {
+		fieldEnums[fk] = maps.Clone(set)
+	}
+	c := newCompiler(fieldEnums)
+	for _, t := range reg.roots {
+		n, err := c.compile(t, "", t.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		e.schemas[t] = n
+	}
+	for fk := range fieldEnums {
+		if !c.used[fk] {
+			return nil, fmt.Errorf("redact: RegisterFieldEnum %s.%s: no such field in a registered type", fk.t, fk.key)
+		}
 	}
 	return e, nil
 }
@@ -92,6 +126,27 @@ func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 // Every other string becomes "h_" + 24 hex. Numbers, booleans and null pass through. The whole
 // body is hashed with one epoch.
 func (e *Enforcer) Enforce(mode Mode, in []byte) (Result, error) {
+	return e.enforce(mode, nil, in)
+}
+
+// EnforceAs is Enforce driven by the schema of t, a type registered through RegisterTypes
+// (or a pointer to one), whose marshaled value in is. Each object must be the struct at that
+// position: a key it doesn't declare is an *UnknownKeyError, and a value of the wrong JSON kind
+// a *SchemaError (null is always allowed). A string passes unhashed only when its own field
+// allows it: a value of the field's Enum type or RegisterFieldEnum set, or an RFC3339 UTC
+// timestamp or YYYY-MM-DD date under a key ending in "_at" or "_on". So two fields sharing a
+// key (two `status` enums) each allow only their own values. Result.OffEnum lists Go field
+// paths instead of keys.
+func (e *Enforcer) EnforceAs(mode Mode, t reflect.Type, in []byte) (Result, error) {
+	n, ok := e.schemas[rootType(t)]
+	if !ok {
+		return Result{}, fmt.Errorf("redact: type %v is not registered", t)
+	}
+	return e.enforce(mode, n, in)
+}
+
+// enforce walks in against n, or by key alone when n is nil (Enforce).
+func (e *Enforcer) enforce(mode Mode, n *node, in []byte) (Result, error) {
 	if mode != Hashed && mode != Revealed {
 		return Result{}, fmt.Errorf("redact: unknown mode %d", int(mode))
 	}
@@ -100,7 +155,7 @@ func (e *Enforcer) Enforce(mode Mode, in []byte) (Result, error) {
 	w.out.Grow(len(in) + len(in)/4)
 	dec := json.NewDecoder(bytes.NewReader(in))
 	dec.UseNumber()
-	if err := w.value(dec, ""); err != nil {
+	if err := w.value(dec, "", n); err != nil {
 		return Result{}, err
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
@@ -122,8 +177,9 @@ type walker struct {
 	offEnum []string
 }
 
-// value reads and writes one JSON value; key is the object key it sits under ("" at the top).
-func (w *walker) value(dec *json.Decoder, key string) error {
+// value reads and writes one JSON value; key is the object key it sits under ("" at the top)
+// and n its schema node (nil when enforcing by key alone).
+func (w *walker) value(dec *json.Decoder, key string, n *node) error {
 	tok, err := dec.Token()
 	if err != nil {
 		return invalid(err)
@@ -132,22 +188,41 @@ func (w *walker) value(dec *json.Decoder, key string) error {
 	case json.Delim:
 		switch t {
 		case '{':
-			return w.object(dec)
+			if err := n.want(kindObject); err != nil {
+				return err
+			}
+			return w.object(dec, n)
 		case '[':
-			return w.array(dec, key)
+			if err := n.want(kindArray); err != nil {
+				return err
+			}
+			var elem *node
+			if n != nil {
+				elem = n.elem
+			}
+			return w.array(dec, key, elem)
 		default:
 			return fmt.Errorf("%w: unexpected %c", ErrInvalidJSON, rune(t))
 		}
 	case string:
-		w.noteOffEnum(key, t)
-		if w.mode == Revealed || w.e.allowed(key, t) {
+		if err := n.want(kindString); err != nil {
+			return err
+		}
+		w.noteOffEnum(key, n, t)
+		if w.mode == Revealed || w.e.allowed(key, n, t) {
 			w.writeString(t)
 		} else {
 			w.writeRawString(w.mac.hash(t))
 		}
 	case json.Number:
+		if err := n.want(kindNumber); err != nil {
+			return err
+		}
 		w.out.WriteString(string(t))
 	case bool:
+		if err := n.want(kindBool); err != nil {
+			return err
+		}
 		if t {
 			w.out.WriteString("true")
 		} else {
@@ -161,7 +236,17 @@ func (w *walker) value(dec *json.Decoder, key string) error {
 	return nil
 }
 
-func (w *walker) object(dec *json.Decoder) error {
+// want checks that a JSON value of kind k may sit at n (any value may when n is nil). An opaque
+// node takes any scalar.
+func (n *node) want(k nodeKind) error {
+	if n == nil || n.kind == k || (n.kind == kindOpaque && k != kindObject && k != kindArray) {
+		return nil
+	}
+	return &SchemaError{Path: n.path}
+}
+
+// object walks an object at n (nil: keys are checked against every registered key).
+func (w *walker) object(dec *json.Decoder, n *node) error {
 	w.out.WriteByte('{')
 	for i := 0; dec.More(); i++ {
 		tok, err := dec.Token()
@@ -172,7 +257,13 @@ func (w *walker) object(dec *json.Decoder) error {
 		if !ok {
 			return fmt.Errorf("%w: object key is %T", ErrInvalidJSON, tok)
 		}
-		if _, ok := w.e.keys[k]; !ok {
+		var child *node
+		if n != nil {
+			child, ok = n.fields[k]
+		} else {
+			_, ok = w.e.keys[k]
+		}
+		if !ok {
 			return &UnknownKeyError{KeyHash: w.mac.hash(k)}
 		}
 		if i > 0 {
@@ -180,20 +271,21 @@ func (w *walker) object(dec *json.Decoder) error {
 		}
 		w.writeRawString(k) // registered keys are snake_case: no escaping needed
 		w.out.WriteByte(':')
-		if err := w.value(dec, k); err != nil {
+		if err := w.value(dec, k, child); err != nil {
 			return err
 		}
 	}
 	return w.closing(dec, '}')
 }
 
-func (w *walker) array(dec *json.Decoder, key string) error {
+// array walks an array whose elements sit at elem (nil when enforcing by key alone).
+func (w *walker) array(dec *json.Decoder, key string, elem *node) error {
 	w.out.WriteByte('[')
 	for i := 0; dec.More(); i++ {
 		if i > 0 {
 			w.out.WriteByte(',')
 		}
-		if err := w.value(dec, key); err != nil {
+		if err := w.value(dec, key, elem); err != nil {
 			return err
 		}
 	}
@@ -235,8 +327,11 @@ func invalid(err error) error {
 	return ErrInvalidJSON
 }
 
-// allowed reports whether s may pass unhashed under key.
-func (e *Enforcer) allowed(key, s string) bool {
+// allowed reports whether s may pass unhashed at n, or under key when n is nil.
+func (e *Enforcer) allowed(key string, n *node, s string) bool {
+	if n != nil {
+		return n.allows(s)
+	}
 	if set, ok := e.enums[key]; ok {
 		_, ok := set[s]
 		return ok
@@ -250,14 +345,28 @@ func (e *Enforcer) allowed(key, s string) bool {
 	return false
 }
 
-// noteOffEnum records key in Result.OffEnum when it is an enum key whose set lacks s.
-func (w *walker) noteOffEnum(key, s string) {
-	set, ok := w.e.enums[key]
-	if !ok {
-		return
+// noteOffEnum records an enum whose set lacks s in Result.OffEnum: n's field path, or key when
+// n is nil.
+func (w *walker) noteOffEnum(key string, n *node, s string) {
+	var name string
+	switch {
+	case n != nil:
+		if !n.offEnum(s) {
+			return
+		}
+		name = n.path
+	default:
+		set, ok := w.e.enums[key]
+		if !ok {
+			return
+		}
+		if _, in := set[s]; in {
+			return
+		}
+		name = key
 	}
-	if _, in := set[s]; !in && !slices.Contains(w.offEnum, key) {
-		w.offEnum = append(w.offEnum, key)
+	if !slices.Contains(w.offEnum, name) {
+		w.offEnum = append(w.offEnum, name)
 	}
 }
 
