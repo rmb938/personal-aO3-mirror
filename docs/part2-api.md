@@ -471,16 +471,40 @@ Status: tick when the PR merges.
         - `serve` closes the store when `serve()` returns, and `newServer` closes it on any
           error after opening it. The store and controllers log through the API's logger, so
           the leak test also checks their lines.
-    - [ ] **3b. Jobs**: store offset/limit + `CountJobs` for `JobFilter`, a controller
-      returning `(page, total)`; `GET /jobs` (state, kind, source_id, page, per_page), and
-      `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
-      convert test against the `jobs.Kind*` constants.
-      - The jobs table grows with every work fetch. Check that its indexes cover each filter
-        with `ORDER BY id DESC`, and benchmark a deep page and `CountJobs` on a large
-        synthetic table.
-      - Also verify (EXPLAIN or benchmark) the 3a-2 assumption that rows skipped by `OFFSET`
-        don't evaluate `ListSources`' member-count subqueries. If they do, page ids first
-        with a deferred join (see 9).
+    - [ ] **3b. Jobs**, in three PRs:
+      - [ ] **3b-1. Store + controller: paged jobs.** Store offset/limit + `CountJobs` for
+        `JobFilter`, a controller returning `(page, total)`.
+        - The jobs table grows with every work fetch. Check that its indexes cover each filter
+          with `ORDER BY id DESC`, and benchmark a deep page and `CountJobs` on a large
+          synthetic table.
+        - Also verify (EXPLAIN or benchmark) the 3a-2 assumption that rows skipped by `OFFSET`
+          don't evaluate `ListSources`' member-count subqueries. If they do, page ids first
+          with a deferred join (see 9).
+        - As built:
+          - `JobFilter` gains `Offset`; `FindJobs` rejects `Offset < 0` or `Limit < 1`.
+            `CountJobs(f)` shares the WHERE builder (`jobWhere`) and ignores
+            Offset/Limit/Order. Controller `ListJobs(ctx, f)` returns `(page, total)` from
+            one `InReadTx`.
+          - Migration `meta/0002_jobs_state.sql` adds `jobs_state (state)`. Before it, a
+            state filter used `jobs_finished (state, finished_at)` and sorted every job in that
+            state per page: 35-60 ms on the benchmark table, now 0.2-3 ms.
+          - Benchmark (`store/paging_bench_test.go`): 200k jobs (60% queued, ~90% work
+            fetches, 20 sources), 100 per page, offsets 0 and 99,900. Worst cases now: deep
+            page on state+kind 16 ms, on source_id alone 7 ms (it sorts that source's jobs,
+            ~9.5k here); counts ≤ 8 ms. Accepted: more indexes would cost every job state change
+            a write. Real tables are smaller (done jobs are pruned after 7 days).
+          - `TestJobsPagePlans` asserts no page plan sorts (`TEMP B-TREE`), except the
+            source_id filter without a state.
+          - The `OFFSET` assumption holds: `BenchmarkSourcesPage` (1000 sources × 200
+            members) costs the same at offset 900 as at 0, so no deferred join.
+      - [ ] **3b-2. Refactor: `JobFilter` into `internal/model`** (no behaviour change).
+        `store.JobFilter` → `model.JobFilter`, and `store.JobOrder` with its constants
+        (`JobsNewest`, `JobsOldest`, `JobsLastStarted`) → `model.JobOrder`, since the 3b-3
+        handler builds one for `ListJobs`. `NewJob` and the other row types stay in `store`.
+        Update every caller (store, controllers, scheduler tests, cmd).
+      - [ ] **3b-3. Jobs routes**: `GET /jobs` (state, kind, source_id, page, per_page), and
+        `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
+        convert test against the `jobs.Kind*` constants.
     - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
       becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
       `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,
@@ -521,8 +545,9 @@ Status: tick when the PR merges.
     - complete, crossover, language, words/kudos/hits ranges, date ranges, status;
     - sort column + direction.
   - Bounded `IN` lists and parameterized SQL only.
-  - Migration `0002` adds reverse indexes (`tag_parents(parent_id)`,
-    `work_collections(collection_id)`, `series_creators(creator_id)`) and any sort indexes.
+  - A new meta migration (`0003` unless another lands first) adds reverse indexes
+    (`tag_parents(parent_id)`, `work_collections(collection_id)`, `series_creators(creator_id)`)
+    and any sort indexes.
   - Deep pages use a deferred join: select the page's ids over an index
     (`WHERE id IN (SELECT id … ORDER BY <sort>, id LIMIT ? OFFSET ?)`), then load the wide
     work rows for those ids only. Every sort ends with `id` as a tie-breaker so pages are stable.

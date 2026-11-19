@@ -183,3 +183,28 @@ func TestSourceAddOutcomeOnlyForSourceAdds(t *testing.T) {
 	_, err = e.svc.SourceAddOutcome(ctx, other+100)
 	require.ErrorIs(t, err, store.ErrNoJob)
 }
+
+// ListJobs returns a page and the total of all matching jobs.
+func TestListJobsPageAndTotal(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	var ids []int64
+	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		for i := range int64(3) {
+			id, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: "1", DedupeKey: jobs.WorkKey(i + 1)})
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		_, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindTagInfo, Target: "9", DedupeKey: jobs.TagKey(9)})
+		return err
+	}))
+	page, total, err := e.svc.ListJobs(ctx, store.JobFilter{Kind: jobs.KindWork, Offset: 1, Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	require.Len(t, page, 1)
+	require.Equal(t, ids[1], page[0].ID, "second newest work job")
+	_, _, err = e.svc.ListJobs(ctx, store.JobFilter{Limit: 0})
+	require.Error(t, err)
+}
