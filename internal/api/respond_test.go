@@ -64,7 +64,7 @@ func TestHandleError(t *testing.T) {
 	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errParam("page", detailPage) })
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeValidation)+`","title":"Validation Error","status":422,`+
-		`"detail":"`+detailInvalidParams.msg+`","errors":[{"detail":"`+detailPage.msg+`","parameter":"page"}]}`, w.Body.String())
+		`"detail":"`+detailInvalidRequest.msg+`","errors":[{"detail":"`+detailPage.msg+`","parameter":"page"}]}`, w.Body.String())
 
 	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errors.New("db exploded") })
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

@@ -1,7 +1,10 @@
 package ao3url
 
 import (
+	"errors"
 	"net/url"
+	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -60,6 +63,52 @@ func TestParseErrors(t *testing.T) {
 		_, err := Parse(in)
 		assert.ErrorIs(t, err, want, "Parse(%q)", in)
 	}
+}
+
+func TestParseReasons(t *testing.T) {
+	for in, want := range map[string]Reason{
+		"https://example.com/works/1":                   ReasonNotAO3,
+		"works/1":                                       ReasonNotAO3,
+		"http://[x":                                     ReasonMalformed,
+		host + "/tags/a%zz/works":                       ReasonMalformed,
+		host + "/chapters/5":                            ReasonChapter,
+		host + "/tags/x/bookmarks":                      ReasonTagPage,
+		host + "/users/a/pseuds/b/bookmarks":            ReasonPseudBookmarks,
+		host + "/collections/c/bookmarks":               ReasonCollectionPage,
+		host + "/works?tag_id=Fixture":                  ReasonWorksIndex,
+		host + "/works/search?work_search%5Bquery%5D=x": ReasonWorkSearch,
+		host + "/downloads/1/x.html":                    ReasonUnsupportedSource,
+		host + "/":                                      ReasonUnsupportedSource,
+	} {
+		_, err := Parse(in)
+		ue, ok := errors.AsType[*URLError](err)
+		require.True(t, ok, "Parse(%q): %v", in, err)
+		assert.Equal(t, want, ue.Reason, "Parse(%q)", in)
+		assert.Contains(t, err.Error(), want.Hint(), "the message ends with the hint")
+		if want == ReasonNotAO3 {
+			require.ErrorIs(t, err, ErrNotAO3)
+			require.NotErrorIs(t, err, ErrUnsupported)
+		} else {
+			require.ErrorIs(t, err, ErrUnsupported)
+			require.NotErrorIs(t, err, ErrNotAO3)
+		}
+	}
+}
+
+// Every Reason constant is in Reasons() and has a hint.
+func TestReasonsComplete(t *testing.T) {
+	src, err := os.ReadFile("ao3url.go")
+	require.NoError(t, err)
+	var consts []Reason
+	for _, m := range regexp.MustCompile(`(?m)^\t(Reason[A-Za-z0-9]+) +Reason = "([a-z0-9_]+)"`).FindAllStringSubmatch(string(src), -1) {
+		consts = append(consts, Reason(m[2]))
+	}
+	require.NotEmpty(t, consts)
+	assert.ElementsMatch(t, consts, Reasons())
+	for _, r := range Reasons() {
+		assert.NotEmpty(t, r.Hint(), r)
+	}
+	assert.Len(t, reasonHints, len(Reasons()))
 }
 
 // Errors end up in job last_error and logs, so they never repeat names from the URL.

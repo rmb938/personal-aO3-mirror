@@ -13,7 +13,8 @@ import (
 //   - type and title are fixed per problem type (ProblemType, ProblemTitle);
 //   - detail and each errors[].detail are messages from the api package's fixed catalogue,
 //     registered with the enforcer at startup (they never include client input);
-//   - errors[].parameter is a ParamName.
+//   - errors[].parameter is a ParamName;
+//   - errors[].pointer must be a JSON Pointer to a member of a registered request type.
 type Problem struct {
 	// Type identifies the problem type: an absolute URI of its section in docs/api/problems.md.
 	Type ProblemType `json:"type"`
@@ -34,6 +35,9 @@ type ProblemError struct {
 	// Parameter names the query or path parameter at fault (omitted when it is not a declared
 	// name, e.g. an unknown parameter).
 	Parameter ParamName `json:"parameter,omitzero"`
+	// Pointer is the RFC 6901 JSON Pointer of the body member at fault (e.g. "/url"). The
+	// enforcer passes it only when it names a member of a registered request type.
+	Pointer string `json:"pointer,omitzero"`
 }
 
 // ProblemType is a problem type URI (an enum).

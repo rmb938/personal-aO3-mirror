@@ -120,11 +120,12 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    refuses non-JSON in hashed mode.
 5. **Errors** are RFC 9457 `application/problem+json` (from 3d): `type` (a URI per problem
    type, `docs/api/problems.md#<slug>`), `title` (fixed per type), `status`, an optional
-   `detail`, and on `validation-error` an `errors` extension of `{detail, parameter}` items
-   (`pointer`, a JSON Pointer into the body, comes with 3e). Every string is from a fixed set:
+   `detail`, and on `validation-error` an `errors` extension of `{detail, parameter | pointer}`
+   items listing every invalid part (from 3e). Every string is from a fixed set:
    `detail` messages are a catalogue in `api/details.go` (`newDetail`, package-level vars only),
    registered with the enforcer as the only values of the two `detail` fields, and never include
-   client input. `parameter` is a `dto.ParamName` (query and path names only). Job `last_error`
+   client input. `parameter` is a `dto.ParamName` (query and path names only); `pointer` must
+   name a member of a registered request type (`api.requestTypes`). Job `last_error`
    is split into `last_error_code` (enum) and `last_error_detail` (hashed).
 6. **Free-text inputs** (`q`, `name`) need reveal. In hashed mode they return 400
    `reveal-required` (the oracle rule). Structured inputs (IDs, enums, numeric ranges, dates) are
@@ -616,12 +617,31 @@ Status: tick when the PR merges.
   - An unknown parameter's error item names it only when it is a declared `ParamName` (e.g.
     `page` on a route without paging); otherwise it has no `parameter`.
   - `dto.ParamName` holds query and path names only.
-- [ ] **3e. Request validation.** Validation functions per request type that collect every
+- [x] **3e. Request validation.** Validation functions per request type that collect every
   error (not first-fail) into `errors`; query-parameter checks collect too. Body errors carry
   `pointer` (RFC 6901 JSON Pointer), checked by the enforcer against the request DTO's Go
   type (each segment a json key of the struct at that level, or an index into a slice), so
   nested keys and array items need no list. `ao3url` returns typed reasons, each with its own
-  catalogue message (the CLI's URL hints).
+  catalogue message (the CLI's URL hints). As built:
+  - `api.validation` collects `ErrorItem{Param | Pointer, Detail}`; `err()` is nil or one
+    422. `params` (from `parseParams`, replacing `parseQuery`) embeds it: unknown and repeated
+    names are recorded in name order, and the getters (`int`, `enum`, `page`, `pathID`)
+    record and return zero values. Handlers read every parameter, then return `q.err()`;
+    routes without parameters call `noParams(r)`. `page` skips the offset-cap check when
+    `per_page` is itself invalid. Body validation (from stage 4): a `validate<Request>`
+    function per request DTO taking the handler's `*validation`, recording members with
+    `member(d, "filters", "2", "tag_id")` → `/filters/2/tag_id`.
+  - `redact.Registry.RegisterPointerField(dto.ProblemError{}, "pointer", requestTypes...)`:
+    a pointer passes unhashed only when it walks a request type (keys of the struct at each
+    level, canonical indices < 1e6 into slices); anything else is hashed and listed in
+    `Result.OffEnum` (logged as a bug). Request types follow the `RegisterTypes` rules. With
+    no request types (until stage 4 adds `dto.SourceAddRequest` to `api.requestTypes`) every
+    pointer is hashed. Unit tests and a fuzzer in `redact/pointer_test.go`.
+  - `ao3url.Parse` errors are `*ao3url.URLError{Reason}` (still `errors.Is` `ErrNotAO3` /
+    `ErrUnsupported`); `Reason.Hint()` is the fixed advice, also the end of the message.
+    `ao3url.Reasons()` is checked against the constants by a source-parsing test.
+    `api.urlDetails` makes one catalogue detail per reason; `urlDetail(err)` finds it.
+  - `checkText` became `validText(s, maxRunes) bool` (the caller picks the detail).
 - [ ] **4. Add source (public)** (draft PR #32, to be rebased onto 3d/3e)
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.

@@ -11,23 +11,18 @@ import (
 // listJobs is GET /api/v1/jobs (state, kind, source_id, page, per_page). Jobs come newest
 // first, except a state=queued listing, which is in queue order (oldest first).
 func (a *API) listJobs(r *http.Request) (any, error) {
-	q, err := parseQuery(r, string(dto.ParamState), string(dto.ParamKind), string(dto.ParamSourceID),
+	q, err := parseParams(r, string(dto.ParamState), string(dto.ParamKind), string(dto.ParamSourceID),
 		string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
-	var f model.JobFilter
-	if f.State, err = q.enum(string(dto.ParamState), dto.JobState(""), detailJobState); err != nil {
-		return nil, err
+	f := model.JobFilter{
+		State:    q.enum(string(dto.ParamState), dto.JobState(""), detailJobState),
+		Kind:     q.enum(string(dto.ParamKind), dto.JobKind(""), detailJobKind),
+		SourceID: q.int(string(dto.ParamSourceID), 0, MaxID, detailID),
 	}
-	if f.Kind, err = q.enum(string(dto.ParamKind), dto.JobKind(""), detailJobKind); err != nil {
-		return nil, err
-	}
-	if f.SourceID, err = q.int(string(dto.ParamSourceID), 0, 1, MaxID, detailID); err != nil {
-		return nil, err
-	}
-	p, err := q.page()
-	if err != nil {
+	p := q.page()
+	if err := q.err(); err != nil {
 		return nil, err
 	}
 	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
@@ -43,11 +38,12 @@ func (a *API) listJobs(r *http.Request) (any, error) {
 
 // getJob is GET /api/v1/jobs/{id}.
 func (a *API) getJob(r *http.Request) (any, error) {
-	if _, err := parseQuery(r); err != nil {
+	q, err := parseParams(r)
+	if err != nil {
 		return nil, err
 	}
-	id, err := pathID(r, dto.ParamID)
-	if err != nil {
+	id := q.pathID(dto.ParamID)
+	if err := q.err(); err != nil {
 		return nil, err
 	}
 	j, err := a.ctl.GetJob(r.Context(), id)

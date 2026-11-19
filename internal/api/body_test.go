@@ -57,7 +57,7 @@ func TestDecodeJSON(t *testing.T) {
 	for name, body := range bad {
 		t.Run(name, func(t *testing.T) {
 			_, err := decodeTest(t, "application/json", body)
-			requireAPIError(t, err, dto.TypeInvalidBody, "")
+			requireAPIError(t, err, dto.TypeInvalidBody)
 		})
 	}
 }
@@ -66,20 +66,20 @@ func TestDecodeJSONContentType(t *testing.T) {
 	for _, ct := range []string{"", "text/plain", "application/json; charset=latin1",
 		"application/json; foo=bar", "application/jsonx", "application/problem+json", "%%%"} {
 		_, err := decodeTest(t, ct, `{}`)
-		requireAPIError(t, err, dto.TypeUnsupportedMediaType, "")
+		requireAPIError(t, err, dto.TypeUnsupportedMediaType)
 	}
 
 	// Two Content-Type headers are refused.
 	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{}`))
 	r.Header.Add("Content-Type", "application/json")
 	r.Header.Add("Content-Type", "application/json")
-	requireAPIError(t, decodeJSON(r, &testBody{}), dto.TypeUnsupportedMediaType, "")
+	requireAPIError(t, decodeJSON(r, &testBody{}), dto.TypeUnsupportedMediaType)
 }
 
 func TestDecodeJSONTooLarge(t *testing.T) {
 	pad := strings.Repeat(" ", maxBodyBytes)
 	_, err := decodeTest(t, "application/json", `{"url":"u"}`+pad)
-	requireAPIError(t, err, dto.TypeBodyTooLarge, "")
+	requireAPIError(t, err, dto.TypeBodyTooLarge)
 
 	// Exactly at the cap is fine.
 	body := `{"url":"u"}`

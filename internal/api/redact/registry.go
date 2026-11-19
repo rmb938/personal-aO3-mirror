@@ -32,11 +32,42 @@ type Registry struct {
 	// roots are the registered types (pointers unwrapped) that Enforce accepts.
 	roots      []reflect.Type
 	fieldEnums map[fieldEnumKey]map[string]struct{}
+	// pointerFields are plain string fields that hold JSON Pointers into these request types.
+	pointerFields map[fieldEnumKey][]reflect.Type
 }
 
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
-	return &Registry{fieldEnums: map[fieldEnumKey]map[string]struct{}{}}
+	return &Registry{fieldEnums: map[fieldEnumKey]map[string]struct{}{}, pointerFields: map[fieldEnumKey][]reflect.Type{}}
+}
+
+// RegisterPointerField lets the plain string field key of struct v hold an RFC 6901 JSON
+// Pointer (e.g. "/filters/2/tag_id") into one of requestTypes: it passes unhashed only when
+// each segment is a json key of the struct at that position or a decimal index into a slice or
+// array, and it ends at a field. Keys are snake_case, so a segment needing ~0/~1 escapes never
+// matches. requestTypes follow the RegisterTypes rules; with none, every pointer is hashed.
+func (r *Registry) RegisterPointerField(v any, key string, requestTypes ...any) error {
+	t := rootType(reflect.TypeOf(v))
+	if t == nil || t.Kind() != reflect.Struct {
+		return fmt.Errorf("redact: RegisterPointerField: %T is not a struct", v)
+	}
+	fk := fieldEnumKey{t: t, key: key}
+	if _, dup := r.pointerFields[fk]; dup {
+		return fmt.Errorf("redact: RegisterPointerField %s.%s: registered twice", t, key)
+	}
+	types := make([]reflect.Type, 0, len(requestTypes))
+	for _, rv := range requestTypes {
+		rt := rootType(reflect.TypeOf(rv))
+		if rt == nil || rt.Kind() != reflect.Struct {
+			return fmt.Errorf("redact: RegisterPointerField %s.%s: request type %T is not a struct", t, key, rv)
+		}
+		if _, err := newCompiler(nil, nil).compile(rt, "", rt.String(), nil); err != nil {
+			return err
+		}
+		types = append(types, rt)
+	}
+	r.pointerFields[fk] = types
+	return nil
 }
 
 // RegisterTypes registers each value's type as a response type for Enforce, checking that its
@@ -54,7 +85,7 @@ func (r *Registry) RegisterTypes(vals ...any) error {
 		if t == nil {
 			return errors.New("redact: RegisterTypes: nil value")
 		}
-		if _, err := newCompiler(nil).compile(t, "", t.String(), nil); err != nil {
+		if _, err := newCompiler(nil, nil).compile(t, "", t.String(), nil); err != nil {
 			return err
 		}
 		r.roots = append(r.roots, t)

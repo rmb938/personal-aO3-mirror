@@ -3,20 +3,18 @@ package api
 import (
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/rmb938/personal-aO3-mirror/internal/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
 // listSources is GET /api/v1/sources (page, per_page).
 func (a *API) listSources(r *http.Request) (any, error) {
-	q, err := parseQuery(r, string(dto.ParamPage), string(dto.ParamPerPage))
+	q, err := parseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
-	p, err := q.page()
-	if err != nil {
+	p := q.page()
+	if err := q.err(); err != nil {
 		return nil, err
 	}
 	items, total, err := a.ctl.ListSources(r.Context(), int(p.Offset()), int(p.PerPage))
@@ -28,11 +26,12 @@ func (a *API) listSources(r *http.Request) (any, error) {
 
 // getSource is GET /api/v1/sources/{id}.
 func (a *API) getSource(r *http.Request) (any, error) {
-	if _, err := parseQuery(r); err != nil {
+	q, err := parseParams(r)
+	if err != nil {
 		return nil, err
 	}
-	id, err := pathID(r, dto.ParamID)
-	if err != nil {
+	id := q.pathID(dto.ParamID)
+	if err := q.err(); err != nil {
 		return nil, err
 	}
 	s, err := a.ctl.GetSource(r.Context(), id)
@@ -44,11 +43,12 @@ func (a *API) getSource(r *http.Request) (any, error) {
 
 // getSourceAdd is GET /api/v1/source-adds/{job_id}: where a queued source add stands.
 func (a *API) getSourceAdd(r *http.Request) (any, error) {
-	if _, err := parseQuery(r); err != nil {
+	q, err := parseParams(r)
+	if err != nil {
 		return nil, err
 	}
-	id, err := pathID(r, dto.ParamJobID)
-	if err != nil {
+	id := q.pathID(dto.ParamJobID)
+	if err := q.err(); err != nil {
 		return nil, err
 	}
 	o, err := a.ctl.SourceAddOutcome(r.Context(), id)
@@ -56,9 +56,4 @@ func (a *API) getSourceAdd(r *http.Request) (any, error) {
 		return nil, err
 	}
 	return convert.SourceAdd(id, o), nil
-}
-
-// pathID parses the route's ID path parameter name.
-func pathID(r *http.Request, name dto.ParamName) (int64, error) {
-	return parseID(string(name), chi.URLParam(r, string(name)))
 }

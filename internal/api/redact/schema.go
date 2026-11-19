@@ -3,6 +3,7 @@ package redact
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -28,6 +29,7 @@ const (
 	ruleEnum                     // in the node's enum set
 	ruleTimestamp                // RFC3339 UTC (key ends in "_at")
 	ruleDate                     // YYYY-MM-DD (key ends in "_on")
+	rulePointer                  // a JSON Pointer into one of the node's request types
 )
 
 // node is one position in a compiled response type. Struct nodes are shared per Go type, so a
@@ -38,6 +40,7 @@ type node struct {
 	elem   *node               // kindArray
 	rule   strRule             // kindString, kindOpaque
 	enum   map[string]struct{} // ruleEnum
+	ptrs   []*node             // rulePointer: the request types' struct nodes
 	// path names the Go field this node is (e.g. "dto.Health.Status"): code, never content.
 	path string
 }
@@ -51,18 +54,70 @@ func (n *node) allows(s string) bool {
 		return isUTCTimestamp(s)
 	case ruleDate:
 		return isDate(s)
+	case rulePointer:
+		return pointerIn(s, n.ptrs)
 	default:
 		return false
 	}
 }
 
-// offEnum reports whether n is an enum node whose set lacks s.
+// offEnum reports whether n is an enum or pointer node that does not allow s: a value our
+// own code should never produce (it is hashed, and the caller warns).
 func (n *node) offEnum(s string) bool {
-	if n.rule != ruleEnum {
+	switch n.rule {
+	case ruleEnum, rulePointer:
+		return !n.allows(s)
+	default:
 		return false
 	}
-	_, ok := n.enum[s]
-	return !ok
+}
+
+// maxPointerIndex bounds an array index segment (request arrays are far shorter).
+const maxPointerIndex = 1_000_000
+
+// pointerIn reports whether s is a JSON Pointer to a field of one of roots: "/" then segments,
+// each a json key of the object at that position or a decimal index (no leading zeros) into an
+// array, ending anywhere but the root.
+func pointerIn(s string, roots []*node) bool {
+	if len(s) < 2 || s[0] != '/' {
+		return false
+	}
+	segs := strings.Split(s[1:], "/")
+	for _, root := range roots {
+		if walkPointer(root, segs) {
+			return true
+		}
+	}
+	return false
+}
+
+func walkPointer(n *node, segs []string) bool {
+	for _, seg := range segs {
+		switch n.kind {
+		case kindObject:
+			child, ok := n.fields[seg]
+			if !ok {
+				return false
+			}
+			n = child
+		case kindArray:
+			if !isIndex(seg) {
+				return false
+			}
+			n = n.elem
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isIndex(s string) bool {
+	if s == "" || (len(s) > 1 && s[0] == '0') {
+		return false
+	}
+	v, err := strconv.Atoi(s)
+	return err == nil && v >= 0 && v < maxPointerIndex && strconv.Itoa(v) == s
 }
 
 // fieldEnumKey names one struct field (by json key) that RegisterFieldEnum gave values.
@@ -73,13 +128,35 @@ type fieldEnumKey struct {
 
 // compiler turns registered Go types into schema nodes.
 type compiler struct {
-	structs    map[reflect.Type]*node
-	fieldEnums map[fieldEnumKey]map[string]struct{}
-	used       map[fieldEnumKey]bool
+	structs       map[reflect.Type]*node
+	fieldEnums    map[fieldEnumKey]map[string]struct{}
+	pointerFields map[fieldEnumKey][]reflect.Type
+	used          map[fieldEnumKey]bool
 }
 
-func newCompiler(fieldEnums map[fieldEnumKey]map[string]struct{}) *compiler {
-	return &compiler{structs: map[reflect.Type]*node{}, fieldEnums: fieldEnums, used: map[fieldEnumKey]bool{}}
+func newCompiler(fieldEnums map[fieldEnumKey]map[string]struct{}, pointerFields map[fieldEnumKey][]reflect.Type) *compiler {
+	return &compiler{structs: map[reflect.Type]*node{}, fieldEnums: fieldEnums, pointerFields: pointerFields,
+		used: map[fieldEnumKey]bool{}}
+}
+
+// pointerNode is the node of a RegisterPointerField field (a plain string) at path.
+func (c *compiler) pointerNode(t reflect.Type, path string, types []reflect.Type) (*node, error) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.String || implements(t, enumType) || implements(t, jsonMarshalerType) ||
+		implements(t, textMarshalerType) {
+		return nil, fmt.Errorf("redact: %s: RegisterPointerField on a field that is not a plain string", path)
+	}
+	n := &node{kind: kindString, rule: rulePointer, path: path}
+	for _, rt := range types {
+		root, err := c.compileStruct(rt)
+		if err != nil {
+			return nil, err
+		}
+		n.ptrs = append(n.ptrs, root)
+	}
+	return n, nil
 }
 
 // compile builds the node for t sitting under json key key (which picks the _at/_on rules);
@@ -210,7 +287,20 @@ func (c *compiler) addFields(obj *node, owner, t reflect.Type, path string) erro
 		if manual != nil {
 			c.used[fk] = true
 		}
-		child, err := c.compile(f.Type, name, t.String()+"."+f.Name, manual)
+		gopath := t.String() + "." + f.Name
+		if types, ok := c.pointerFields[fk]; ok {
+			c.used[fk] = true
+			if manual != nil {
+				return fmt.Errorf("redact: %s: both RegisterFieldEnum and RegisterPointerField", gopath)
+			}
+			child, err := c.pointerNode(f.Type, gopath, types)
+			if err != nil {
+				return err
+			}
+			obj.fields[name] = child
+			continue
+		}
+		child, err := c.compile(f.Type, name, gopath, manual)
 		if err != nil {
 			return err
 		}

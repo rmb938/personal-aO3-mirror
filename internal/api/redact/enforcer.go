@@ -66,9 +66,10 @@ type Result struct {
 	// is empty in Revealed mode.
 	Epoch string
 	// OffEnum lists, once each and in order of first sight, the enum fields (Go field paths,
-	// e.g. "dto.Health.Status") that held a value outside their set (hashed in Hashed mode,
-	// like any string). It is a programming error (a model value missing from its DTO type)
-	// for the caller to log: paths are code, never content.
+	// e.g. "dto.Health.Status") that held a value outside their set, and the pointer fields
+	// that held something other than a pointer into their request types (hashed in Hashed
+	// mode, like any string). It is a programming error (a model value missing from its DTO
+	// type, a pointer built wrong) for the caller to log: paths are code, never content.
 	OffEnum []string
 }
 
@@ -81,7 +82,8 @@ type Enforcer struct {
 }
 
 // NewEnforcer snapshots reg (later registrations don't affect it) and compiles each registered
-// type into a schema. Every RegisterFieldEnum field must exist in a registered type.
+// type into a schema. Every RegisterFieldEnum and RegisterPointerField field must exist in a
+// registered type.
 func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 	if h == nil {
 		return nil, errors.New("redact: NewEnforcer: nil hasher")
@@ -91,7 +93,11 @@ func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 	for fk, set := range reg.fieldEnums {
 		fieldEnums[fk] = maps.Clone(set)
 	}
-	c := newCompiler(fieldEnums)
+	pointerFields := make(map[fieldEnumKey][]reflect.Type, len(reg.pointerFields))
+	for fk, types := range reg.pointerFields {
+		pointerFields[fk] = slices.Clone(types)
+	}
+	c := newCompiler(fieldEnums, pointerFields)
 	for _, t := range reg.roots {
 		n, err := c.compile(t, "", t.String(), nil)
 		if err != nil {
@@ -104,6 +110,11 @@ func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 			return nil, fmt.Errorf("redact: RegisterFieldEnum %s.%s: no such field in a registered type", fk.t, fk.key)
 		}
 	}
+	for fk := range pointerFields {
+		if !c.used[fk] {
+			return nil, fmt.Errorf("redact: RegisterPointerField %s.%s: no such field in a registered type", fk.t, fk.key)
+		}
+	}
 	return e, nil
 }
 
@@ -114,7 +125,8 @@ func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 //   - a value of the wrong JSON kind is a *SchemaError; null is allowed anywhere;
 //   - numbers and booleans pass through;
 //   - in Hashed mode a string passes unhashed only when its own field allows it: a value of
-//     the field's Enum type or RegisterFieldEnum set, or an RFC3339 UTC timestamp or a
+//     the field's Enum type or RegisterFieldEnum set, a JSON Pointer into a RegisterPointerField
+//     field's request types, or an RFC3339 UTC timestamp or a
 //     YYYY-MM-DD date in a field whose key ends in "_at" or "_on" (strings in arrays use the
 //     array field's rule). Two fields sharing a key (two `status` enums) each allow only their
 //     own values. Every other string becomes "h_" + 24 hex.

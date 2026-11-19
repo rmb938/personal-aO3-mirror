@@ -8,7 +8,7 @@ import (
 
 // status is GET /api/v1/status: the daemon, queue and progress overview.
 func (a *API) status(r *http.Request) (any, error) {
-	if _, err := parseQuery(r); err != nil {
+	if err := noParams(r); err != nil {
 		return nil, err
 	}
 	rep, err := a.ctl.Status(r.Context())
