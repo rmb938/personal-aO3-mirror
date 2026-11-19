@@ -24,6 +24,9 @@ var (
 	detailJobState     = problem.OneOf(dto.JobState(""))
 	detailJobKind      = problem.OneOf(dto.JobKind(""))
 
+	// Source add body (POST /api/v1/sources); the body's own details are in request.
+	detailConfirmAdminOnly = problem.NewDetail("only the admin socket accepts confirm; a large source added here waits for `source confirm`")
+
 	// Other problem types.
 	detailMalformedQuery   = problem.NewDetail("the query string is malformed")
 	detailTooManyParams    = problem.NewDetail("at most " + itoa(maxQueryParams) + " query parameters are allowed")

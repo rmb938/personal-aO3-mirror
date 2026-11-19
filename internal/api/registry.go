@@ -4,6 +4,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/request"
 )
 
 // responseTypes are every DTO the API returns. Each route's response type must be listed, or
@@ -16,15 +17,17 @@ var responseTypes = []any{
 	dto.List[dto.Source]{},
 	dto.Source{},
 	dto.SourceAdd{},
+	dto.SourceAddResult{},
+	dto.SourceAddQueued{},
 	dto.List[dto.Job]{},
 	dto.Job{},
 	dto.Status{},
 }
 
-// requestTypes are every request body DTO. A validation error's errors[].pointer passes only
+// requestTypes are every request body type. A validation error's errors[].pointer passes only
 // when it names a member of one of them (problem.Validation.Member builds it from their json
 // keys).
-var requestTypes = []any{}
+var requestTypes = request.Types()
 
 // newEnforcer builds the response enforcer from the DTO types. version is the running build
 // version, registered as the only dto.Version.Version value (it is known only at runtime).

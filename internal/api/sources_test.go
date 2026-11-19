@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
 // getJSON GETs target, requires status 200 and decodes the body into a T.
@@ -130,6 +135,149 @@ func TestGetSourceAdd(t *testing.T) {
 		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type)
 	}
 	requireParamProblem(t, get(h, "/api/v1/source-adds/x"), dto.ParamJobID, "bad job id")
+}
+
+// postJSON POSTs body as application/json to target.
+func postJSON(h http.Handler, target, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", contentTypeJSON)
+	return do(h, req)
+}
+
+func TestAddSource(t *testing.T) {
+	a, _ := newTestAPI(t, nil)
+	h := a.Public()
+	const tagURL = `{"url":"https://archiveofourown.org/tags/Fixture%20Tag/works","order":"hits_desc","priority":5,"poll_interval":"1h"}`
+
+	w := postJSON(h, "/api/v1/sources", tagURL)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	assert.Equal(t, "/api/v1/source-adds/5", w.Header().Get("Location"))
+	assert.JSONEq(t, `{"job_id":5,"created":true}`, w.Body.String())
+	add := getJSON[dto.SourceAdd](t, h, "/api/v1/source-adds/5")
+	assert.Equal(t, dto.JobState("queued"), add.State)
+
+	w = postJSON(h, "/api/v1/sources", `{"url":"/tags/Fixture%20Tag/works"}`)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"job_id":5,"created":false}`, w.Body.String(), "already queued: the same job")
+
+	// A single work is added at once.
+	w = postJSON(h, "/api/v1/sources", `{"url":"https://archiveofourown.org/works/777"}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	assert.Equal(t, "/api/v1/sources/3", w.Header().Get("Location"))
+	var res dto.SourceAddResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	assert.Equal(t, int64(3), res.Source.ID)
+	assert.Equal(t, dto.SourceKind("work"), res.Source.Kind)
+	assert.Equal(t, int64(777), res.Source.TargetID)
+	assert.True(t, isHash(res.Source.Target), "target hashed")
+	assert.Equal(t, 1, res.Estimate.WorkFetches)
+
+	// An existing source: 409 with the source's Location.
+	w = postJSON(h, "/api/v1/sources", `{"url":"https://archiveofourown.org/series/12345"}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeAlreadyExists, p.Type)
+	assert.Equal(t, detailSourceExists.Message(), p.Detail)
+	assert.Equal(t, "/api/v1/sources/2", w.Header().Get("Location"))
+
+	// A rejected URL is a validation error at /url with the reason's own hint.
+	for u, reason := range map[string]ao3url.Reason{
+		"https://example.com/tags/x/works": ao3url.ReasonNotAO3,
+		"/works/search?q=x":                ao3url.ReasonWorkSearch,
+		"/chapters/5":                      ao3url.ReasonChapter,
+		"not a url":                        ao3url.ReasonNotAO3,
+		"/tags/x/bookmarks":                ao3url.ReasonTagPage,
+	} {
+		w := postJSON(h, "/api/v1/sources", `{"url":"`+u+`"}`)
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code, u)
+		p := decodeProblem(t, w)
+		assert.Equal(t, dto.TypeValidation, p.Type, u)
+		assert.Equal(t, []dto.ProblemError{{Detail: reason.Hint(), Pointer: "/url"}}, p.Errors, u)
+	}
+}
+
+// A rejected URL's problem and logs never repeat the URL.
+func TestAddSourceRejectedURLIsContentFree(t *testing.T) {
+	a, logs := newTestAPI(t, nil)
+	for _, u := range []string{"/tags/" + sentinel + "%zz/works", "https://" + sentinel + ".example/x", "/tags/" + sentinel + "/bookmarks"} {
+		w := postJSON(a.Public(), "/api/v1/sources", `{"url":"`+u+`"}`)
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code, u)
+		assertNoSentinel(t, w, logs)
+	}
+}
+
+// memberErrors POSTs body and returns the validation error's items as pointer → detail.
+func memberErrors(t *testing.T, h http.Handler, body string) map[string]string {
+	t.Helper()
+	w := postJSON(h, "/api/v1/sources", body)
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, body)
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeValidation, p.Type, body)
+	out := map[string]string{}
+	for _, e := range p.Errors {
+		assert.Empty(t, e.Parameter, body)
+		out[e.Pointer] = e.Detail
+	}
+	return out
+}
+
+// testDetailOrder is request's detail for a bad order (the same catalogue message).
+var testDetailOrder = problem.OneOf(dto.Order(""))
+
+// The body's own rules are tested in request; this checks the handler wiring: every invalid
+// member (and the listener's confirm rule) comes back at once, by pointer, unhashed.
+func TestAddSourceValidation(t *testing.T) {
+	a, _ := newTestAPI(t, nil)
+	h := a.Public()
+	got := memberErrors(t, h, `{"url":"/works/search","order":"x","priority":1001,"poll_interval":"1s","confirm":true}`)
+	assert.Equal(t, []string{"/confirm", "/order", "/poll_interval", "/priority", "/url"}, slices.Sorted(maps.Keys(got)))
+	assert.Equal(t, ao3url.ReasonWorkSearch.Hint(), got["/url"])
+	assert.Equal(t, detailConfirmAdminOnly.Message(), got["/confirm"])
+	for ptr, d := range got {
+		assert.False(t, isHash(d), "%s: a catalogue detail passes unhashed", ptr)
+	}
+
+	for _, body := range []string{`{"url":"/tags/a/works","extra":1}`, `{"url":"/tags/a/works"}{}`, `{"url":1}`,
+		`{"url":"/tags/a/works","poll_interval":3600}`, `{"url":"/tags/a/works","poll_interval":"soon"}`} {
+		w := postJSON(h, "/api/v1/sources", body)
+		require.Equal(t, http.StatusBadRequest, w.Code, body)
+		assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type, body)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources", strings.NewReader(`{"url":"/tags/a/works"}`))
+	w := do(h, req)
+	require.Equal(t, http.StatusUnsupportedMediaType, w.Code, "no content type")
+
+	// Query and body errors are listed together.
+	w = postJSON(h, "/api/v1/sources?page=1", `{"url":"/tags/a/works","order":"x"}`)
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, []dto.ProblemError{
+		{Detail: detailUnknownParam.Message(), Parameter: dto.ParamPage},
+		{Detail: testDetailOrder.Message(), Pointer: "/order"},
+	}, decodeProblem(t, w).Errors)
+
+	// The admin socket accepts confirm.
+	w = postJSON(a.Admin(), "/api/v1/sources", `{"url":"/tags/a/works","confirm":true}`)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+}
+
+func TestAddSourceRateLimit(t *testing.T) {
+	a, _ := newTestAPI(t, func(o *Options) { o.SourceAddPerHour = 1 })
+	w := postJSON(a.Public(), "/api/v1/sources", `{"url":"/tags/a/works"}`)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	w = postJSON(a.Public(), "/api/v1/sources", `{"url":"/tags/b/works"}`)
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
+	assert.Equal(t, dto.TypeRateLimited, decodeProblem(t, w).Type)
+	assert.NotEmpty(t, w.Header().Get("Retry-After"))
+	assert.Equal(t, http.StatusOK, get(a.Public(), "/api/v1/sources").Code, "other routes keep the general limit")
+
+	// The admin socket's own bucket allows adminRateFactor times as many.
+	for i := range adminRateFactor {
+		w := postJSON(a.Admin(), "/api/v1/sources", `{"url":"/tags/c`+strconv.Itoa(i)+`/works"}`)
+		require.Equal(t, http.StatusAccepted, w.Code, i)
+	}
+	w = postJSON(a.Admin(), "/api/v1/sources", `{"url":"/tags/d/works"}`)
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
 }
 
 // The access log names the numeric path ID, never the response's content.

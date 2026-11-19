@@ -42,8 +42,9 @@ with a keyed hash by a mandatory response enforcer, so a handler bug cannot leak
 cmd/ao3mirror/serve.go       serve command: flags, listeners, graceful shutdown
 internal/api/                server, router, middleware, handlers (calls controllers only)
 internal/api/redact/         hasher + response enforcer (no HTTP deps; fuzzed)
-internal/api/dto/            response/request types, registered with the enforcer
-internal/api/convert/        model/controller results -> DTOs (from stage 3a-4)
+internal/api/dto/            response types, registered with the enforcer
+internal/api/request/        request body types with their Validate methods (from stage 4)
+internal/api/convert/        model/controller results -> DTOs, requests -> options (3a-4)
 internal/api/problem/        problem Error, detail catalogue, Validation collector (from 3g)
 internal/apiclient/          typed client over the admin socket, used by the CLI
 docs/api/openapi.yaml        hand-written OpenAPI 3.1; a test checks that it matches the route table
@@ -135,7 +136,7 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    `detail` messages are a catalogue (`problem.NewDetail`, package-level vars only),
    registered with the enforcer as the only values of the two `detail` fields, and never include
    client input. `parameter` is a `dto.ParamName` (query and path names only); `pointer` must
-   name a member of a registered request type (`api.requestTypes`). Job `last_error`
+   name a member of a registered request type (`request.Types()`). Job `last_error`
    is split into `last_error_code` (enum) and `last_error_detail` (hashed).
 6. **Free-text inputs** (`q`, `name`) need reveal. In hashed mode they return 400
    `reveal-required` (the oracle rule). Structured inputs (IDs, enums, numeric ranges, dates) are
@@ -676,16 +677,44 @@ Status: tick when the PR merges.
     handlers return `q.Err()`. `problemFor` (store and controller errors → problems) stays
     in `api`.
   - No API change.
-- [ ] **4. Add source (public)** (draft PR #32, to be rebased onto 3f/3g). Request types move
-  to a new `internal/api/request` package with `Validate` methods and a `request.Request`
-  interface that `decodeJSON` requires; `poll_interval` is a `dto.Duration`; `Location` paths
-  come from a generic `pathFor(route, ids...)` over the router's own route constants.
+- [x] **4. Add source (public)**
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.
   - Uses `QueueSourceAdd`. `confirm` is **never** accepted publicly: large sources wait for
     `source confirm`.
   - URL ≤ 2048 bytes, validated by `ao3url.Parse`.
   - Has its own strict rate limit.
+  - As built:
+    - New package `internal/api/request` (imports `dto`, `problem`, `ao3url` and the standard
+      library; never `controllers`/`store`/`model`): the `Request` interface
+      (`Validate(*problem.Validation)`, pointer receivers) and `Types()`, which
+      `api.requestTypes` is, so every listed type's pointers pass the enforcer (a test checks
+      each implements `Request`). `decodeJSON(r, dst request.Request, v)` decodes strictly and
+      then calls `dst.Validate(v)`, so a handler can't skip validation; an unreadable body
+      (415/413/400) is returned at once, before any parameter error. `convert.AddSourceOptions`
+      maps the validated body to `controllers.AddSourceOptions`.
+    - Body `request.SourceAdd`: `url`, `order` (`dto.Order`), `priority` (-1000..1000),
+      `poll_interval` (a `dto.Duration`; absent = config default, else 10m..720h) and
+      `confirm`. `Validate` records every invalid member, so query and body errors come back in
+      one 422. The url must be 1..2048 bytes, pass `problem.ValidText` and parse with
+      `ao3url.Parse`; a rejection gets its reason's detail (`problem.URLDetail`) at `/url`,
+      which restores the CLI's hints. `confirm: true` is a validation error at `/confirm` on the
+      public listener (checked by the handler, as it depends on the listener) and accepted on
+      the admin socket, so stage 6's `source add --confirm` needs no new route.
+    - Route patterns are constants in `api/routes.go`; `pathFor(route, ids...)` fills their
+      `{param}` segments for `Location` (panics on a count mismatch; a test matches the paths
+      against the router).
+    - 202 body `dto.SourceAddQueued{job_id, created}`; `created` is false when the same add was
+      already queued (the first add's options win). 201 body `dto.SourceAddResult` (the
+      `result` of `/source-adds`, now a shared schema) with `Location: /api/v1/sources/{id}`.
+    - A duplicate source is 409 `already-exists` with the existing source as `Location` (set by
+      `respondError` from `controllers.ExistsError`), so the CLI can still print its id.
+    - Rate limit: `api.rate.source_add_per_hour` (`Options.SourceAddPerHour`, ×10 on the
+      socket), an hourly httprate limiter on the route only, on top of the general one.
+    - Leak test samples gain a `body`; the POST sample's url holds a sentinel tag name, and a
+      hostile body route request expects 400 `invalid-body`. Rejected sentinel URLs are checked
+      absent from the problem and logs. The test controllers get `config.Default()`'s sources
+      options and interval.
 - [ ] **5. Admin endpoints (socket only)**
   - `POST /sources/{id}/confirm|pause|resume|cancel|refresh` (refresh body `{full}`),
     `PATCH /sources/{id}` (settings), `DELETE /sources/{id}`.

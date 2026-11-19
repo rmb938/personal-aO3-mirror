@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -36,7 +37,9 @@ func newTestControllers(t *testing.T, log *slog.Logger) *controllers.Controllers
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	seed(t, st)
-	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime }})
+	cfg := config.Default()
+	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime },
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval})
 }
 
 // seed fills st with the rows the route samples read.
