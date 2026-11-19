@@ -1,6 +1,9 @@
 package redact
 
 import (
+	"maps"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -39,22 +42,37 @@ type regOuter struct {
 	private   string
 }
 
-func TestRegisterTypesCollectsKeys(t *testing.T) {
+func newEnforcerFor(t *testing.T, vals ...any) *Enforcer {
+	t.Helper()
+	h, err := NewHasher(0, nil)
+	require.NoError(t, err)
 	r := NewRegistry()
-	require.NoError(t, r.RegisterTypes(regOuter{private: "x"}, &regInner{}, []regBase{}))
-	want := []string{
-		"id", "hidden_field", "title", "inner", "tag_id", "tag_name", "ptrs", "grid",
-		"updated_at", "node", "node_name", "children",
-	}
-	assert.ElementsMatch(t, want, keysOf(r))
+	require.NoError(t, r.RegisterTypes(vals...))
+	e, err := NewEnforcer(r, h)
+	require.NoError(t, err)
+	return e
 }
 
-func keysOf(r *Registry) []string {
-	var ks []string
-	for k := range r.keys {
-		ks = append(ks, k)
-	}
-	return ks
+func fieldsOf(n *node) []string {
+	return slices.Sorted(maps.Keys(n.fields))
+}
+
+func TestRegisterTypesSchemas(t *testing.T) {
+	e := newEnforcerFor(t, regOuter{private: "x"}, &regInner{}, []regBase{})
+	outer := e.schemas[reflect.TypeFor[regOuter]()]
+	require.NotNil(t, outer)
+	assert.Equal(t, []string{"grid", "hidden_field", "id", "inner", "node", "ptrs", "title", "updated_at"},
+		fieldsOf(outer), "embedded fields promoted, - and unexported skipped")
+	assert.Equal(t, []string{"tag_id", "tag_name"}, fieldsOf(outer.fields["inner"]))
+	assert.Same(t, outer.fields["inner"], outer.fields["ptrs"].elem, "struct nodes are shared per type")
+	node := outer.fields["node"]
+	assert.Same(t, node, node.fields["children"].elem, "recursive type is a cycle")
+	assert.Equal(t, kindNumber, outer.fields["grid"].elem.elem.kind)
+	assert.Equal(t, kindOpaque, outer.fields["updated_at"].kind)
+	assert.Equal(t, ruleTimestamp, outer.fields["updated_at"].rule)
+
+	assert.NotNil(t, e.schemas[reflect.TypeFor[regInner]()], "pointer roots unwrapped")
+	assert.Equal(t, kindArray, e.schemas[reflect.TypeFor[[]regBase]()].kind)
 }
 
 func TestRegisterTypesRejects(t *testing.T) {
@@ -84,11 +102,35 @@ func TestRegisterTypesRejects(t *testing.T) {
 	type embeddedScalar struct {
 		Name
 	}
+	type withBytes struct {
+		B []byte `json:"b"`
+	}
+	type withByteArray struct {
+		B [4]byte `json:"b"`
+	}
+	type withStringOpt struct {
+		N int `json:"n,string"`
+	}
+	type withFormat struct {
+		T time.Time `json:"t,format:RFC1123"`
+	}
+	type dupInner struct {
+		ID int `json:"id"`
+	}
+	type withDup struct {
+		dupInner
+		ID int `json:"id"`
+	}
+	type withComplex struct {
+		C complex64 `json:"c"`
+	}
 	for name, v := range map[string]any{
 		"no tag": noTag{}, "empty name": emptyTag{}, "camelCase": camel{}, "dash key": dash{},
 		"map": withMap{}, "interface": withAny{}, "nested func": nestedBad{},
 		"embedded scalar without tag": embeddedScalar{}, "top-level map": map[string]int{},
-		"nil": nil,
+		"nil": nil, "byte slice": withBytes{}, "byte array": withByteArray{},
+		"string option": withStringOpt{}, "format option": withFormat{},
+		"duplicate key via embedding": withDup{}, "complex": withComplex{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Error(t, NewRegistry().RegisterTypes(v))
@@ -98,16 +140,6 @@ func TestRegisterTypesRejects(t *testing.T) {
 
 // Name is an exported non-struct type for the embedded-scalar case.
 type Name string
-
-func TestRegisterEnum(t *testing.T) {
-	r := NewRegistry()
-	require.NoError(t, r.RegisterEnum("state", "queued"))
-	require.NoError(t, r.RegisterEnum("state", "running"), "adding values is allowed")
-	assert.Len(t, r.enums["state"], 2)
-	require.Error(t, r.RegisterEnum("State", "x"))
-	require.Error(t, r.RegisterEnum("kind"))
-	require.Error(t, r.RegisterEnum("kind", ""))
-}
 
 type srcState string
 
@@ -134,55 +166,45 @@ type selfMarshal string
 func (selfMarshal) EnumValues() []string           { return []string{"a"} }
 func (s selfMarshal) MarshalText() ([]byte, error) { return []byte("x" + s), nil }
 
-func TestRegisterTypedEnums(t *testing.T) {
+// Enum fields sharing a key each keep their own set, and may share it with a plain field.
+func TestRegisterTypedEnumsPerField(t *testing.T) {
 	type source struct {
 		State srcState `json:"state"`
 	}
 	type job struct {
 		State  *jobState  `json:"state"`
 		States []srcState `json:"states"`
-		Status int        `json:"status"` // a non-string field may share an enum key
+		Status int        `json:"status"`
 	}
-	type health struct {
-		Status srcState `json:"status"`
+	type note struct {
+		State string `json:"state"` // free text under an enum key elsewhere
 	}
-	r := NewRegistry()
-	require.NoError(t, r.RegisterTypes(source{}, job{}, health{}))
-	assert.ElementsMatch(t, []string{"active", "paused", "queued"}, setOf(r.enums["state"]), "union across types")
-	assert.ElementsMatch(t, []string{"active", "paused"}, setOf(r.enums["states"]), "slice element type")
-	assert.ElementsMatch(t, []string{"active", "paused"}, setOf(r.enums["status"]))
+	type all struct {
+		Source source `json:"source"`
+		Job    job    `json:"job"`
+		Note   note   `json:"note"`
+	}
+	e := newEnforcerFor(t, all{})
+	typ := reflect.TypeFor[all]()
+	in := `{"source":{"state":"queued"},"job":{"state":"queued","states":["active","SENTINEL"],"status":1},` +
+		`"note":{"state":"active"}}`
+	res, err := e.Enforce(Hashed, typ, []byte(in))
+	require.NoError(t, err)
+	body := string(res.Body)
+	assert.Contains(t, body, `"job":{"state":"queued"`, "job state's own value")
+	assert.NotContains(t, body, `"source":{"state":"queued"}`, "job value in source state hashed")
+	assert.Contains(t, body, `["active",`)
+	assert.NotContains(t, body, "SENTINEL")
+	assert.Contains(t, body, `"note":{"state":"h_`, "plain field hashed")
+	assert.Equal(t, []string{"redact.source.State", "redact.job.States"}, res.OffEnum)
 
-	h, err := NewHasher(0, nil)
+	res, err = e.Enforce(Hashed, typ, []byte(`{"source":{"state":"paused"},"job":{"state":"paused"}}`))
 	require.NoError(t, err)
-	e, err := NewEnforcer(r, h)
-	require.NoError(t, err)
-	res, err := e.Enforce(Hashed, []byte(`{"state":"queued","states":["active","SENTINEL"],"status":"bogus"}`))
-	require.NoError(t, err)
-	assert.Contains(t, string(res.Body), `"state":"queued"`)
-	assert.Contains(t, string(res.Body), `"active"`)
-	assert.NotContains(t, string(res.Body), "SENTINEL")
-	assert.NotContains(t, string(res.Body), "bogus")
-	assert.Equal(t, []string{"states", "status"}, res.OffEnum, "off-set keys, once each")
-
-	res, err = e.Enforce(Revealed, []byte(`{"state":"bogus","states":["bogus"]}`))
-	require.NoError(t, err)
-	assert.Equal(t, []string{"state", "states"}, res.OffEnum, "checked in revealed mode too")
-
-	res, err = e.Enforce(Hashed, []byte(`{"state":"active"}`))
-	require.NoError(t, err)
+	assert.JSONEq(t, `{"source":{"state":"paused"},"job":{"state":"paused"}}`, string(res.Body))
 	assert.Empty(t, res.OffEnum)
 }
 
 func TestRegisterTypedEnumsRejects(t *testing.T) {
-	type typed struct {
-		State srcState `json:"state"`
-	}
-	type plain struct {
-		State string `json:"state"`
-	}
-	type plainSlice struct {
-		State []string `json:"state"`
-	}
 	type withNoVals struct {
 		V noVals `json:"v"`
 	}
@@ -195,77 +217,33 @@ func TestRegisterTypedEnumsRejects(t *testing.T) {
 	type withSelfMarshal struct {
 		V selfMarshal `json:"v"`
 	}
-	type both struct {
-		A typed `json:"a"`
-		B plain `json:"b"`
-	}
-	for name, vals := range map[string][]any{
-		"typed then plain":     {typed{}, plain{}},
-		"plain then typed":     {plain{}, typed{}},
-		"plain slice vs typed": {typed{}, plainSlice{}},
-		"nested in one type":   {both{}},
-		"no values":            {withNoVals{}},
-		"empty value":          {withEmptyVal{}},
-		"non-string":           {withIntEnum{}},
-		"self-marshals":        {withSelfMarshal{}},
+	for name, v := range map[string]any{
+		"no values": withNoVals{}, "empty value": withEmptyVal{}, "non-string": withIntEnum{},
+		"self-marshals": withSelfMarshal{},
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.Error(t, NewRegistry().RegisterTypes(vals...))
+			assert.Error(t, NewRegistry().RegisterTypes(v))
 		})
 	}
-
-	t.Run("RegisterEnum after typed", func(t *testing.T) {
-		r := NewRegistry()
-		require.NoError(t, r.RegisterTypes(typed{}))
-		assert.Error(t, r.RegisterEnum("state", "x"))
-	})
-	t.Run("typed after RegisterEnum", func(t *testing.T) {
-		r := NewRegistry()
-		require.NoError(t, r.RegisterEnum("state", "x"))
-		assert.Error(t, r.RegisterTypes(typed{}))
-	})
-	t.Run("RegisterEnum on a plain key is the runtime-value case", func(t *testing.T) {
-		r := NewRegistry()
-		require.NoError(t, r.RegisterTypes(plain{}))
-		assert.NoError(t, r.RegisterEnum("state", "x"))
-	})
 }
 
-func setOf(m map[string]struct{}) []string {
-	var s []string
-	for k := range m {
-		s = append(s, k)
-	}
-	return s
-}
-
-func TestNewEnforcerChecksEnumKeysAndSnapshots(t *testing.T) {
+func TestNewEnforcerSnapshots(t *testing.T) {
 	h, err := NewHasher(0, nil)
 	require.NoError(t, err)
-
-	r := NewRegistry()
-	require.NoError(t, r.RegisterEnum("state", "queued"))
-	_, err = NewEnforcer(r, h)
-	require.Error(t, err, "enum key must be a DTO key")
-
 	type dto struct {
 		State string `json:"state"`
 	}
+	type later struct {
+		Extra int `json:"extra"`
+	}
+	r := NewRegistry()
 	require.NoError(t, r.RegisterTypes(dto{}))
 	e, err := NewEnforcer(r, h)
 	require.NoError(t, err)
 
-	// Later registrations don't reach the enforcer.
-	require.NoError(t, r.RegisterEnum("state", "running"))
-	type later struct {
-		Extra int `json:"extra"`
-	}
 	require.NoError(t, r.RegisterTypes(later{}))
-	res, err := e.Enforce(Hashed, []byte(`{"state":"running"}`))
-	require.NoError(t, err)
-	assert.NotContains(t, string(res.Body), "running")
-	_, err = e.Enforce(Hashed, []byte(`{"extra":1}`))
-	require.Error(t, err)
+	_, err = e.Enforce(Hashed, reflect.TypeFor[later](), []byte(`{"extra":1}`))
+	require.ErrorContains(t, err, "not registered", "later registrations don't reach the enforcer")
 
 	_, err = NewEnforcer(r, nil)
 	require.Error(t, err)

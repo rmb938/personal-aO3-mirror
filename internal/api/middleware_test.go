@@ -128,7 +128,9 @@ func TestAccessLogIsContentFree(t *testing.T) {
 // numeric path IDs, flagged prerouted. An unmatched path logs no route.
 func TestAccessLogPreroutedRoute(t *testing.T) {
 	a, logs := newTestAPI(t, func(o *Options) { o.GeneralPerMin = 1 })
-	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) { return nil, nil }))
+	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) {
+		return dto.Health{Status: dto.HealthOK}, nil
+	}))
 
 	require.Equal(t, http.StatusOK, get(a.public, "/items/1/parts/2").Code)
 	for _, target := range []string{"/items/42/parts/" + sentinel + "part", "/" + sentinel + "nope"} {

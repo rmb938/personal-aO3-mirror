@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,7 +94,7 @@ func TestProblemsPassEnforcerUnhashed(t *testing.T) {
 		for _, f := range dto.ParamName("").EnumValues() {
 			body, err := json.Marshal(errField(dto.ProblemCode(c), f).problem())
 			require.NoError(t, err)
-			res, err := enf.Enforce(redact.Hashed, body)
+			res, err := enf.Enforce(redact.Hashed, reflect.TypeFor[dto.Problem](), body)
 			require.NoError(t, err)
 			assert.JSONEq(t, string(body), string(res.Body))
 		}
