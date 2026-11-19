@@ -735,10 +735,21 @@ Status: tick when the PR merges.
     - Leak test samples gain `fresh` (each request goes to a new API over a freshly seeded
       store, since the route changes state) and `before` (POSTs sent first, e.g. a pause
       before a resume).
-  - [ ] **5b. Refresh + settings:** `POST /sources/{id}/refresh` (body `{full}`) and
+  - [x] **5b. Refresh + settings:** `POST /sources/{id}/refresh` (body `{full}`) and
     `PATCH /sources/{id}` (body `{poll_interval?, priority?}`), with request types. Refresh of a
     source in the wrong state must become 409: `refreshSource` returns a plain error today
-    (500), so wrap `store.ErrStateConflict` there.
+    (500), so wrap `store.ErrStateConflict` there. As built:
+    - `refreshSource` wraps `store.ErrStateConflict` (409 `state-conflict`); the CLI message is
+      unchanged apart from the prefix.
+    - Refresh: body `request.SourceRefresh{full}` (required, `{}` is a plain refresh) → 200
+      `dto.SourceRefreshed{poll_now, requeued_works, rescan_started, unblocked_parser}`.
+    - Settings: body `request.SourceSettings{poll_interval, priority}` → 204. An absent member
+      keeps its value (`priority` is a `*int`, so `0` sets it and `null` keeps it), and `{}` is
+      a no-op 204 (the CLI keeps its own "give --poll and/or --priority" check). Not
+      `application/merge-patch+json`: null does not remove anything here.
+    - The priority and poll_interval bounds and details are shared with `SourceAdd`
+      (`request/source.go`); the poll_interval detail no longer says "(the default)".
+    - On the public listener refresh is 404 and `PATCH /sources/{id}` 405 (`Allow: GET`).
   - [ ] **5c. Debug:** `GET /debug/jobs/{id}`, `/debug/works/{id}` (DTOs for job events,
     request rows and the work diagnostics).
 - [ ] **6. `internal/apiclient` + CLI conversion**

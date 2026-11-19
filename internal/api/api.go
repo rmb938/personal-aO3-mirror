@@ -145,6 +145,8 @@ func (a *API) router(admin bool) *chi.Mux {
 		r.Post(routeSourcePause, a.handle(a.sourceAction(a.ctl.PauseSource)))
 		r.Post(routeSourceResume, a.handle(a.sourceAction(a.ctl.ResumeSource)))
 		r.Post(routeSourceCancel, a.handle(a.cancelSource))
+		r.Post(routeSourceRefresh, a.handle(a.refreshSource))
+		r.Patch(routeSource, a.handle(a.setSourceSettings))
 		r.Delete(routeSource, a.handle(a.sourceAction(a.ctl.RemoveSource)))
 	}
 	return r

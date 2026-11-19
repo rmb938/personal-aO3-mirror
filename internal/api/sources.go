@@ -113,3 +113,48 @@ func (a *API) cancelSource(r *http.Request) (any, error) {
 	}
 	return convert.SourceCancelled(n), nil
 }
+
+// refreshSource is POST /api/v1/sources/{id}/refresh (admin socket), body {full?}: the
+// source's next poll is due now and its failed work fetches are queued again; full also
+// re-walks the listing. Only active and done_backfill sources can be refreshed (else 409).
+func (a *API) refreshSource(r *http.Request) (any, error) {
+	q, err := parseParams(r)
+	if err != nil {
+		return nil, err
+	}
+	id := q.pathID(dto.ParamID)
+	var req request.SourceRefresh
+	if err := decodeJSON(r, &req, &q.Validation); err != nil {
+		return nil, err
+	}
+	if err := q.Err(); err != nil {
+		return nil, err
+	}
+	res, err := a.ctl.RefreshSource(r.Context(), id, req.Full)
+	if err != nil {
+		return nil, err
+	}
+	return convert.SourceRefreshed(res), nil
+}
+
+// setSourceSettings is PATCH /api/v1/sources/{id} (admin socket), body {poll_interval?,
+// priority?}: an absent member keeps its value. 204; a client that wants the new settings
+// GETs the source.
+func (a *API) setSourceSettings(r *http.Request) (any, error) {
+	q, err := parseParams(r)
+	if err != nil {
+		return nil, err
+	}
+	id := q.pathID(dto.ParamID)
+	var req request.SourceSettings
+	if err := decodeJSON(r, &req, &q.Validation); err != nil {
+		return nil, err
+	}
+	if err := q.Err(); err != nil {
+		return nil, err
+	}
+	if err := a.ctl.SetSourceSettings(r.Context(), id, req.PollInterval.Duration(), req.Priority); err != nil {
+		return nil, err
+	}
+	return noContent(), nil
+}

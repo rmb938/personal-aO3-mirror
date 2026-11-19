@@ -139,6 +139,20 @@ type SourceCancelled struct {
 	DroppedJobs int64 `json:"dropped_jobs"`
 }
 
+// SourceRefreshed is what a refresh scheduled (POST /api/v1/sources/{id}/refresh, admin
+// socket). The running daemon picks it up within seconds.
+type SourceRefreshed struct {
+	// PollNow: the next update poll is due now.
+	PollNow bool `json:"poll_now"`
+	// RequeuedWorks is the number of the source's failed work fetches queued again.
+	RequeuedWorks int `json:"requeued_works"`
+	// RescanStarted: a full refresh of a done_backfill source started a re-walk of the whole
+	// listing (the source is active again).
+	RescanStarted bool `json:"rescan_started"`
+	// UnblockedParser: a full refresh cleared the backfill's parse-failure block.
+	UnblockedParser bool `json:"unblocked_parser"`
+}
+
 // SourceAddQueued is a queued source add (POST /api/v1/sources, 202).
 type SourceAddQueued struct {
 	JobID int64 `json:"job_id"`

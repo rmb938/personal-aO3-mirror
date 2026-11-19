@@ -233,7 +233,11 @@ var routeSamples = map[string]routeSample{
 	"POST /api/v1/sources/{id}/resume": {target: "/api/v1/sources/1/resume", status: http.StatusNoContent, fresh: true,
 		before: []string{"/api/v1/sources/1/pause"}},
 	"POST /api/v1/sources/{id}/cancel": {target: "/api/v1/sources/1/cancel", status: http.StatusOK, fresh: true},
-	"DELETE /api/v1/sources/{id}":      {target: "/api/v1/sources/1", status: http.StatusNoContent, fresh: true},
+	"POST /api/v1/sources/{id}/refresh": {target: "/api/v1/sources/1/refresh", status: http.StatusOK, fresh: true,
+		body: `{"full":true}`},
+	"PATCH /api/v1/sources/{id}": {target: "/api/v1/sources/1", status: http.StatusNoContent, fresh: true,
+		body: `{"poll_interval":"2h","priority":5}`},
+	"DELETE /api/v1/sources/{id}": {target: "/api/v1/sources/1", status: http.StatusNoContent, fresh: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.

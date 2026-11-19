@@ -98,6 +98,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Source" }
         default: { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: setSourceSettings
+      summary: Change a source's poll interval and/or priority.
+      description: |
+        An absent member keeps its current value, so `{}` changes nothing. A shorter poll
+        interval takes effect at once (the next poll moves earlier if needed). GET the source
+        for the new settings.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceSettingsRequest" }
+      responses:
+        "204": { description: The settings were changed. }
+        default: { $ref: "#/components/responses/Problem" }
     delete:
       operationId: removeSource
       summary: Remove a source and its memberships; mirrored works are kept.
@@ -155,6 +173,30 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SourceCancelled" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{id}/refresh:
+    post:
+      operationId: refreshSource
+      summary: Make a source catch up now instead of waiting.
+      description: |
+        Its next update poll is due now and its failed work fetches are queued again. With
+        `full`, the whole listing is re-walked (a rescan) and a parse-failure block is cleared.
+        Only active and done_backfill sources can be refreshed; any other state is 409
+        `state-conflict`. The running daemon picks the change up within seconds.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceRefreshRequest" }
+      responses:
+        "200":
+          description: What the refresh scheduled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceRefreshed" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/source-adds/{job_id}:
     get:
@@ -407,6 +449,34 @@ components:
       additionalProperties: false
       properties:
         dropped_jobs: { type: integer, minimum: 0, description: "How many of the source's queued jobs were cancelled." }
+    SourceRefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        full: { type: boolean, default: false, description: "Re-walk the whole listing now (rescan) and clear a parse-failure block." }
+    SourceRefreshed:
+      type: object
+      required: [poll_now, requeued_works, rescan_started, unblocked_parser]
+      additionalProperties: false
+      properties:
+        poll_now: { type: boolean, description: "The next update poll is due now." }
+        requeued_works: { type: integer, minimum: 0, description: "How many of the source's failed work fetches were queued again." }
+        rescan_started: { type: boolean, description: "A full refresh of a done_backfill source started a re-walk (the source is active again)." }
+        unblocked_parser: { type: boolean, description: "A full refresh cleared the backfill's parse-failure block." }
+    SourceSettingsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        poll_interval:
+          allOf: [{ $ref: "#/components/schemas/Duration" }]
+          description: >-
+            Update poll interval, from 10m to 720h (30 days); absent (or zero) keeps the current
+            one. Any Go duration string is accepted (`6h`, `90m`).
+        priority:
+          type: [integer, "null"]
+          minimum: -1000
+          maximum: 1000
+          description: Priority within a scheduling class (higher first); absent or null keeps the current one.
     Estimate:
       type: object
       required: [total, pages, listing_requests, work_fetches, requests, duration, disk_bytes, windowed]
