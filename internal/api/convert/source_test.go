@@ -28,7 +28,7 @@ func TestSource(t *testing.T) {
 	assert.Equal(t, dto.Source{
 		ID: 4, Kind: "tag", Target: "fixture tag",
 		Filters: []dto.Filter{{Name: "a", Values: []string{"x"}}, {Name: "b", Values: []string{"2", "1"}}},
-		Path:    "/tags/x/works", State: "active", Order: "kudos_desc", PollIntervalS: 5400, Priority: 2,
+		Path:    "/tags/x/works", State: "active", Order: "kudos_desc", PollInterval: dto.Duration(90 * time.Minute), Priority: 2,
 		TotalWorks: &ten, EstRequests: nil, MemberWorks: 5, FetchedWorks: 3,
 		Backfill: &dto.Backfill{NextPage: 7, Order: "kudos_desc", WindowStartOn: "2020-01-01", WindowEndOn: "2020-12-31",
 			Rescan: true, RescanStartedAt: time.Unix(1700000000, 0).UTC(), BlockedParser: 3,

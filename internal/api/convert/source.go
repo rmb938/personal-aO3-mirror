@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
@@ -28,7 +27,7 @@ func Source(s model.Source) dto.Source {
 		Path:           s.Path,
 		State:          dto.SourceState(s.State),
 		Order:          dto.Order(s.BackfillOrder),
-		PollIntervalS:  int64(s.PollInterval / time.Second),
+		PollInterval:   dto.Duration(s.PollInterval),
 		Priority:       s.Priority,
 		TotalWorks:     known(s.TotalWorks),
 		EstRequests:    known(s.EstRequests),

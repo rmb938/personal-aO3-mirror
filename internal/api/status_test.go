@@ -21,7 +21,7 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, dto.DaemonPhase("running"), d.Phase)
 	assert.Equal(t, 42, d.PID)
 	assert.Equal(t, seedOtherJob, d.CurrentJob)
-	assert.Equal(t, dto.Pacer{IntervalMS: 10000, SlowFactor: 1.5, DayCount: 3, BackoffUntilAt: seedTime.Add(time.Minute)},
+	assert.Equal(t, dto.Pacer{Interval: dto.Duration(10 * time.Second), SlowFactor: 1.5, DayCount: 3, BackoffUntilAt: seedTime.Add(time.Minute)},
 		d.Pacer)
 
 	assert.Equal(t, []dto.SourceCount{{State: "active", Count: 1}, {State: "pending_confirm", Count: 1}}, s.Sources)
@@ -44,7 +44,7 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, dto.RequestClass("rate_limited"), re.Class)
 	assert.Equal(t, 429, re.Status)
 	assert.Equal(t, seedBackfillJob, re.JobID)
-	assert.Equal(t, int64(1000), re.DurationMS)
+	assert.Equal(t, dto.Duration(time.Second), re.Duration)
 	assert.Equal(t, seedTime, re.RequestedAt)
 	assert.True(t, isHash(re.ReqID) && isHash(re.Path) && isHash(re.Reason), "request text hashed")
 

@@ -1,8 +1,6 @@
 package convert
 
 import (
-	"time"
-
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 )
@@ -28,7 +26,7 @@ func estimate(e controllers.Estimate) dto.Estimate {
 		ListingRequests: e.ListingRequests,
 		WorkFetches:     e.WorkFetches,
 		Requests:        e.Requests,
-		DurationS:       int64(e.Duration / time.Second),
+		Duration:        dto.Duration(e.Duration),
 		DiskBytes:       e.DiskBytes,
 		Windowed:        e.Windowed,
 	}

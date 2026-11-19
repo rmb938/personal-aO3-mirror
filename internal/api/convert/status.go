@@ -62,7 +62,7 @@ func daemon(h model.Heartbeat, running bool) dto.Daemon {
 		CurrentJob:     h.CurrentJob,
 		WaitingUntilAt: utc(h.WaitingUntil),
 		Pacer: dto.Pacer{
-			IntervalMS:     h.Interval.Milliseconds(),
+			Interval:       dto.Duration(h.Interval),
 			SlowFactor:     h.SlowFactor,
 			ConsecFails:    h.ConsecFails,
 			BreakerOpen:    h.BreakerOpen,
@@ -107,6 +107,6 @@ func requestError(r store.RequestRow) dto.RequestError {
 	return dto.RequestError{
 		RequestedAt: utc(r.Time), ReqID: r.ReqID, JobID: r.JobID, Kind: dto.RequestKind(r.Kind), Path: r.Path,
 		Status: r.Status, Class: dto.RequestClass(r.Class), Reason: r.Reason, Bytes: r.Bytes,
-		DurationMS: r.Duration.Milliseconds(), WaitedMS: r.Waited.Milliseconds(), Hop: r.Hop,
+		Duration: dto.Duration(r.Duration), Waited: dto.Duration(r.Waited), Hop: r.Hop,
 	}
 }

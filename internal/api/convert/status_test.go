@@ -50,7 +50,7 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, []dto.SeriesGap{{ID: 8, WorksTotal: 3, Mirrored: 1, MissingPositions: []int{2, 3},
 		MissingWorkIDs: []int64{}}}, got.PartialSeries)
 	assert.Equal(t, []dto.RequestError{{RequestedAt: at.UTC(), ReqID: "r1", Kind: "work", Path: "/works/1", Status: 503,
-		Class: "unavailable", Reason: "status=503", DurationMS: 1500, WaitedMS: 2000, Hop: 1}}, got.RequestErrors)
+		Class: "unavailable", Reason: "status=503", Duration: dto.Duration(1500 * time.Millisecond), Waited: dto.Duration(2 * time.Second), Hop: 1}}, got.RequestErrors)
 	assert.Equal(t, time.UTC, got.RequestErrors[0].RequestedAt.Location())
 	assert.Equal(t, []dto.Job{{ID: 3, Kind: "work", State: "failed", LastErrorCode: "not_found"}}, got.FailedJobs)
 	assert.True(t, got.Daemon.Running)
@@ -69,7 +69,7 @@ func TestDaemon(t *testing.T) {
 		Interval: 12500 * time.Millisecond, SlowFactor: 2, ConsecFails: 3, BreakerOpen: true, DayCount: 50,
 		DailyBudget: 1000, BackoffUntil: at.Add(time.Minute)}
 	assert.Equal(t, dto.Daemon{Running: false, HeartbeatAt: at.UTC(), PID: 9, Phase: "running", CurrentJob: 4,
-		WaitingUntilAt: at.Add(time.Second).UTC(), Pacer: dto.Pacer{IntervalMS: 12500, SlowFactor: 2, ConsecFails: 3,
+		WaitingUntilAt: at.Add(time.Second).UTC(), Pacer: dto.Pacer{Interval: dto.Duration(12500 * time.Millisecond), SlowFactor: 2, ConsecFails: 3,
 			BreakerOpen: true, DayCount: 50, DailyBudget: 1000, BackoffUntilAt: at.Add(time.Minute).UTC()}}, daemon(h, false))
 
 	z := daemon(model.Heartbeat{}, false)

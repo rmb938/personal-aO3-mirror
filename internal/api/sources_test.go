@@ -49,7 +49,8 @@ func TestListSources(t *testing.T) {
 	require.NotNil(t, tag.TotalWorks)
 	assert.Equal(t, 40, *tag.TotalWorks)
 	assert.Nil(t, tag.EstRequests)
-	assert.Equal(t, int64(3600), tag.PollIntervalS)
+	assert.Equal(t, dto.Duration(time.Hour), tag.PollInterval)
+	assert.Contains(t, get(h, "/api/v1/sources/1").Body.String(), `"poll_interval":"1h0m0s"`, "a duration string, unhashed")
 	assert.Equal(t, seedTime, tag.LastPollAt)
 	require.NotNil(t, tag.Backfill)
 	assert.Equal(t, dto.Backfill{NextPage: 3, Order: "kudos_desc", WindowStartOn: "2020-01-01", WindowEndOn: "2020-12-31",
@@ -114,7 +115,7 @@ func TestGetSourceAdd(t *testing.T) {
 	require.NotNil(t, done.Result)
 	assert.Equal(t, seedTagSource, done.Result.Source.ID)
 	assert.Equal(t, 20, done.Result.Blurbs)
-	assert.Equal(t, dto.Estimate{Total: 40, Pages: 2, ListingRequests: 1, WorkFetches: 40, Requests: 41, DurationS: 410,
+	assert.Equal(t, dto.Estimate{Total: 40, Pages: 2, ListingRequests: 1, WorkFetches: 40, Requests: 41, Duration: dto.Duration(410 * time.Second),
 		DiskBytes: 1 << 20}, done.Result.Estimate)
 
 	failed := getJSON[dto.SourceAdd](t, h, "/api/v1/source-adds/2")

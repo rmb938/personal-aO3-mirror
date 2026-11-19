@@ -56,6 +56,13 @@ map controller results into DTOs field by field. The API contract then changes o
 is edited on purpose, and the enforcer's schemas are exactly the DTO types. Reviewers check
 this rule, and it is added to CLAUDE.md in stage 0.
 
+**Duration rule (from stage 3f):** a duration field is a `dto.Duration` (a `time.Duration`
+that marshals as `time.Duration.String`, e.g. `"6h0m0s"`, and parses anything
+`time.ParseDuration` accepts), with no unit suffix on the key (`poll_interval`, not
+`poll_interval_s`). Go 1.27's `encoding/json/v2` has no default `time.Duration` format and
+dropped the `format` tag option (go.dev/issue/79071), so the registry rejects a plain
+`time.Duration` field.
+
 **Enum rule (from stage 3a-3):** a string field with a closed value set has a named string
 type in `dto` (`dto.SourceState`) with an `EnumValues() []string` method listing its values.
 The registry finds these by reflection; nothing else lists enums. Each enum field allows only
@@ -101,7 +108,8 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
        Fields sharing a key don't share values: a `WorkStatus` value in `Health.status` is
        hashed;
      - a field whose key ends in `_at` and whose value is strict RFC3339 UTC;
-     - a field whose key ends in `_on` and whose value is `YYYY-MM-DD`.
+     - a field whose key ends in `_on` and whose value is `YYYY-MM-DD`;
+     - a `dto.Duration` field whose value is exactly a Go duration string (from 3f).
    - **every other string is replaced with `h_` + 24 hex of HMAC-SHA256(key, value)**.
      - Within one key epoch the hash is deterministic, so equal names hash equally across fields,
        routes and requests (Claude can match a work's tag hash with `/tags/{id}`).
@@ -643,7 +651,22 @@ Status: tick when the PR merges.
     `ao3url.Reasons()` is checked against the constants by a source-parsing test.
     `api.urlDetails` makes one catalogue detail per reason; `urlDetail(err)` finds it.
   - `checkText` became `validText(s, maxRunes) bool` (the caller picks the detail).
-- [ ] **4. Add source (public)** (draft PR #32, to be rebased onto 3d/3e)
+- [x] **3f. Refactor: durations as `dto.Duration`.** As built:
+  - `dto.Duration` (`type Duration time.Duration`, `MarshalText`/`UnmarshalText`; a bad input
+    error doesn't quote it). `redact.Duration` (`encoding.TextMarshaler` plus
+    `Duration() time.Duration`, an int64 kind) is matched structurally like `Enum`: such a
+    field is a JSON string that passes unhashed only when `time.ParseDuration` accepts it and
+    `String()` gives it back exactly (so `"6h"` from a client would be hashed in a response;
+    responses only write `String()`). A plain `time.Duration` field is a registry error.
+  - Renamed (API change): `Source.poll_interval_s` → `poll_interval`, `Estimate.duration_s` →
+    `duration`, status `pacer.interval_ms` → `interval`, `request_errors[].duration_ms` /
+    `waited_ms` → `duration` / `waited`. OpenAPI has a shared `Duration` schema.
+- [ ] **3g. Refactor: shared `internal/api/problem` package** for the detail catalogue and the
+  validation collector, so request types can live in their own package (stage 4).
+- [ ] **4. Add source (public)** (draft PR #32, to be rebased onto 3f/3g). Request types move
+  to a new `internal/api/request` package with `Validate` methods and a `request.Request`
+  interface that `decodeJSON` requires; `poll_interval` is a `dto.Duration`; `Location` paths
+  come from a generic `pathFor(route, ids...)` over the router's own route constants.
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.
   - Uses `QueueSourceAdd`. `confirm` is **never** accepted publicly: large sources wait for

@@ -11,6 +11,33 @@
 // text and is always hashed.
 package dto
 
+import (
+	"errors"
+	"time"
+)
+
+// Duration is a time.Duration in JSON as a Go duration string: it marshals as
+// time.Duration.String ("6h0m0s", "1.5s") and unmarshals anything time.ParseDuration accepts
+// ("6h", "90m"). encoding/json/v2 has no default time.Duration format, so DTOs use this type.
+// It satisfies redact.Duration structurally, so the enforcer passes its strings unhashed.
+type Duration time.Duration
+
+// Duration returns d as a time.Duration.
+func (d Duration) Duration() time.Duration { return time.Duration(d) }
+
+// MarshalText writes d as time.Duration.String.
+func (d Duration) MarshalText() ([]byte, error) { return []byte(time.Duration(d).String()), nil }
+
+// UnmarshalText parses b with time.ParseDuration.
+func (d *Duration) UnmarshalText(b []byte) error {
+	v, err := time.ParseDuration(string(b))
+	if err != nil {
+		return errors.New("dto: invalid duration") // the input is not quoted
+	}
+	*d = Duration(v)
+	return nil
+}
+
 // HealthStatus is Health.Status (an enum).
 type HealthStatus string
 
