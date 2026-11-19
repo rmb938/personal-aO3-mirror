@@ -97,7 +97,7 @@ func TestGetSource(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 	p := decodeProblem(t, w)
 	assert.Equal(t, dto.TypeNotFound, p.Type)
-	assert.Equal(t, detailNoSource.msg, p.Detail)
+	assert.Equal(t, detailNoSource.Message(), p.Detail)
 	for _, id := range []string{"0", "abc", "-1", "9007199254740992"} {
 		requireParamProblem(t, get(h, "/api/v1/sources/"+id), dto.ParamID, id)
 	}

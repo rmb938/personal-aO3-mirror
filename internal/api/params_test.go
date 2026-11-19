@@ -13,10 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
-// requireAPIError asserts err is an *Error of type typ and, when params are given, a validation
-// error naming exactly those (raw) parameters in order.
+// requireAPIError asserts err is a *problem.Error of type typ and, when params are given, a
+// validation error naming exactly those (raw) parameters in order.
 func requireAPIError(t *testing.T, err error, typ dto.ProblemType, params ...string) {
 	t.Helper()
 	e := asAPIError(t, err)
@@ -24,7 +25,7 @@ func requireAPIError(t *testing.T, err error, typ dto.ProblemType, params ...str
 	got := make([]string, len(e.Errors))
 	for i, item := range e.Errors {
 		got[i] = item.Param
-		assert.NotEmpty(t, item.Detail.msg, "every error item explains itself")
+		assert.NotEmpty(t, item.Detail.Message(), "every error item explains itself")
 	}
 	if len(params) == 0 {
 		params = []string{}
@@ -32,11 +33,11 @@ func requireAPIError(t *testing.T, err error, typ dto.ProblemType, params ...str
 	assert.Equal(t, params, got)
 }
 
-// asAPIError requires err to be an *Error and returns it.
-func asAPIError(t *testing.T, err error) *Error {
+// asAPIError requires err to be a *problem.Error and returns it.
+func asAPIError(t *testing.T, err error) *problem.Error {
 	t.Helper()
-	e, ok := errors.AsType[*Error](err)
-	require.True(t, ok, "want *Error, got %v", err)
+	e, ok := errors.AsType[*problem.Error](err)
+	require.True(t, ok, "want *problem.Error, got %v", err)
 	return e
 }
 
@@ -58,27 +59,27 @@ func testParams(t *testing.T, raw string, path []string, allowed ...string) (*pa
 func TestParseParams(t *testing.T) {
 	p, err := testParams(t, "page=2&per_page=10", nil, "page", "per_page")
 	require.NoError(t, err)
-	require.NoError(t, p.err())
+	require.NoError(t, p.Err())
 	assert.Equal(t, map[string]string{"page": "2", "per_page": "10"}, p.vals)
 
 	p, err = testParams(t, "", nil)
 	require.NoError(t, err)
-	require.NoError(t, p.err())
+	require.NoError(t, p.Err())
 
 	// The reveal param is allowed everywhere but not handed to the handler.
 	p, err = testParams(t, RevealParam+"=1&page=1", nil, "page")
 	require.NoError(t, err)
-	require.NoError(t, p.err())
+	require.NoError(t, p.Err())
 	assert.Equal(t, map[string]string{"page": "1"}, p.vals)
 
 	// Every unknown or repeated name is reported, in name order; the valid ones still parse.
 	p, err = testParams(t, "zz=1&SENTINEL=1&page=1&page=2&per_page=5&"+RevealParam+"=1&"+RevealParam+"=1", nil,
 		"page", "per_page")
 	require.NoError(t, err)
-	requireAPIError(t, p.err(), dto.TypeValidation, "SENTINEL", "page", RevealParam, "zz")
+	requireAPIError(t, p.Err(), dto.TypeValidation, "SENTINEL", "page", RevealParam, "zz")
 	assert.Equal(t, map[string]string{"per_page": "5"}, p.vals)
 	// An undeclared name is never echoed; a declared one the route doesn't take is named.
-	prob := asAPIError(t, p.err()).problem()
+	prob := asAPIError(t, p.Err()).Problem()
 	assert.Empty(t, prob.Errors[0].Parameter)
 	assert.Equal(t, dto.ParamPage, prob.Errors[1].Parameter)
 
@@ -114,9 +115,10 @@ func TestParamGetters(t *testing.T) {
 	assert.Equal(t, int64(3), p.int("absent", 3, 10, detailID), "absent: the default")
 	assert.Equal(t, int64(MaxID), p.pathID(dto.ParamID))
 	assert.Zero(t, p.pathID(dto.ParamJobID))
-	requireAPIError(t, p.err(), dto.TypeValidation, "state", "source_id", "job_id")
-	e := asAPIError(t, p.err())
-	assert.Equal(t, []detail{detailJobState, detailID, detailID}, []detail{e.Errors[0].Detail, e.Errors[1].Detail, e.Errors[2].Detail})
+	requireAPIError(t, p.Err(), dto.TypeValidation, "state", "source_id", "job_id")
+	e := asAPIError(t, p.Err())
+	assert.Equal(t, []problem.Detail{detailJobState, detailID, detailID},
+		[]problem.Detail{e.Errors[0].Detail, e.Errors[1].Detail, e.Errors[2].Detail})
 }
 
 func TestPage(t *testing.T) {
@@ -144,20 +146,12 @@ func TestPage(t *testing.T) {
 		require.NoError(t, err)
 		pg := p.page()
 		if len(c.bad) > 0 {
-			requireAPIError(t, p.err(), dto.TypeValidation, c.bad...)
+			requireAPIError(t, p.Err(), dto.TypeValidation, c.bad...)
 			continue
 		}
-		require.NoError(t, p.err(), c.raw)
+		require.NoError(t, p.Err(), c.raw)
 		assert.Equal(t, Page{Page: c.page, PerPage: c.per}, pg)
 		assert.Equal(t, c.wantOffset, pg.Offset())
 		assert.LessOrEqual(t, pg.Offset(), int64(maxOffset))
-	}
-}
-
-func TestValidText(t *testing.T) {
-	assert.True(t, validText("hello wörld", 11))
-	assert.True(t, validText("", 1))
-	for _, s := range []string{"\x00", "a\nb", "tab\t", "\u0085", "bad\xff", "twelve runes"} {
-		assert.False(t, validText(s, 11), "%q", s)
 	}
 }

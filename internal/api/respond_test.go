@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -61,10 +62,11 @@ func TestHandleError(t *testing.T) {
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeNotFound)+`","title":"Not Found","status":404}`, w.Body.String())
 	assert.Empty(t, logs.String(), "expected errors are not logged")
 
-	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errParam("page", detailPage) })
+	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, problem.ForParam("page", detailPage) })
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeValidation)+`","title":"Validation Error","status":422,`+
-		`"detail":"`+detailInvalidRequest.msg+`","errors":[{"detail":"`+detailPage.msg+`","parameter":"page"}]}`, w.Body.String())
+		`"detail":"`+problem.DetailInvalidRequest.Message()+`","errors":[{"detail":"`+detailPage.Message()+`","parameter":"page"}]}`,
+		w.Body.String())
 
 	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errors.New("db exploded") })
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -74,7 +76,9 @@ func TestHandleError(t *testing.T) {
 }
 
 func TestHandleQuery415AdvertisesAcceptQuery(t *testing.T) {
-	h := func(*http.Request) (any, error) { return nil, errDetail(dto.TypeUnsupportedMediaType, detailMediaType) }
+	h := func(*http.Request) (any, error) {
+		return nil, problem.WithDetail(dto.TypeUnsupportedMediaType, detailMediaType)
+	}
 	w := serve(t, discardLogger(), methodQuery, h)
 	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Accept-Query"))

@@ -22,7 +22,7 @@ func (a *API) listJobs(r *http.Request) (any, error) {
 		SourceID: q.int(string(dto.ParamSourceID), 0, MaxID, detailID),
 	}
 	p := q.page()
-	if err := q.err(); err != nil {
+	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
@@ -43,7 +43,7 @@ func (a *API) getJob(r *http.Request) (any, error) {
 		return nil, err
 	}
 	id := q.pathID(dto.ParamID)
-	if err := q.err(); err != nil {
+	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	j, err := a.ctl.GetJob(r.Context(), id)

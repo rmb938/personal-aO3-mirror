@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
 )
 
@@ -136,7 +137,7 @@ func (a *API) enforce(next http.Handler) http.Handler {
 		case mode == redact.Revealed:
 			a.write(w, mode, bw.header, status, body, "")
 		default:
-			a.writeProblem(w, mode, &Error{Type: dto.TypeRevealRequired, Status: http.StatusForbidden, Detail: detailNotJSON})
+			a.writeProblem(w, mode, &problem.Error{Type: dto.TypeRevealRequired, Status: http.StatusForbidden, Detail: detailNotJSON})
 		}
 	})
 }
@@ -148,13 +149,13 @@ func (a *API) enforceFailed(w http.ResponseWriter, r *http.Request, mode redact.
 		slog.String("req_id", state(r.Context()).id),
 		slog.String("route", routePattern(r)),
 		slog.String("err", err.Error()))
-	a.writeProblem(w, mode, errType(dto.TypeInternal))
+	a.writeProblem(w, mode, problem.New(dto.TypeInternal))
 }
 
 // writeProblem sends e's problem in place of the handler's response. Problems hold only
 // registered enum values, so they pass the enforcer unchanged; they still go through it.
-func (a *API) writeProblem(w http.ResponseWriter, mode redact.Mode, e *Error) {
-	p := e.problem()
+func (a *API) writeProblem(w http.ResponseWriter, mode redact.Mode, e *problem.Error) {
+	p := e.Problem()
 	body, err := json.Marshal(p)
 	if err != nil {
 		panic(err) // a Problem always marshals

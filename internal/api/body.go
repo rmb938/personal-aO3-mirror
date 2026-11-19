@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
 // decodeJSON strictly decodes r's body into dst (a pointer to a DTO):
@@ -17,23 +18,23 @@ import (
 //   - exactly one JSON value: no trailing data, no unknown fields, no duplicate keys, valid
 //     UTF-8 (encoding/json/v2 defaults plus RejectUnknownMembers); else 400 invalid-body.
 //
-// Errors never quote the body. Callers still validate each field (ranges, checkText).
+// Errors never quote the body. Callers still validate each field (ranges, problem.ValidText).
 func decodeJSON(r *http.Request, dst any) error {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		return errDetail(dto.TypeUnsupportedMediaType, detailMediaType)
+		return problem.WithDetail(dto.TypeUnsupportedMediaType, detailMediaType)
 	}
 	if r.Body == nil {
-		return errDetail(dto.TypeInvalidBody, detailInvalidBody)
+		return problem.WithDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			return errDetail(dto.TypeBodyTooLarge, detailBodyTooLarge)
+			return problem.WithDetail(dto.TypeBodyTooLarge, detailBodyTooLarge)
 		}
-		return errDetail(dto.TypeInvalidBody, detailInvalidBody)
+		return problem.WithDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
 	if err := json.Unmarshal(raw, dst, json.RejectUnknownMembers(true)); err != nil {
-		return errDetail(dto.TypeInvalidBody, detailInvalidBody)
+		return problem.WithDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
 	return nil
 }

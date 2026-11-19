@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -29,11 +30,11 @@ func TestProblemFor(t *testing.T) {
 		status   int
 		internal bool
 	}{
-		{errType(dto.TypeBadRequest), dto.TypeBadRequest, http.StatusBadRequest, false},
-		{fmt.Errorf("wrap: %w", errParam("page", detailPage)), dto.TypeValidation, http.StatusUnprocessableEntity, false},
-		{&Error{Type: dto.TypeRevealRequired, Status: http.StatusForbidden}, dto.TypeRevealRequired, http.StatusForbidden, false},
-		{&Error{Type: "made_up"}, dto.TypeInternal, http.StatusInternalServerError, true},
-		{errType(dto.TypeInternal), dto.TypeInternal, http.StatusInternalServerError, true},
+		{problem.New(dto.TypeBadRequest), dto.TypeBadRequest, http.StatusBadRequest, false},
+		{fmt.Errorf("wrap: %w", problem.ForParam("page", detailPage)), dto.TypeValidation, http.StatusUnprocessableEntity, false},
+		{&problem.Error{Type: dto.TypeRevealRequired, Status: http.StatusForbidden}, dto.TypeRevealRequired, http.StatusForbidden, false},
+		{&problem.Error{Type: "made_up"}, dto.TypeInternal, http.StatusInternalServerError, true},
+		{problem.New(dto.TypeInternal), dto.TypeInternal, http.StatusInternalServerError, true},
 		{store.ErrNoSource, dto.TypeNotFound, http.StatusNotFound, false},
 		{fmt.Errorf("get: %w", store.ErrNoJob), dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoSourceAdd, dto.TypeNotFound, http.StatusNotFound, false},
@@ -59,18 +60,6 @@ func TestProblemFor(t *testing.T) {
 			assert.Equal(t, c.internal, internal)
 		})
 	}
-}
-
-func TestProblemParameter(t *testing.T) {
-	p := errParam("per_page", detailPerPage).problem()
-	assert.Equal(t, dto.TypeValidation, p.Type)
-	assert.Equal(t, detailInvalidRequest.msg, p.Detail)
-	assert.Equal(t, []dto.ProblemError{{Detail: detailPerPage.msg, Parameter: dto.ParamPerPage}}, p.Errors)
-
-	// A name the API doesn't declare is never echoed.
-	p = errParam("SENTINEL-field", detailUnknownParam).problem()
-	assert.Equal(t, []dto.ProblemError{{Detail: detailUnknownParam.msg}}, p.Errors)
-	assert.NotContains(t, errParam("SENTINEL-field", detailUnknownParam).Error(), "SENTINEL")
 }
 
 func TestProblemTypesComplete(t *testing.T) {
@@ -108,18 +97,9 @@ func TestProblemTypesDocumented(t *testing.T) {
 	assert.Equal(t, types, documented)
 }
 
-// The detail catalogue holds only fixed messages: none is empty or repeated by accident (a
-// repeat would mean two names for one message).
-func TestDetailCatalogue(t *testing.T) {
-	assert.Len(t, detailCatalogue(), len(details), "no message is defined twice")
-	for _, m := range details {
-		assert.NotEmpty(t, m)
-		assert.NotContains(t, m, "\n")
-	}
-}
-
 // Every problem the API can produce passes the enforcer in hashed mode unchanged: its strings
-// are all registered enum values or catalogue messages.
+// are all registered enum values or catalogue messages (problem.Catalogue, with the api
+// package's details added).
 func TestProblemsPassEnforcerUnhashed(t *testing.T) {
 	h, err := redact.NewHasher(0, nil)
 	require.NoError(t, err)
@@ -134,14 +114,18 @@ func TestProblemsPassEnforcerUnhashed(t *testing.T) {
 		assert.JSONEq(t, string(body), string(res.Body))
 		assert.Empty(t, res.OffEnum)
 	}
+	cat := problem.Catalogue()
+	assert.Contains(t, cat, detailNoRoute.Message(), "the api package's details are in the catalogue")
 	for _, s := range dto.ProblemType("").EnumValues() {
-		for _, m := range details {
-			check((&Error{Type: dto.ProblemType(s), Detail: detail{m}}).problem())
+		info, _ := dto.ProblemType(s).Info()
+		for _, m := range cat {
+			check(dto.Problem{Type: dto.ProblemType(s), Title: info.Title, Status: info.Status, Detail: m})
 		}
 	}
 	for _, f := range dto.ParamName("").EnumValues() {
-		for _, m := range details {
-			check(errParam(f, detail{m}).problem())
+		for _, m := range cat {
+			check(dto.Problem{Type: dto.TypeValidation, Title: "Validation Error", Status: 422,
+				Detail: problem.DetailInvalidRequest.Message(), Errors: []dto.ProblemError{{Detail: m, Parameter: dto.ParamName(f)}}})
 		}
 	}
 
@@ -152,10 +136,4 @@ func TestProblemsPassEnforcerUnhashed(t *testing.T) {
 	res, err := enf.Enforce(redact.Hashed, reflect.TypeFor[dto.Problem](), body)
 	require.NoError(t, err)
 	assert.NotContains(t, string(res.Body), "SENTINEL")
-
-	// Empty detail and errors are omitted.
-	body, err = json.Marshal(errType(dto.TypeNotFound).problem())
-	require.NoError(t, err)
-	assert.NotContains(t, string(body), "detail")
-	assert.NotContains(t, string(body), "errors")
 }
