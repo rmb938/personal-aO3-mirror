@@ -22,25 +22,25 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "status: %v\n", err)
 		return 1
 	}
-	c, ds, at := rep.Counts, rep.Daemon, rep.DaemonAt
+	c, hb := rep.Counts, rep.Daemon
 	fmt.Fprintln(out, "== daemon")
 	switch {
-	case at.IsZero():
+	case hb.At.IsZero():
 		fmt.Fprintln(out, "never ran")
 	default:
-		age := time.Since(at).Round(time.Second)
 		state := "running"
-		if age > 2*time.Minute || ds["phase"] == "stopped" {
+		if !rep.DaemonRunning {
 			state = "not running"
 		}
-		fmt.Fprintf(out, "%s (pid %s, phase %s, current job %s, heartbeat %s ago)\n", state, ds["pid"], ds["phase"], ds["current_job"], age)
-		if w := localRFC(ds["waiting_until"]); w != "" && state == "running" {
-			fmt.Fprintf(out, "waiting for next request slot until %s (pacing/backoff)\n", w)
+		fmt.Fprintf(out, "%s (pid %d, phase %s, current job %d, heartbeat %s ago)\n", state, hb.PID, hb.Phase, hb.CurrentJob,
+			time.Since(hb.At).Round(time.Second))
+		if !hb.WaitingUntil.IsZero() && rep.DaemonRunning {
+			fmt.Fprintf(out, "waiting for next request slot until %s (pacing/backoff)\n", localTime(hb.WaitingUntil))
 		}
-		fmt.Fprintf(out, "pacer: interval %s, slow factor %s, consecutive failures %s, breaker open %s, backoff until %s\n",
-			ds["interval"], ds["slow_factor"], ds["consec_fails"], ds["breaker_open"], dash(localRFC(ds["backoff_until"])))
-		if ds["daily_budget"] != "0" && ds["daily_budget"] != "" {
-			fmt.Fprintf(out, "daily budget: %s / %s requests today\n", ds["day_count"], ds["daily_budget"])
+		fmt.Fprintf(out, "pacer: interval %s, slow factor %.2f, consecutive failures %d, breaker open %t, backoff until %s\n",
+			hb.Interval, hb.SlowFactor, hb.ConsecFails, hb.BreakerOpen, dash(localTime(hb.BackoffUntil)))
+		if hb.DailyBudget != 0 {
+			fmt.Fprintf(out, "daily budget: %d / %d requests today\n", hb.DayCount, hb.DailyBudget)
 		}
 	}
 
@@ -78,11 +78,26 @@ func runStatus(ctx context.Context, a *app, out, errOut io.Writer) int {
 	fmt.Fprintf(out, "last 1h: %d, last 24h: %d, 24h by class: %s\n", c.Requests1h, c.Requests24h, kv(c.RequestsByClass))
 
 	fmt.Fprintln(out, "\n== sources")
+	fmt.Fprintf(out, "by state: %s\n", kv(c.SourcesByState))
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tKIND\tTARGET\tSTATE\tseen/fetched/total\tNEXT POLL\tERROR")
-	for _, r := range rep.Sources {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\n", r.ID, r.Kind, target(r, false), r.State,
-			r.MemberWorks, r.FetchedWorks, total(r.TotalWorks), when(r.NextPollAt), dash(r.LastError))
+	// Paged like `source list`: a source added or removed meanwhile can shift a row across a
+	// page boundary.
+	const perPage = 100
+	for offset := 0; ; offset += perPage {
+		rows, n, err := a.ctl.ListSources(ctx, offset, perPage)
+		if err != nil {
+			tw.Flush()
+			fmt.Fprintf(errOut, "status: %v\n", err)
+			return 1
+		}
+		for _, r := range rows {
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\n", r.ID, r.Kind, target(r, false), r.State,
+				r.MemberWorks, r.FetchedWorks, total(r.TotalWorks), when(r.NextPollAt), dash(r.LastError))
+		}
+		if len(rows) < perPage || offset+perPage >= n {
+			break
+		}
 	}
 	tw.Flush()
 
@@ -213,9 +228,9 @@ func printWork(out io.Writer, id int64, d store.WorkDiag) error {
 	return tw.Flush()
 }
 
-func localRFC(s string) string {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
+// localTime formats t in local time, or "" when zero.
+func localTime(t time.Time) string {
+	if t.IsZero() {
 		return ""
 	}
 	return t.Local().Format("2006-01-02 15:04:05")
