@@ -98,10 +98,6 @@ func New(opts Options) *Controllers {
 	return &Controllers{options: opts, store: opts.Store, log: opts.Logger}
 }
 
-// Detail is a content-free summary of one operation (ids, counts, classes), recorded as the
-// job event detail by the scheduler.
-type Detail = map[string]any
-
 // logger returns the request-scoped logger (job attrs from the scheduler) or the default one.
 func (c *Controllers) logger(ctx context.Context) *slog.Logger { return logx.From(ctx, c.log) }
 

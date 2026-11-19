@@ -13,7 +13,7 @@ import (
 // FetchSeriesInfo fetches page 1 of a non-source series: description, notes, stats and
 // creators. Blurbs refresh only works we already mirror (no new works are added). Everything
 // the page says is stored in one transaction. final says this is the job's last attempt.
-func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool) (Detail, error) {
+func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool) (*SeriesInfoDetail, error) {
 	if id <= 0 {
 		return nil, PermanentError{Code: CodeBadSeriesID}
 	}
@@ -27,7 +27,7 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool)
 	if err != nil {
 		return nil, giveUpInfo(ctx, err, final, markFetched)
 	}
-	detail := Detail{"series_id": id, "class": string(resp.Class), "req_id": resp.ReqID}
+	detail := &SeriesInfoDetail{SeriesID: new(id), Class: new(string(resp.Class)), ReqID: new(resp.ReqID)}
 	switch resp.Class {
 	case httpx.ClassNotFound, httpx.ClassRestricted, httpx.ClassHidden:
 		return detail, markFetched()
@@ -82,6 +82,6 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool)
 	}); err != nil {
 		return detail, err
 	}
-	detail["works_count"], detail["known_works_refreshed"], detail["members_seen"] = ser.WorksCount, refreshed, len(members)
+	detail.WorksCount, detail.KnownWorksRefreshed, detail.MembersSeen = new(ser.WorksCount), new(refreshed), new(len(members))
 	return detail, nil
 }

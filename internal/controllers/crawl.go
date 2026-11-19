@@ -141,7 +141,7 @@ func (c *Controllers) recordPageFailure(ctx context.Context, sourceID int64, msg
 // Steps: read the source, fetch the page, then one write transaction that re-reads the source
 // and applies only this page's changes, so a refresh or settings change made during the fetch
 // is kept.
-func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page int) (Detail, error) {
+func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page int) (*PollDetail, error) {
 	log := c.logger(ctx)
 	r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
@@ -172,7 +172,7 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 	if err != nil {
 		return nil, err
 	}
-	var detail Detail
+	var detail *PollDetail
 	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		fresh, err := tx.GetSourceRow(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
@@ -230,8 +230,9 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 		if err := tx.UpdateSourceProgress(ctx, fresh); err != nil {
 			return err
 		}
-		detail = Detail{"page": page, "blurbs": len(l.Blurbs), "new": blurbs.newWorks, "changed": blurbs.changed,
-			"work_jobs": enqueued, "requeued_unfetched": requeued, "continue": more, "total": l.Total, "req_id": reqID}
+		detail = &PollDetail{Page: new(page), Blurbs: new(len(l.Blurbs)), New: new(blurbs.newWorks),
+			Changed: new(blurbs.changed), WorkJobs: new(enqueued), RequeuedUnfetched: new(requeued), Continue: new(more),
+			Total: new(l.Total), ReqID: new(reqID)}
 		return nil
 	})
 	return detail, err
@@ -243,7 +244,7 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 // Steps: read the source and cursor, fetch the page, then one write transaction that re-reads
 // the source. If the cursor moved during the fetch (a refresh or rescan reset it), the page's
 // blurbs are still stored but the cursor is left alone.
-func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, page int) (Detail, error) {
+func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, page int) (*BackfillDetail, error) {
 	log := c.logger(ctx)
 	r, src, err := c.readSource(ctx, sourceID)
 	if err != nil {
@@ -254,7 +255,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 		return nil, PermanentError{Code: CodeBadCursor}
 	}
 	if cur.NextPage != page {
-		return Detail{"stale": true, "cursor_page": cur.NextPage}, nil // cursor moved on; nothing to do
+		return &BackfillDetail{Stale: new(true), CursorPage: new(cur.NextPage)}, nil // cursor moved on; nothing to do
 	}
 	order, err := ao3url.ParseOrder(cur.Order)
 	if err != nil {
@@ -293,7 +294,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 			}
 		})
 		log.Warn("backfill blocked on parse failure until parser update", "page", page, "parser_version", parse.Version)
-		return Detail{"page": page, "blocked_parser": parse.Version}, errors.Join(err, uerr)
+		return &BackfillDetail{Page: new(page), BlockedParser: new(parse.Version)}, errors.Join(err, uerr)
 	}
 	if _, permanent := errors.AsType[PermanentError](err); permanent && ctx.Err() == nil {
 		// Not the page structure, but retrying now would get the same answer: hold this page
@@ -306,13 +307,13 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 			}
 		})
 		log.Warn("backfill page failed; held back", "page", page, "error", err.Error(), "retry_at", retryAt)
-		return Detail{"page": page, "retry_at": retryAt.Unix()}, errors.Join(err, uerr)
+		return &BackfillDetail{Page: new(page), RetryAt: new(retryAt.Unix())}, errors.Join(err, uerr)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	var detail Detail
+	var detail *BackfillDetail
 	err = c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		fresh, err := tx.GetSourceRow(ctx, sourceID)
 		if errors.Is(err, store.ErrNoSource) {
@@ -330,14 +331,14 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 			return err
 		}
 		l := p.listing
-		detail = Detail{"page": page, "blurbs": len(l.Blurbs), "new": blurbs.newWorks, "rescan": cur.Rescan,
-			"work_jobs": enqueued, "total": l.Total, "req_id": reqID}
+		detail = &BackfillDetail{Page: new(page), Blurbs: new(len(l.Blurbs)), New: new(blurbs.newWorks),
+			Rescan: new(cur.Rescan), WorkJobs: new(enqueued), Total: new(l.Total), ReqID: new(reqID)}
 		if win != nil {
-			detail["window_to"], detail["window_from"] = cur.WindowTo, cur.WindowFrom
+			detail.WindowTo, detail.WindowFrom = new(cur.WindowTo), new(cur.WindowFrom)
 		}
 		if fresh.BackfillCursor != r.BackfillCursor {
 			// Refresh/rescan moved the cursor while we fetched: keep the blurbs, not our cursor step.
-			detail["stale_after_fetch"] = true
+			detail.StaleAfterFetch = new(true)
 			return nil
 		}
 		if cur.Rescan {
@@ -353,7 +354,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 		if err := tx.UpdateSourceProgress(ctx, fresh); err != nil {
 			return err
 		}
-		detail["next_page"] = cur.NextPage
+		detail.NextPage = new(cur.NextPage)
 		return nil
 	})
 	return detail, err
@@ -361,7 +362,7 @@ func (c *Controllers) BackfillSourcePage(ctx context.Context, sourceID int64, pa
 
 // advanceSourceCursor moves a backfill cursor past a successfully stored page: next page, a smaller
 // window when the current one is over AO3's result window, the previous date window, or done.
-func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3url.Window, l parse.Listing, detail Detail, log *slog.Logger) {
+func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3url.Window, l parse.Listing, detail *BackfillDetail, log *slog.Logger) {
 	cur.BlockedParser, cur.RetryAt = 0, 0
 	maxPages := ao3url.Pages(c.options.MaxResults)
 	pg := l.Pagination
@@ -372,7 +373,7 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 		to, _ := time.Parse("2006-01-02", cur.WindowTo)
 		cur.WindowFrom = day(to.AddDate(0, 0, -cur.SpanDays+1))
 		cur.NextPage = 1
-		detail["shrink_span_days"] = cur.SpanDays
+		detail.ShrinkSpanDays = new(cur.SpanDays)
 	case pg.Current < pg.Last && page < maxPages:
 		cur.NextPage = page + 1
 	case win != nil:
@@ -392,7 +393,7 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 		}
 	default:
 		if pg.Current < pg.Last {
-			detail["truncated_at_max_results"] = true
+			detail.TruncatedAtMaxResults = new(true)
 			log.Warn("backfill reached AO3 result window; remaining works only via windows", "page", page)
 		}
 		markIncompleteWalk(cur, page, l, detail, log)
@@ -405,7 +406,7 @@ func (c *Controllers) advanceSourceCursor(cur *SourceCursor, page int, win *ao3u
 // (AO3's result window), or the heading's total is more than the pages walked can hold (the
 // pagination was not parsed, so the walk stopped early). Listings without a "N Works" total
 // (bookmarks) can only be checked by their pagination.
-func markIncompleteWalk(cur *SourceCursor, page int, l parse.Listing, detail Detail, log *slog.Logger) {
+func markIncompleteWalk(cur *SourceCursor, page int, l parse.Listing, detail *BackfillDetail, log *slog.Logger) {
 	pg := l.Pagination
 	short := l.Total >= 0 && l.Total > page*ao3url.PerPage
 	if !cur.Rescan || (pg.Current >= pg.Last && !short) {
@@ -413,7 +414,7 @@ func markIncompleteWalk(cur *SourceCursor, page int, l parse.Listing, detail Det
 	}
 	cur.RescanIncomplete = true
 	if short {
-		detail["total_beyond_pages"] = true
+		detail.TotalBeyondPages = new(true)
 		log.Warn("listing total is more than the pages walked hold; rescan misses will not be counted",
 			"page", page, "page_last", pg.Last, "total", l.Total)
 	}

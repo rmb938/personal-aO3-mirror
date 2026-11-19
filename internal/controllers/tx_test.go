@@ -92,7 +92,7 @@ func TestBackfillDoesNotAdvanceACursorMovedDuringTheFetch(t *testing.T) {
 	})
 	detail, err := ctl.BackfillSourcePage(ctx, id, 2)
 	require.NoError(t, err)
-	require.Equal(t, true, detail["stale_after_fetch"])
+	require.Equal(t, new(true), detail.StaleAfterFetch)
 
 	got, err := e.svc.GetSource(ctx, id)
 	require.NoError(t, err)

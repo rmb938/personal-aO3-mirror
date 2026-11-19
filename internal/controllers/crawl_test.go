@@ -41,7 +41,7 @@ func TestAdvanceSourceCursorMarksIncompleteRescan(t *testing.T) {
 	}
 	for _, tc := range cases {
 		cur := tc.cur
-		c.advanceSourceCursor(&cur, 1, tc.win, tc.listed, Detail{}, log)
+		c.advanceSourceCursor(&cur, 1, tc.win, tc.listed, &BackfillDetail{}, log)
 		require.Equal(t, tc.want, cur.RescanIncomplete, tc.name)
 	}
 }

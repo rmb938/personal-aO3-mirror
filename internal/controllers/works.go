@@ -45,7 +45,7 @@ func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64,
 //
 // A successful fetch also settles rescans that missed the work: it is on AO3, so any source
 // whose last MissedRescansToDrop rescans did not list it has lost it.
-func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64, final bool) (Detail, error) {
+func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64, final bool) (*WorkDetail, error) {
 	detail, err := c.fetchWork(ctx, id, sourceID)
 	if err == nil || id <= 0 || IsParseFailure(err) || isTooLarge(err) {
 		return detail, err // parse failures and too-large pages are recorded with their own marks
@@ -57,7 +57,7 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64, final b
 	})
 }
 
-func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail, error) {
+func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (*WorkDetail, error) {
 	if id <= 0 {
 		return nil, PermanentError{Code: CodeBadWorkID}
 	}
@@ -73,12 +73,12 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 			return nil, err
 		}
 		log.Warn("work page over max body; not retrying until it changes", "work_id", id)
-		return Detail{"work_id": id}, err
+		return &WorkDetail{WorkID: new(id)}, err
 	}
 	if err != nil {
 		return nil, err
 	}
-	detail := Detail{"work_id": id, "class": string(resp.Class), "bytes": len(resp.Body), "req_id": resp.ReqID}
+	detail := &WorkDetail{WorkID: new(id), Class: new(string(resp.Class)), Bytes: new(len(resp.Body)), ReqID: new(resp.ReqID)}
 	switch resp.Class {
 	case httpx.ClassNotFound, httpx.ClassHidden, httpx.ClassRestricted:
 		status := map[httpx.Class]model.WorkStatus{httpx.ClassNotFound: model.StatusDeleted,
@@ -88,7 +88,7 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		}); err != nil {
 			return detail, err
 		}
-		detail["status"] = string(status)
+		detail.Status = new(string(status))
 		log.Info("work unavailable on AO3; local copy kept", "work_id", id, "status", string(status))
 		return detail, nil
 	case httpx.ClassAdultGate:
@@ -160,21 +160,21 @@ func (c *Controllers) fetchWork(ctx context.Context, id, sourceID int64) (Detail
 		return detail, err
 	}
 	if leftSources > 0 {
-		detail["left_sources"] = leftSources
+		detail.LeftSources = new(leftSources)
 		log.Info("work left sources that stopped listing it", "work_id", id, "dropped_members", leftSources)
 	}
 	if c.options.QueueImages {
-		detail["images_queued"] = sw.images
+		detail.ImagesQueued = new(sw.images)
 	}
-	detail["chapters"] = len(w.Chapters)
-	detail["words"] = w.Words
-	detail["content"] = string(sw.content) // new | changed | unchanged (raw page bytes differ on nearly every fetch)
-	detail["revived"] = sw.upsert.Revived
+	detail.Chapters = new(len(w.Chapters))
+	detail.Words = new(w.Words)
+	detail.Content = new(string(sw.content)) // new | changed | unchanged (raw page bytes differ on nearly every fetch)
+	detail.Revived = new(sw.upsert.Revived)
 	if sw.upsert.MetaChanged != nil {
-		detail["meta_changed"] = sw.upsert.MetaChanged // field names and +added/-removed counts only
+		detail.MetaChanged = sw.upsert.MetaChanged // field names and +added/-removed counts only
 	}
-	if mismatch, ok := rep.Fields["chapter_count_mismatch"]; ok {
-		detail["chapter_count_mismatch"] = mismatch
+	if mismatch, ok := rep.Fields["chapter_count_mismatch"].(bool); ok {
+		detail.ChapterCountMismatch = new(mismatch)
 	}
 	return detail, nil
 }

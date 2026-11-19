@@ -187,10 +187,18 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 	require.False(t, e.diag(5000).LastFetched.IsZero(), "poll should re-queue a work whose earlier fetches failed, not wait for the rescan")
 }
 
+func TestDetailAttrs(t *testing.T) {
+	require.Empty(t, detailAttrs(nil))
+	require.Empty(t, detailAttrs((*controllers.WorkDetail)(nil)), "a handler's nil detail")
+	require.Equal(t, []any{"chapters", float64(0), "class", "ok", "work_id", float64(7)},
+		detailAttrs(&controllers.WorkDetail{WorkID: new(int64(7)), Class: new("ok"), Chapters: new(0)}),
+		"set fields only, zeros kept, sorted by key")
+}
+
 func TestHandlerPanicFailsJob(t *testing.T) {
 	e := newEnv(t, 1, nil)
 	ctx := context.Background()
-	e.sch.handlers[jobs.KindWork] = func(context.Context, model.Job) (controllers.Detail, error) {
+	e.sch.handlers[jobs.KindWork] = func(context.Context, model.Job) (controllers.JobDetail, error) {
 		panic("fixture panic value")
 	}
 	e.queueWork(5000)
@@ -205,7 +213,7 @@ func TestHandlerPanicFailsJob(t *testing.T) {
 func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	e := newEnv(t, 1, nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	e.sch.handlers[jobs.KindWork] = func(context.Context, model.Job) (controllers.Detail, error) {
+	e.sch.handlers[jobs.KindWork] = func(context.Context, model.Job) (controllers.JobDetail, error) {
 		cancel() // shutdown arrives just as the job succeeds
 		return nil, nil
 	}

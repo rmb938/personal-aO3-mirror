@@ -262,14 +262,39 @@ func jobWhere(f model.JobFilter) (string, []any) {
 	return q, args
 }
 
-// JobEvent appends a content-free trace event (detail is marshalled to JSON).
-func (s *Tx) JobEvent(ctx context.Context, jobID int64, event string, detail map[string]any) error {
-	b, err := json.Marshal(detail)
+// JobEvent appends a content-free trace event. Its detail is parts merged into one JSON object
+// (see JobDetailJSON).
+func (s *Tx) JobEvent(ctx context.Context, jobID int64, event string, parts ...any) error {
+	b, err := JobDetailJSON(parts...)
 	if err != nil {
 		return err
 	}
 	_, err = s.meta.ExecContext(ctx, `INSERT INTO job_events (job_id, ts, event, detail) VALUES (?,?,?,?)`, jobID, s.unix(), event, string(b))
 	return err
+}
+
+// JobDetailJSON merges parts into one JSON object with sorted keys. Each part must marshal to
+// an object or null (a nil part, or a nil pointer, adds nothing); a key in two parts is an
+// error, as one would silently hide the other.
+func JobDetailJSON(parts ...any) ([]byte, error) {
+	out := map[string]json.RawMessage{}
+	for i, p := range parts {
+		b, err := json.Marshal(p)
+		if err != nil {
+			return nil, fmt.Errorf("job event detail part %d: %w", i, err)
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(b, &m); err != nil {
+			return nil, fmt.Errorf("job event detail part %d (%T) is not a JSON object", i, p)
+		}
+		for k, v := range m {
+			if _, dup := out[k]; dup {
+				return nil, fmt.Errorf("job event detail key %q is in two parts", k)
+			}
+			out[k] = v
+		}
+	}
+	return json.Marshal(out)
 }
 
 type JobEventRow struct {
