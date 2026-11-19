@@ -442,6 +442,11 @@ components:
         state: { $ref: "#/components/schemas/JobState" }
         last_error_code: { $ref: "#/components/schemas/JobErrorCode" }
         last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
+        existing_source_id:
+          allOf: [{ $ref: "#/components/schemas/ID" }]
+          description: >-
+            Set when the add failed with `source_exists`: the source that already existed
+            (`last_error_detail` is hashed, so the id is given here).
         result: { $ref: "#/components/schemas/SourceAddResult" }
     SourceAddResult:
       type: object

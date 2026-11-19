@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
@@ -135,11 +137,28 @@ func sourceAddError(err error) error {
 	return err // PermanentError (too_large), store or context errors
 }
 
+// existingSourceID reads the source id from a job error sourceAddError made for an
+// ExistsError ("source_exists:<id>"); any other error is 0.
+func existingSourceID(jobErr string) (int64, error) {
+	code, detail, _ := strings.Cut(jobErr, ":")
+	if code != string(CodeSourceExists) {
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(detail, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("source add error %s: bad source id", CodeSourceExists)
+	}
+	return id, nil
+}
+
 // SourceAddOutcome is where a queued source add stands.
 type SourceAddOutcome struct {
 	State  string           // the add_source job's state (queued, running, done, failed, cancelled)
 	Error  string           // the job's last error (content-free)
 	Result *AddSourceResult // set once done
+	// ExistingSourceID is the source that already existed when the add failed with
+	// CodeSourceExists (0 otherwise).
+	ExistingSourceID int64
 }
 
 // SourceAddOutcome reports on the add_source job jobID, for a CLI waiting on the daemon. A job
@@ -156,6 +175,9 @@ func (c *Controllers) SourceAddOutcome(ctx context.Context, jobID int64) (Source
 			return store.ErrNoJob
 		}
 		out.State, out.Error = j.State, j.LastError
+		if out.ExistingSourceID, err = existingSourceID(j.LastError); err != nil {
+			return err
+		}
 		if j.State != model.JobDone {
 			return nil
 		}

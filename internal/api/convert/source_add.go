@@ -8,7 +8,7 @@ import (
 
 // SourceAdd maps the outcome of the source add job jobID.
 func SourceAdd(jobID int64, o controllers.SourceAddOutcome) dto.SourceAdd {
-	out := dto.SourceAdd{JobID: jobID, State: dto.JobState(o.State)}
+	out := dto.SourceAdd{JobID: jobID, State: dto.JobState(o.State), ExistingSourceID: o.ExistingSourceID}
 	out.LastErrorCode, out.LastErrorDetail = splitError(o.Error)
 	if o.Result != nil {
 		r := AddSourceResult(*o.Result)

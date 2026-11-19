@@ -36,6 +36,23 @@ func TestQueuedSourceAdd(t *testing.T) {
 	require.ErrorAs(t, err, &controllers.ExistsError{})
 }
 
+// A queued add whose source was created while it waited fails as source_exists, with the
+// existing source's id.
+func TestQueuedSourceAddExists(t *testing.T) {
+	e := newEnv(t, 3, nil)
+	ctx := context.Background()
+	q, err := e.ctl.QueueSourceAdd(ctx, e.site.TagPath(), controllers.AddSourceOptions{})
+	require.NoError(t, err)
+	res, err := e.ctl.AddSource(ctx, e.site.TagPath(), controllers.AddSourceOptions{Confirm: true})
+	require.NoError(t, err)
+	e.drain(50)
+	o, err := e.ctl.SourceAddOutcome(ctx, q.JobID)
+	require.NoError(t, err)
+	require.Equal(t, model.JobFailed, o.State)
+	require.Equal(t, res.Source.ID, o.ExistingSourceID)
+	require.Nil(t, o.Result)
+}
+
 func TestQueuedSourceAddFailures(t *testing.T) {
 	e := newEnv(t, 3, nil)
 	ctx := context.Background()
