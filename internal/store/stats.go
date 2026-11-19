@@ -97,6 +97,7 @@ type Counts struct {
 	Requests1h      int
 	Requests24h     int
 	RequestsByClass map[string]int // last 24h
+	SourcesByState  map[string]int
 }
 
 // countGroups runs a `SELECT key, COUNT(*) ... GROUP BY key` query into dst. Its own function so
@@ -119,7 +120,7 @@ func countGroups(ctx context.Context, db querier, q string, dst map[string]int, 
 }
 
 func (s *ReadTx) Counts(ctx context.Context) (Counts, error) {
-	c := Counts{WorksByStatus: map[string]int{}, RequestsByClass: map[string]int{}}
+	c := Counts{WorksByStatus: map[string]int{}, RequestsByClass: map[string]int{}, SourcesByState: map[string]int{}}
 	now := s.now()
 	grouped := []struct {
 		db  querier
@@ -129,6 +130,7 @@ func (s *ReadTx) Counts(ctx context.Context) (Counts, error) {
 	}{
 		{s.meta, `SELECT status, COUNT(*) FROM works GROUP BY status`, c.WorksByStatus, nil},
 		{s.meta, `SELECT class, COUNT(*) FROM requests WHERE ts >= ? GROUP BY class`, c.RequestsByClass, []any{now.Add(-24 * time.Hour).Unix()}},
+		{s.meta, `SELECT state, COUNT(*) FROM sources GROUP BY state`, c.SourcesByState, nil},
 	}
 	for _, g := range grouped {
 		if err := countGroups(ctx, g.db, g.q, g.dst, g.arg...); err != nil {

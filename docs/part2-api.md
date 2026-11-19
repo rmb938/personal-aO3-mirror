@@ -523,7 +523,29 @@ Status: tick when the PR merges.
     - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
       becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
       `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,
-      images, requests by class) become lists of `{key-enum, count}`.
+      images, requests by class) become lists of `{key-enum, count}`. In two PRs:
+      - [x] **3c-1. Refactor: typed heartbeat, no source list in `Status`** (no API change).
+        - As built:
+          - `model.Heartbeat` (pid, phase, current_job, waiting_until, pacer fields,
+            backoff_until, `At`) and `model.DaemonPhase` (`idle`, `running`, `between`,
+            `stopped`; `model.DaemonPhases()`). The scheduler builds one; the store owns the
+            `daemon_state` key/value encoding (`SetHeartbeat` / `Heartbeat`, replacing
+            `SetDaemonState` / `DaemonState`). `At` is the newest row's `updated_at`; the old
+            `heartbeat` key is no longer written (a leftover row is ignored). A bad value reads
+            as zero.
+          - `StatusReport.Daemon` is a `model.Heartbeat`, and `DaemonRunning` applies the
+            staleness rule (`controllers.DaemonStaleAfter`, 2 min, and not `stopped`) that
+            the CLI used to apply.
+          - `StatusReport` no longer lists sources. `Counts.SourcesByState` has the totals,
+            and CLI `status` pages its sources table through `ListSources` (100 at a time, like
+            `source list`), as stage 6 will through `/sources`.
+      - [ ] **3c-2. Status route**: `GET /status` from `StatusReport`: heartbeat fields
+        (`heartbeat_at`, `running`, `dto.DaemonPhase`), count lists with enum keys (work
+        status, image status, request class, source state, job kind × state), tag info,
+        partial series, recent request errors (path, reason and req id are plain strings, so
+        hashed) and failed jobs (`dto.Job`). Convert tests check each key enum against its
+        model-side values (`model.DaemonPhases()`, work and image statuses, `httpx` classes
+        and kinds).
 - [ ] **4. Add source (public)**
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.

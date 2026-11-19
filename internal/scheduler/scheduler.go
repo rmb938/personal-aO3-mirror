@@ -55,7 +55,7 @@ type Scheduler struct {
 
 	hbMu   sync.Mutex // guards curJob/phase, read by the heartbeat ticker
 	curJob int64
-	phase  string
+	phase  model.DaemonPhase
 }
 
 func New(opts Options) *Scheduler {
@@ -123,7 +123,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		ran, err := s.Step(ctx)
 		if ctx.Err() != nil {
 			stopHB()
-			s.setPhase(context.Background(), 0, "stopped")
+			s.setPhase(context.Background(), 0, model.DaemonStopped)
 			s.log.Info("scheduler stopped")
 			return nil
 		}
@@ -131,7 +131,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.log.Error("scheduler step failed", "err", err.Error())
 		}
 		if !ran {
-			s.setPhase(ctx, 0, "idle")
+			s.setPhase(ctx, 0, model.DaemonIdle)
 			select {
 			case <-ctx.Done():
 			case <-time.After(s.options.Idle):
@@ -170,7 +170,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 			log.Error("job bookkeeping failed", "step", what, "err", err.Error())
 		}
 	}
-	s.setPhase(ctx, job.ID, "running")
+	s.setPhase(ctx, job.ID, model.DaemonRunning)
 	book("event_start", func(ctx context.Context, tx *store.Tx) error {
 		return tx.JobEvent(ctx, job.ID, "start", map[string]any{"attempt": job.Attempts, "target": job.Target})
 	})
@@ -247,7 +247,7 @@ func (s *Scheduler) execute(ctx context.Context, job model.Job) {
 		state := retry("error", code, s.options.Now().Add(5*time.Minute))
 		log.Error("job error", "error", err.Error(), "next_state", state)
 	}
-	s.setPhase(ctx, 0, "between")
+	s.setPhase(ctx, 0, model.DaemonBetween)
 }
 
 // runHandler runs a job's handler, turning a panic into a permanent failure so one bad page or
@@ -322,11 +322,11 @@ func (s *Scheduler) maybePrune(ctx context.Context) {
 }
 
 // heartbeatEvery is how often the daemon refreshes its heartbeat, also while a job is waiting
-// out a backoff. `status` treats a heartbeat older than 2 minutes as "not running".
+// out a backoff. A heartbeat older than controllers.DaemonStaleAfter counts as "not running".
 const heartbeatEvery = 30 * time.Second
 
 // setPhase records what the loop is doing and publishes it immediately.
-func (s *Scheduler) setPhase(ctx context.Context, jobID int64, phase string) {
+func (s *Scheduler) setPhase(ctx context.Context, jobID int64, phase model.DaemonPhase) {
 	s.hbMu.Lock()
 	s.curJob, s.phase = jobID, phase
 	s.hbMu.Unlock()
@@ -363,28 +363,23 @@ func (s *Scheduler) heartbeat(ctx context.Context) {
 	jobID, phase := s.curJob, s.phase
 	s.hbMu.Unlock()
 	st := s.options.Pacer.PacerState()
-	kv := map[string]string{
-		"heartbeat":     s.options.Now().UTC().Format(time.RFC3339),
-		"pid":           strconv.Itoa(os.Getpid()),
-		"phase":         phase,
-		"current_job":   strconv.FormatInt(jobID, 10),
-		"waiting_until": "",
-		"interval":      st.Interval.String(),
-		"slow_factor":   strconv.FormatFloat(st.Factor, 'f', 2, 64),
-		"consec_fails":  strconv.Itoa(st.ConsecFails),
-		"breaker_open":  strconv.FormatBool(st.BreakerOpen),
-		"day_count":     strconv.Itoa(st.DayCount),
-		"daily_budget":  strconv.Itoa(st.DailyBudget),
-		"backoff_until": "",
+	hb := model.Heartbeat{
+		PID:          os.Getpid(),
+		Phase:        phase,
+		CurrentJob:   jobID,
+		WaitingUntil: st.WaitingUntil,
+		Interval:     st.Interval,
+		SlowFactor:   st.Factor,
+		ConsecFails:  st.ConsecFails,
+		BreakerOpen:  st.BreakerOpen,
+		DayCount:     st.DayCount,
+		DailyBudget:  st.DailyBudget,
 	}
 	if st.BackoffTill.After(s.options.Now()) {
-		kv["backoff_until"] = st.BackoffTill.UTC().Format(time.RFC3339)
-	}
-	if !st.WaitingUntil.IsZero() {
-		kv["waiting_until"] = st.WaitingUntil.UTC().Format(time.RFC3339)
+		hb.BackoffUntil = st.BackoffTill
 	}
 	if err := s.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
-		return tx.SetDaemonState(ctx, kv)
+		return tx.SetHeartbeat(ctx, hb)
 	}); err != nil && ctx.Err() == nil {
 		s.log.Warn("heartbeat failed", "err", err.Error())
 	}

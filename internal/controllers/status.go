@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"time"
 
@@ -14,16 +13,20 @@ import (
 // Read models for the CLI (and the Part 2 API). Each is one read-only transaction: a consistent
 // snapshot that takes no write lock. All of them are content-free (ids, counts, states).
 
-// StatusReport is everything `ao3mirror status` shows.
+// DaemonStaleAfter is how old a heartbeat may be while the daemon still counts as running. The
+// scheduler refreshes it every 30s.
+const DaemonStaleAfter = 2 * time.Minute
+
+// StatusReport is everything `ao3mirror status` shows except the sources table, which callers
+// page through with ListSources (Counts.SourcesByState has the totals).
 type StatusReport struct {
 	Counts        store.Counts
-	Daemon        map[string]string // heartbeat keys written by the scheduler
-	DaemonAt      time.Time         // when the heartbeat was last written (zero: never ran)
-	Images        map[string]int    // by status
-	ImageBytes    int64             // stored image bytes
+	Daemon        model.Heartbeat
+	DaemonRunning bool           // a heartbeat within DaemonStaleAfter, and not stopped
+	Images        map[string]int // by status
+	ImageBytes    int64          // stored image bytes
 	TagInfo       TagInfoProgress
 	Jobs          map[string]map[string]int // kind -> state -> count
-	Sources       []model.Source
 	PartialSeries []store.PartialSeries
 	RequestErrors []store.RequestRow // most recent non-ok requests
 	FailedJobs    []model.Job        // most recent failed jobs
@@ -43,9 +46,10 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 		if r.Counts, err = tx.Counts(ctx); err != nil {
 			return err
 		}
-		if r.Daemon, r.DaemonAt, err = tx.DaemonState(ctx); err != nil {
+		if r.Daemon, err = tx.Heartbeat(ctx); err != nil {
 			return err
 		}
+		r.DaemonRunning = daemonRunning(r.Daemon, c.options.Now())
 		if r.Images, r.ImageBytes, err = tx.ImageCounts(ctx); err != nil {
 			return err
 		}
@@ -55,10 +59,6 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 			return err
 		}
 		if r.Jobs, err = tx.JobCounts(ctx); err != nil {
-			return err
-		}
-		// Every source, as before paging existed; stage 3c (GET /status) may cap this.
-		if r.Sources, err = tx.ListSources(ctx, 0, math.MaxInt); err != nil {
 			return err
 		}
 		if r.PartialSeries, err = tx.PartialSeriesList(ctx, 20); err != nil {
@@ -71,6 +71,11 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 		return err
 	})
 	return r, err
+}
+
+// daemonRunning reports whether heartbeat h, read at now, is from a live daemon.
+func daemonRunning(h model.Heartbeat, now time.Time) bool {
+	return !h.At.IsZero() && now.Sub(h.At) <= DaemonStaleAfter && h.Phase != model.DaemonStopped
 }
 
 // JobDebug is the content-free trace of one job.

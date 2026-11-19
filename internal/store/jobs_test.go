@@ -177,11 +177,6 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ev, 1)
 	require.JSONEq(t, `{"class":3}`, ev[0].Detail)
-	require.NoError(t, s.SetDaemonState(ctx, map[string]string{"heartbeat": "x"}))
-	m, at, err := s.DaemonState(ctx)
-	require.NoError(t, err)
-	require.Equal(t, "x", m["heartbeat"])
-	require.False(t, at.IsZero())
 }
 
 func TestFindJobsPagedAndCount(t *testing.T) {
