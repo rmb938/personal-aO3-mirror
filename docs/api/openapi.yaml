@@ -197,6 +197,11 @@ components:
       type: integer
       minimum: 1
       maximum: 9007199254740991
+    Duration:
+      type: string
+      description: A Go duration string, e.g. `6h0m0s`, `1.5s` (what Go's time.Duration.String writes).
+      pattern: '^-?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$'
+      example: 6h0m0s
     Timestamp:
       type: string
       format: date-time
@@ -218,7 +223,7 @@ components:
         revised_desc, title_asc, title_desc, words_asc, words_desc]
     Source:
       type: object
-      required: [id, kind, target, filters, path, state, poll_interval_s, priority, total_works,
+      required: [id, kind, target, filters, path, state, poll_interval, priority, total_works,
         est_requests, member_works, fetched_works]
       additionalProperties: false
       properties:
@@ -239,7 +244,7 @@ components:
         path: { type: string, description: "AO3 listing path (hashed)." }
         state: { $ref: "#/components/schemas/SourceState" }
         order: { $ref: "#/components/schemas/Order" }
-        poll_interval_s: { type: integer }
+        poll_interval: { $ref: "#/components/schemas/Duration" }
         priority: { type: integer }
         total_works: { type: [integer, "null"], description: "null until known." }
         est_requests: { type: [integer, "null"], description: "null until known." }
@@ -285,7 +290,7 @@ components:
             estimate: { $ref: "#/components/schemas/Estimate" }
     Estimate:
       type: object
-      required: [total, pages, listing_requests, work_fetches, requests, duration_s, disk_bytes, windowed]
+      required: [total, pages, listing_requests, work_fetches, requests, duration, disk_bytes, windowed]
       additionalProperties: false
       properties:
         total: { type: integer }
@@ -293,7 +298,7 @@ components:
         listing_requests: { type: integer }
         work_fetches: { type: integer }
         requests: { type: integer }
-        duration_s: { type: integer }
+        duration: { $ref: "#/components/schemas/Duration" }
         disk_bytes: { type: integer }
         windowed: { type: boolean, description: "Backfill sliced into revised-date windows (over 100k results)." }
     JobState:
@@ -473,10 +478,10 @@ components:
         waiting_until_at: { $ref: "#/components/schemas/Timestamp", description: "When a waiting request gets its slot." }
         pacer:
           type: object
-          required: [interval_ms, slow_factor, consec_fails, breaker_open, day_count, daily_budget]
+          required: [interval, slow_factor, consec_fails, breaker_open, day_count, daily_budget]
           additionalProperties: false
           properties:
-            interval_ms: { type: integer }
+            interval: { $ref: "#/components/schemas/Duration" }
             slow_factor: { type: number }
             consec_fails: { type: integer }
             breaker_open: { type: boolean }
@@ -488,7 +493,7 @@ components:
       enum: [ok, not_found, restricted, hidden, adult_gate, rate_limited, unavailable, parse_unexpected]
     RequestError:
       type: object
-      required: [requested_at, req_id, kind, path, status, class, reason, bytes, duration_ms, waited_ms, hop]
+      required: [requested_at, req_id, kind, path, status, class, reason, bytes, duration, waited, hop]
       additionalProperties: false
       properties:
         requested_at: { $ref: "#/components/schemas/Timestamp" }
@@ -500,6 +505,6 @@ components:
         class: { $ref: "#/components/schemas/RequestClass" }
         reason: { type: string, description: "Classifier reason (hashed)." }
         bytes: { type: integer }
-        duration_ms: { type: integer }
-        waited_ms: { type: integer }
+        duration: { $ref: "#/components/schemas/Duration" }
+        waited: { $ref: "#/components/schemas/Duration" }
         hop: { type: integer, description: "Redirect hop (0: the first request)." }

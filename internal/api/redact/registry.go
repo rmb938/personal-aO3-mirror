@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"time"
 )
 
 // keyPattern is the API's snake_case key convention.
@@ -16,7 +17,17 @@ var (
 	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
 	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 	enumType          = reflect.TypeFor[Enum]()
+	durationIface     = reflect.TypeFor[Duration]()
 )
+
+// Duration is an int64 type that marshals itself as a Go duration string (time.Duration's
+// String form, e.g. "1h30m0s"). A DTO field of such a type is a JSON string that passes
+// unhashed only when it is exactly such a string: its grammar (digits, '.', '-', unit
+// letters) can't carry content. DTO packages satisfy it structurally and never import redact.
+type Duration interface {
+	encoding.TextMarshaler
+	Duration() time.Duration
+}
 
 // Enum is a string type with a closed value set. A DTO field whose type (after pointers,
 // slices and arrays) implements it lets exactly the zero value's EnumValues through unhashed,

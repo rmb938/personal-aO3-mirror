@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // nodeKind is the JSON shape a schema node accepts.
@@ -30,7 +31,12 @@ const (
 	ruleTimestamp                // RFC3339 UTC (key ends in "_at")
 	ruleDate                     // YYYY-MM-DD (key ends in "_on")
 	rulePointer                  // a JSON Pointer into one of the node's request types
+	ruleDuration                 // a Go duration string (a Duration type)
 )
+
+// durationType is time.Duration, which a DTO may not use directly: encoding/json/v2 has no
+// default format for it. DTOs use a Duration type instead.
+var durationType = reflect.TypeFor[time.Duration]()
 
 // node is one position in a compiled response type. Struct nodes are shared per Go type, so a
 // recursive type compiles to a cycle.
@@ -56,6 +62,8 @@ func (n *node) allows(s string) bool {
 		return isDate(s)
 	case rulePointer:
 		return pointerIn(s, n.ptrs)
+	case ruleDuration:
+		return isDuration(s)
 	default:
 		return false
 	}
@@ -112,6 +120,20 @@ func walkPointer(n *node, segs []string) bool {
 	return true
 }
 
+// maxDurationLen bounds a duration string ("2562047h47m16.854775807s" is the longest).
+const maxDurationLen = 32
+
+// isDuration reports whether s is a duration as time.Duration.String writes it (what
+// format:units marshals). Its grammar is digits, '.', '-' and the unit letters, so it can't
+// carry content.
+func isDuration(s string) bool {
+	if s == "" || len(s) > maxDurationLen {
+		return false
+	}
+	d, err := time.ParseDuration(s)
+	return err == nil && d.String() == s
+}
+
 func isIndex(s string) bool {
 	if s == "" || (len(s) > 1 && s[0] == '0') {
 		return false
@@ -164,6 +186,19 @@ func (c *compiler) pointerNode(t reflect.Type, path string, types []reflect.Type
 func (c *compiler) compile(t reflect.Type, key, path string, manual map[string]struct{}) (*node, error) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+	if t == durationType {
+		// encoding/json/v2 has no default time.Duration format (and no format tag).
+		return nil, fmt.Errorf("redact: %s: use a Duration type (a duration string), not time.Duration", path)
+	}
+	if implements(t, durationIface) {
+		if manual != nil {
+			return nil, fmt.Errorf("redact: %s: RegisterFieldEnum on a Duration field", path)
+		}
+		if t.Kind() != reflect.Int64 {
+			return nil, fmt.Errorf("redact: %s: Duration type %s is not an int64 kind", path, t)
+		}
+		return &node{kind: kindString, rule: ruleDuration, path: path}, nil
 	}
 	if implements(t, enumType) {
 		if manual != nil {

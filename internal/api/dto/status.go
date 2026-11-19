@@ -89,11 +89,12 @@ type Daemon struct {
 
 // Pacer is the AO3 request pacer's state.
 type Pacer struct {
-	IntervalMS  int64   `json:"interval_ms"`
-	SlowFactor  float64 `json:"slow_factor"`
-	ConsecFails int     `json:"consec_fails"`
-	BreakerOpen bool    `json:"breaker_open"`
-	DayCount    int     `json:"day_count"`
+	// Interval is the current spacing between AO3 requests.
+	Interval    Duration `json:"interval"`
+	SlowFactor  float64  `json:"slow_factor"`
+	ConsecFails int      `json:"consec_fails"`
+	BreakerOpen bool     `json:"breaker_open"`
+	DayCount    int      `json:"day_count"`
 	// DailyBudget is the daily request budget (0: none).
 	DailyBudget    int       `json:"daily_budget"`
 	BackoffUntilAt time.Time `json:"backoff_until_at,omitzero"`
@@ -200,10 +201,11 @@ type RequestError struct {
 	Status int          `json:"status"`
 	Class  RequestClass `json:"class"`
 	// Reason is the classifier's reason (hashed).
-	Reason     string `json:"reason"`
-	Bytes      int    `json:"bytes"`
-	DurationMS int64  `json:"duration_ms"`
-	WaitedMS   int64  `json:"waited_ms"`
+	Reason string `json:"reason"`
+	Bytes  int    `json:"bytes"`
+	// Duration is how long the request took; Waited is how long it waited for its slot.
+	Duration Duration `json:"duration"`
+	Waited   Duration `json:"waited"`
 	// Hop is the redirect hop (0: the first request).
 	Hop int `json:"hop"`
 }

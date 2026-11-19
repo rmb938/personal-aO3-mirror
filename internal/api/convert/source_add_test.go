@@ -25,6 +25,6 @@ func TestSourceAdd(t *testing.T) {
 	assert.Empty(t, got.LastErrorCode)
 	assert.Equal(t, int64(3), got.Result.Source.ID)
 	assert.Equal(t, 20, got.Result.Blurbs)
-	assert.Equal(t, dto.Estimate{Total: 1, Pages: 2, ListingRequests: 3, WorkFetches: 4, Requests: 5, DurationS: 90,
+	assert.Equal(t, dto.Estimate{Total: 1, Pages: 2, ListingRequests: 3, WorkFetches: 4, Requests: 5, Duration: dto.Duration(90 * time.Second),
 		DiskBytes: 6, Windowed: true}, got.Result.Estimate)
 }

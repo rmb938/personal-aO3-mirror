@@ -56,9 +56,9 @@ type Source struct {
 	Path  string      `json:"path"`
 	State SourceState `json:"state"`
 	// Order is the backfill sort (omitted when the source has none, e.g. a work).
-	Order         Order `json:"order,omitzero"`
-	PollIntervalS int64 `json:"poll_interval_s"`
-	Priority      int   `json:"priority"`
+	Order        Order    `json:"order,omitzero"`
+	PollInterval Duration `json:"poll_interval"`
+	Priority     int      `json:"priority"`
 	// TotalWorks and EstRequests are null until known.
 	TotalWorks   *int `json:"total_works"`
 	EstRequests  *int `json:"est_requests"`
@@ -121,13 +121,14 @@ type SourceAddResult struct {
 
 // Estimate is the projected cost of a source's full backfill.
 type Estimate struct {
-	Total           int   `json:"total"`
-	Pages           int   `json:"pages"`
-	ListingRequests int   `json:"listing_requests"`
-	WorkFetches     int   `json:"work_fetches"`
-	Requests        int   `json:"requests"`
-	DurationS       int64 `json:"duration_s"`
-	DiskBytes       int64 `json:"disk_bytes"`
+	Total           int `json:"total"`
+	Pages           int `json:"pages"`
+	ListingRequests int `json:"listing_requests"`
+	WorkFetches     int `json:"work_fetches"`
+	Requests        int `json:"requests"`
+	// Duration is the projected backfill time at the configured request interval.
+	Duration  Duration `json:"duration"`
+	DiskBytes int64    `json:"disk_bytes"`
 	// Windowed means the backfill is sliced into revised-date windows (over 100k results).
 	Windowed bool `json:"windowed"`
 }
