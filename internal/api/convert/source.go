@@ -50,13 +50,13 @@ func Source(s model.Source) dto.Source {
 	return out
 }
 
-// filters maps the stored name → values JSON to a list sorted by name ([] when none).
+// filters maps the stored name → values JSON to a list sorted by name (nil when none).
 func filters(js string) []dto.Filter {
 	vals, err := ao3url.ParseFiltersJSON(js)
-	out := make([]dto.Filter, 0, len(vals))
 	if err != nil {
-		return out
+		return nil
 	}
+	var out []dto.Filter
 	for name, vs := range vals {
 		out = append(out, dto.Filter{Name: name, Values: slices.Clone(vs)})
 	}
