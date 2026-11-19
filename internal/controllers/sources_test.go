@@ -200,11 +200,11 @@ func TestListJobsPageAndTotal(t *testing.T) {
 		_, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindTagInfo, Target: "9", DedupeKey: jobs.TagKey(9)})
 		return err
 	}))
-	page, total, err := e.svc.ListJobs(ctx, store.JobFilter{Kind: jobs.KindWork, Offset: 1, Limit: 1})
+	page, total, err := e.svc.ListJobs(ctx, model.JobFilter{Kind: jobs.KindWork, Offset: 1, Limit: 1})
 	require.NoError(t, err)
 	require.Equal(t, 3, total)
 	require.Len(t, page, 1)
 	require.Equal(t, ids[1], page[0].ID, "second newest work job")
-	_, _, err = e.svc.ListJobs(ctx, store.JobFilter{Limit: 0})
+	_, _, err = e.svc.ListJobs(ctx, model.JobFilter{Limit: 0})
 	require.Error(t, err)
 }

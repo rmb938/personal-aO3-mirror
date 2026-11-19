@@ -497,11 +497,13 @@ Status: tick when the PR merges.
             source_id filter without a state.
           - The `OFFSET` assumption holds: `BenchmarkSourcesPage` (1000 sources × 200
             members) costs the same at offset 900 as at 0, so no deferred join.
-      - [ ] **3b-2. Refactor: `JobFilter` into `internal/model`** (no behaviour change).
+      - [x] **3b-2. Refactor: `JobFilter` into `internal/model`** (no behaviour change).
         `store.JobFilter` → `model.JobFilter`, and `store.JobOrder` with its constants
         (`JobsNewest`, `JobsOldest`, `JobsLastStarted`) → `model.JobOrder`, since the 3b-3
         handler builds one for `ListJobs`. `NewJob` and the other row types stay in `store`.
         Update every caller (store, controllers, scheduler tests, cmd).
+        - As built: both live in `model/job.go`; `store.jobWhere` and the store tests take
+          `model.JobFilter`. No other change.
       - [ ] **3b-3. Jobs routes**: `GET /jobs` (state, kind, source_id, page, per_page), and
         `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
         convert test against the `jobs.Kind*` constants.

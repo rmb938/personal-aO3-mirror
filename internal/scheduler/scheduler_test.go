@@ -177,7 +177,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 		e.drain(200)
 		e.clk.Advance(3 * time.Hour)
 	}
-	failed, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5000", Limit: 5})
+	failed, err := e.db.FindJobs(ctx, model.JobFilter{State: model.JobFailed, DedupePrefix: "work:5000", Limit: 5})
 	require.NoError(t, err)
 	require.NotEmpty(t, failed, "expected failed jobs for 5000")
 	e.srv.Handle("/works/5000") // AO3 recovered
@@ -195,7 +195,7 @@ func TestHandlerPanicFailsJob(t *testing.T) {
 	}
 	e.queueWork(5000)
 	e.drain(5) // must not panic out of Step
-	js, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5000", Limit: 1})
+	js, err := e.db.FindJobs(ctx, model.JobFilter{State: model.JobFailed, DedupePrefix: "work:5000", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, "panic", js[0].LastError, "panicking job should fail with code panic")
@@ -212,7 +212,7 @@ func TestJobFinishedDuringShutdownIsDone(t *testing.T) {
 	e.queueWork(5000)
 	_, err := e.sch.Step(ctx)
 	require.NoError(t, err)
-	js, err := e.db.FindJobs(context.Background(), store.JobFilter{DedupePrefix: "work:5000", Limit: 1})
+	js, err := e.db.FindJobs(context.Background(), model.JobFilter{DedupePrefix: "work:5000", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, js, 1)
 	require.Equal(t, model.JobDone, js[0].State, "job that succeeded during shutdown should be done")
@@ -305,7 +305,7 @@ func TestFairnessAlternates(t *testing.T) {
 		ran, err := e.sch.Step(ctx)
 		require.NoError(t, err)
 		require.True(t, ran)
-		last, err := e.db.FindJobs(ctx, store.JobFilter{NotQueued: true, Order: store.JobsLastStarted, Limit: 1})
+		last, err := e.db.FindJobs(ctx, model.JobFilter{NotQueued: true, Order: model.JobsLastStarted, Limit: 1})
 		require.NoError(t, err)
 		require.Len(t, last, 1)
 		order = append(order, last[0].SourceID)
@@ -355,7 +355,7 @@ func TestUnavailableRetriesWithBackoff(t *testing.T) {
 	e.add(e.site.TagPath())
 	e.srv.Handle("/works/5000", fakeao3.Reply{Status: 525, Body: fakeao3.Cloudflare525})
 	e.drain(20)
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{DedupePrefix: "work:5000", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, model.JobFilter{DedupePrefix: "work:5000", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, model.JobQueued, jobs[0].State)

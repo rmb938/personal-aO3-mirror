@@ -200,15 +200,15 @@ func TestFindJobsPagedAndCount(t *testing.T) {
 	require.NoError(t, s.FinishJob(ctx, ids[1], model.JobFailed, "not_found"))
 
 	for _, c := range []struct {
-		f    JobFilter
+		f    model.JobFilter
 		want []int64 // newest first
 	}{
-		{JobFilter{}, []int64{ids[6], ids[5], ids[4], ids[3], ids[2], ids[1], ids[0]}},
-		{JobFilter{State: model.JobQueued}, []int64{ids[6], ids[5], ids[4], ids[3], ids[2]}},
-		{JobFilter{Kind: "poll"}, []int64{ids[6], ids[4], ids[2], ids[0]}},
-		{JobFilter{SourceID: src, State: model.JobQueued}, []int64{ids[6], ids[4], ids[2]}},
-		{JobFilter{Kind: "work", State: model.JobFailed}, []int64{ids[1]}},
-		{JobFilter{SourceID: src + 1}, nil},
+		{model.JobFilter{}, []int64{ids[6], ids[5], ids[4], ids[3], ids[2], ids[1], ids[0]}},
+		{model.JobFilter{State: model.JobQueued}, []int64{ids[6], ids[5], ids[4], ids[3], ids[2]}},
+		{model.JobFilter{Kind: "poll"}, []int64{ids[6], ids[4], ids[2], ids[0]}},
+		{model.JobFilter{SourceID: src, State: model.JobQueued}, []int64{ids[6], ids[4], ids[2]}},
+		{model.JobFilter{Kind: "work", State: model.JobFailed}, []int64{ids[1]}},
+		{model.JobFilter{SourceID: src + 1}, nil},
 	} {
 		n, err := s.CountJobs(ctx, c.f)
 		require.NoError(t, err)
@@ -231,7 +231,7 @@ func TestFindJobsPagedAndCount(t *testing.T) {
 		require.Empty(t, page, "%+v: offset past the end", c.f)
 	}
 	for _, bad := range [][2]int{{-1, 10}, {0, 0}, {0, -1}} {
-		_, err := s.FindJobs(ctx, JobFilter{Offset: bad[0], Limit: bad[1]})
+		_, err := s.FindJobs(ctx, model.JobFilter{Offset: bad[0], Limit: bad[1]})
 		require.Error(t, err, "offset %d limit %d", bad[0], bad[1])
 	}
 }

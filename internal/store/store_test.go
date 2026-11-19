@@ -401,7 +401,7 @@ func TestWorkLookupsAreExact(t *testing.T) {
 
 	enqueue(t, s, NewJob{Kind: "work", Target: "12", Priority: 3, DedupeKey: "work:12"})
 	enqueue(t, s, NewJob{Kind: "work", Target: "123", Priority: 3, DedupeKey: "work:123"})
-	jobs, err := s.FindJobs(ctx, JobFilter{DedupeKey: "work:12", Limit: 10})
+	jobs, err := s.FindJobs(ctx, model.JobFilter{DedupeKey: "work:12", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, "12", jobs[0].Target)

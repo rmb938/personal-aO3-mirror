@@ -11,7 +11,6 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
-	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // An AO3 page with the layout but none of the work structure: fetchable, not parseable.
@@ -42,7 +41,7 @@ func TestWorkParseFailureKeepsRawAndDoesNotLoop(t *testing.T) {
 	e.drain(50)
 
 	require.Equal(t, 2, countRequests(e, "/works/5001?view_full_work=true"), "initial + one failed update, no retries")
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5001", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, model.JobFilter{State: model.JobFailed, DedupePrefix: "work:5001", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, "parse_")
@@ -94,7 +93,7 @@ func TestWorkPageMissingChaptersKeepsStoredChapters(t *testing.T) {
 	require.Equal(t, 3, d.ChapterRows, "stored chapter rows must be kept")
 	require.Equal(t, 2, d.RawVersions, "good raw page kept next to the refused one")
 	require.False(t, d.FetchFailedAt.IsZero(), "refused page marks the fetch failed")
-	jobs, err := e.db.FindJobs(ctx, store.JobFilter{State: model.JobFailed, DedupePrefix: "work:5002", Limit: 5})
+	jobs, err := e.db.FindJobs(ctx, model.JobFilter{State: model.JobFailed, DedupePrefix: "work:5002", Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Contains(t, jobs[0].LastError, "chapters_shrank")
