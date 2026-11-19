@@ -471,7 +471,7 @@ Status: tick when the PR merges.
         - `serve` closes the store when `serve()` returns, and `newServer` closes it on any
           error after opening it. The store and controllers log through the API's logger, so
           the leak test also checks their lines.
-    - [ ] **3b. Jobs**, in three PRs:
+    - [x] **3b. Jobs**, in three PRs:
       - [x] **3b-1. Store + controller: paged jobs.** Store offset/limit + `CountJobs` for
         `JobFilter`, a controller returning `(page, total)`.
         - The jobs table grows with every work fetch. Check that its indexes cover each filter
