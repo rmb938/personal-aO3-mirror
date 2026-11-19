@@ -7,6 +7,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/request"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/route"
 )
 
 // listSources is GET /api/v1/sources (page, per_page).
@@ -76,10 +77,10 @@ func (a *API) addSource(admin bool) handlerFunc {
 			return nil, err
 		}
 		if added.Added != nil {
-			return &Response{Status: http.StatusCreated, Location: pathFor(routeSource, added.Added.Source.ID),
+			return &Response{Status: http.StatusCreated, Location: route.Path(route.Source, added.Added.Source.ID),
 				Body: convert.AddSourceResult(*added.Added)}, nil
 		}
-		return &Response{Status: http.StatusAccepted, Location: pathFor(routeSourceAdd, added.JobID),
+		return &Response{Status: http.StatusAccepted, Location: route.Path(route.SourceAdd, added.JobID),
 			Body: convert.QueuedSourceAdd(added)}, nil
 	}
 }

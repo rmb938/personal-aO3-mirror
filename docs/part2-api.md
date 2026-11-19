@@ -46,6 +46,7 @@ internal/api/dto/            response types, registered with the enforcer
 internal/api/request/        request body types with their Validate methods (from stage 4)
 internal/api/convert/        model/controller results -> DTOs, requests -> options (3a-4)
 internal/api/problem/        problem Error, detail catalogue, Validation collector (from 3g)
+internal/api/route/          route patterns + route.Path, shared by api and apiclient (6a-1)
 internal/apiclient/          typed client over the admin socket, used by the CLI
 docs/api/openapi.yaml        hand-written OpenAPI 3.1; a test checks that it matches the route table
 ```
@@ -795,7 +796,16 @@ Status: tick when the PR merges.
       - On the public listener both paths are 404.
 - [ ] **6. `internal/apiclient` + CLI conversion**
   - 6a: client (unix-socket transport, problem+json errors) and `source *` commands, including
-    `add --wait` polling `/source-adds/{job}`.
+    `add --wait` polling `/source-adds/{job}`. Split into three PRs:
+    - [x] **6a-1. Refactor: route patterns in `internal/api/route`.** As built: the route
+      constants and `pathFor` (now `route.Path(pattern, ids...)`, same panics) move out of
+      `internal/api` into a stdlib-only package, so the client builds its paths from the
+      same patterns the router registers. No API change.
+    - [ ] **6a-2. `existing_source_id` on a failed source add.** A source add that fails
+      because the source exists (`source_exists:<id>`) gives the id as a number on
+      `dto.SourceAdd`, since `last_error_detail` is hashed. (The synchronous 409
+      `already-exists` already carries `Location`, from stage 4.)
+    - [ ] **6a-3. `internal/apiclient` + `source *` commands.**
   - 6b: `status`, `jobs`, `debug`.
   - CLI `--names` maps to the reveal param. It is still user-only (the guard already blocks it).
   - Update `cmd/ao3mirror/main_test.go` end-to-end tests to start an in-process `serve`.
