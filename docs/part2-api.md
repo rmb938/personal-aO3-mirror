@@ -720,6 +720,27 @@ Status: tick when the PR merges.
     `PATCH /sources/{id}` (settings), `DELETE /sources/{id}`.
   - `GET /debug/jobs/{id}`, `/debug/works/{id}`.
   - A test asserts these return 404 on the public listener.
+  - Split into three PRs:
+  - [x] **5a. Source state actions.** As built:
+    - `POST /sources/{id}/confirm|pause|resume` and `DELETE /sources/{id}` return 204 with
+      no body (`noContent()`; `handle` writes the status alone, and the enforcer passes the
+      empty body and sets no `Content-Length`). `POST /sources/{id}/cancel` returns 200
+      `dto.SourceCancelled{dropped_jobs}`. The controllers are unchanged; a client that
+      wants the new state GETs the source.
+    - A state the change does not allow is 409 `state-conflict` (`store.ErrStateConflict`);
+      an unknown source is 404.
+    - On the public listener the action paths are 404, but `DELETE /sources/{id}` is 405
+      (`Allow: GET`), as the path exists there with GET only.
+    - `onlyPathID(r, name)` parses a route taking one path ID and no query params.
+    - Leak test samples gain `fresh` (each request goes to a new API over a freshly seeded
+      store, since the route changes state) and `before` (POSTs sent first, e.g. a pause
+      before a resume).
+  - [ ] **5b. Refresh + settings:** `POST /sources/{id}/refresh` (body `{full}`) and
+    `PATCH /sources/{id}` (body `{poll_interval?, priority?}`), with request types. Refresh of a
+    source in the wrong state must become 409: `refreshSource` returns a plain error today
+    (500), so wrap `store.ErrStateConflict` there.
+  - [ ] **5c. Debug:** `GET /debug/jobs/{id}`, `/debug/works/{id}` (DTOs for job events,
+    request rows and the work diagnostics).
 - [ ] **6. `internal/apiclient` + CLI conversion**
   - 6a: client (unix-socket transport, problem+json errors) and `source *` commands, including
     `add --wait` polling `/source-adds/{job}`.

@@ -16,6 +16,12 @@ const (
 	routeJobs      = "/api/v1/jobs"
 	routeJob       = "/api/v1/jobs/{id}"
 	routeStatus    = "/api/v1/status"
+
+	// Admin socket only.
+	routeSourceConfirm = "/api/v1/sources/{id}/confirm"
+	routeSourcePause   = "/api/v1/sources/{id}/pause"
+	routeSourceResume  = "/api/v1/sources/{id}/resume"
+	routeSourceCancel  = "/api/v1/sources/{id}/cancel"
 )
 
 // pathFor fills route's {param} segments with ids, in order: pathFor(routeSource, 3) is

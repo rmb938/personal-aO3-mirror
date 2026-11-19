@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/convert"
@@ -27,12 +28,8 @@ func (a *API) listSources(r *http.Request) (any, error) {
 
 // getSource is GET /api/v1/sources/{id}.
 func (a *API) getSource(r *http.Request) (any, error) {
-	q, err := parseParams(r)
+	id, err := onlyPathID(r, dto.ParamID)
 	if err != nil {
-		return nil, err
-	}
-	id := q.pathID(dto.ParamID)
-	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	s, err := a.ctl.GetSource(r.Context(), id)
@@ -44,12 +41,8 @@ func (a *API) getSource(r *http.Request) (any, error) {
 
 // getSourceAdd is GET /api/v1/source-adds/{job_id}: where a queued source add stands.
 func (a *API) getSourceAdd(r *http.Request) (any, error) {
-	q, err := parseParams(r)
+	id, err := onlyPathID(r, dto.ParamJobID)
 	if err != nil {
-		return nil, err
-	}
-	id := q.pathID(dto.ParamJobID)
-	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	o, err := a.ctl.SourceAddOutcome(r.Context(), id)
@@ -89,4 +82,34 @@ func (a *API) addSource(admin bool) handlerFunc {
 		return &Response{Status: http.StatusAccepted, Location: pathFor(routeSourceAdd, added.JobID),
 			Body: convert.QueuedSourceAdd(added)}, nil
 	}
+}
+
+// sourceAction is an admin-socket source change with no result body (204): POST
+// /api/v1/sources/{id}/confirm|pause|resume and DELETE /api/v1/sources/{id}. A source not in a
+// state the change allows is 409 state-conflict.
+func (a *API) sourceAction(op func(ctx context.Context, id int64) error) handlerFunc {
+	return func(r *http.Request) (any, error) {
+		id, err := onlyPathID(r, dto.ParamID)
+		if err != nil {
+			return nil, err
+		}
+		if err := op(r.Context(), id); err != nil {
+			return nil, err
+		}
+		return noContent(), nil
+	}
+}
+
+// cancelSource is POST /api/v1/sources/{id}/cancel (admin socket): the source stops for good
+// and its queued jobs are dropped; mirrored works are kept.
+func (a *API) cancelSource(r *http.Request) (any, error) {
+	id, err := onlyPathID(r, dto.ParamID)
+	if err != nil {
+		return nil, err
+	}
+	n, err := a.ctl.CancelSource(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	return convert.SourceCancelled(n), nil
 }

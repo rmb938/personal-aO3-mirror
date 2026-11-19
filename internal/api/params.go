@@ -124,6 +124,16 @@ func (p *params) pathID(name dto.ParamName) int64 {
 	return v
 }
 
+// onlyPathID parses a route that takes one ID path parameter and no query parameters.
+func onlyPathID(r *http.Request, name dto.ParamName) (int64, error) {
+	q, err := parseParams(r)
+	if err != nil {
+		return 0, err
+	}
+	id := q.pathID(name)
+	return id, q.Err()
+}
+
 // parseInt parses s as a base-10 integer (digits only, optional leading '-') in [1, hi].
 func parseInt(s string, hi int64) (int64, bool) {
 	if s == "" || s[0] == '+' {

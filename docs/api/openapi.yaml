@@ -98,6 +98,64 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Source" }
         default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: removeSource
+      summary: Remove a source and its memberships; mirrored works are kept.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The source was removed. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{id}/confirm:
+    post:
+      operationId: confirmSource
+      summary: Activate a source waiting for confirmation (pending_confirm → active).
+      description: Any other state is 409 `state-conflict`.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The source is active. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{id}/pause:
+    post:
+      operationId: pauseSource
+      summary: Stop scheduling a source (pending_confirm, active or done_backfill → paused).
+      description: |
+        Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The source is paused. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{id}/resume:
+    post:
+      operationId: resumeSource
+      summary: Re-activate a paused source (paused → active).
+      description: Any other state is 409 `state-conflict`.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The source is active. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/sources/{id}/cancel:
+    post:
+      operationId: cancelSource
+      summary: Stop a source for good and drop its queued jobs; mirrored works are kept.
+      description: An already cancelled source is 409 `state-conflict`.
+      x-admin-only: true
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The source is cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceCancelled" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/source-adds/{job_id}:
     get:
       operationId: getSourceAdd
@@ -343,6 +401,12 @@ components:
       properties:
         job_id: { $ref: "#/components/schemas/ID" }
         created: { type: boolean, description: "False when the same add was already queued (this request's options were dropped)." }
+    SourceCancelled:
+      type: object
+      required: [dropped_jobs]
+      additionalProperties: false
+      properties:
+        dropped_jobs: { type: integer, minimum: 0, description: "How many of the source's queued jobs were cancelled." }
     Estimate:
       type: object
       required: [total, pages, listing_requests, work_fetches, requests, duration, disk_bytes, windowed]

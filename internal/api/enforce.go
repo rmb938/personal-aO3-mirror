@@ -182,7 +182,9 @@ func (a *API) write(w http.ResponseWriter, mode redact.Mode, inner http.Header, 
 	if mode == redact.Revealed {
 		h.Set("Cache-Control", "no-store")
 	}
-	h.Set("Content-Length", strconv.Itoa(len(body)))
+	if status != http.StatusNoContent { // a 204 has no Content-Length (RFC 9110 8.6)
+		h.Set("Content-Length", strconv.Itoa(len(body)))
+	}
 	w.WriteHeader(status)
 	if len(body) > 0 {
 		_, _ = w.Write(body)
