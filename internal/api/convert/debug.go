@@ -13,8 +13,8 @@ func JobDebug(d controllers.JobDebug) dto.JobDebug {
 	return dto.JobDebug{
 		Job:       Job(d.Job),
 		DedupeKey: d.Job.DedupeKey,
-		Events:    mapSlice(d.Events, jobEvent),
-		Requests:  mapSlice(d.Requests, requestRow),
+		Events:    convSlice(d.Events, jobEvent),
+		Requests:  convSlice(d.Requests, requestRow),
 	}
 }
 
@@ -22,8 +22,8 @@ func JobDebug(d controllers.JobDebug) dto.JobDebug {
 func WorkDebug(d controllers.WorkDebug) dto.WorkDebug {
 	return dto.WorkDebug{
 		Work:     workDiag(d.ID, d.Diag),
-		Jobs:     mapSlice(d.Jobs, Job),
-		Requests: mapSlice(d.Requests, requestRow),
+		Jobs:     convSlice(d.Jobs, Job),
+		Requests: convSlice(d.Requests, requestRow),
 	}
 }
 

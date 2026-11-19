@@ -48,7 +48,7 @@ func TestStatus(t *testing.T) {
 		{Kind: "poll", State: "done", Count: 1}, {Kind: "work", State: "done", Count: 1}, {Kind: "work", State: "queued", Count: 2},
 	}, got.Jobs, "sorted by kind, then state")
 	assert.Equal(t, []dto.SeriesGap{{ID: 8, WorksTotal: 3, Mirrored: 1, MissingPositions: []int{2, 3},
-		MissingWorkIDs: []int64{}}}, got.PartialSeries)
+		MissingWorkIDs: nil}}, got.PartialSeries)
 	assert.Equal(t, []dto.Request{{RequestedAt: at.UTC(), ReqID: "r1", Kind: "work", Path: "/works/1", Status: 503,
 		Class: "unavailable", Reason: "status=503", Duration: dto.Duration(1500 * time.Millisecond), Waited: dto.Duration(2 * time.Second), Hop: 1}}, got.RequestErrors)
 	assert.Equal(t, time.UTC, got.RequestErrors[0].RequestedAt.Location())
@@ -56,11 +56,11 @@ func TestStatus(t *testing.T) {
 	assert.True(t, got.Daemon.Running)
 
 	empty := Status(controllers.StatusReport{})
-	assert.Equal(t, []dto.WorkStatusCount{}, empty.Works.ByStatus, "nil maps give [], not null")
-	assert.Equal(t, []dto.JobCount{}, empty.Jobs)
-	assert.Equal(t, []dto.TagInfoType{}, empty.TagInfo.Types)
-	assert.Equal(t, []dto.Request{}, empty.RequestErrors)
-	assert.Equal(t, []dto.Job{}, empty.FailedJobs)
+	assert.Nil(t, empty.Works.ByStatus, "empty lists are nil")
+	assert.Nil(t, empty.Jobs)
+	assert.Nil(t, empty.TagInfo.Types)
+	assert.Nil(t, empty.RequestErrors)
+	assert.Nil(t, empty.FailedJobs)
 }
 
 func TestDaemon(t *testing.T) {
@@ -80,19 +80,19 @@ func TestDaemon(t *testing.T) {
 
 func TestCounts(t *testing.T) {
 	conv := func(k string, n int) dto.SourceCount { return dto.SourceCount{State: dto.SourceState(k), Count: n} }
-	assert.Equal(t, []dto.SourceCount{}, counts(nil, conv))
+	assert.Nil(t, counts(nil, conv))
 	assert.Equal(t, []dto.SourceCount{{State: "a", Count: 2}, {State: "b", Count: 1}},
 		counts(map[string]int{"b": 1, "a": 2}, conv), "sorted by value")
 }
 
 func TestJobCounts(t *testing.T) {
-	assert.Equal(t, []dto.JobCount{}, jobCounts(nil))
+	assert.Nil(t, jobCounts(nil))
 	assert.Equal(t, []dto.JobCount{{Kind: "a", State: "x", Count: 1}, {Kind: "a", State: "y", Count: 2}, {Kind: "b", State: "x", Count: 3}},
 		jobCounts(map[string]map[string]int{"b": {"x": 3}, "a": {"y": 2, "x": 1}}))
 }
 
 func TestSeriesGap(t *testing.T) {
-	assert.Equal(t, dto.SeriesGap{ID: 1, WorksTotal: 2, Mirrored: 1, MissingPositions: []int{}, MissingWorkIDs: []int64{5}},
+	assert.Equal(t, dto.SeriesGap{ID: 1, WorksTotal: 2, Mirrored: 1, MissingWorkIDs: []int64{5}},
 		seriesGap(store.PartialSeries{ID: 1, WorksTotal: 2, Mirrored: 1, MissingWorkIDs: []int64{5}}))
 }
 
