@@ -116,6 +116,18 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) dto.Problem {
 	return p
 }
 
+// requireParamProblem asserts w is a 422 validation error with one error naming param (""
+// for an undeclared name, which is never echoed).
+func requireParamProblem(t *testing.T, w *httptest.ResponseRecorder, param dto.ParamName, msg string) {
+	t.Helper()
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, msg)
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeValidation, p.Type, msg)
+	require.Len(t, p.Errors, 1, msg)
+	assert.Equal(t, param, p.Errors[0].Parameter, msg)
+	assert.NotEmpty(t, p.Errors[0].Detail, msg)
+}
+
 // revealQuery is the query string that asks for revealed content.
 const revealQuery = "?" + RevealParam + "=1"
 
@@ -155,9 +167,7 @@ func TestHealthzAndVersion(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &v))
 		assert.Equal(t, dto.Version{Version: testVersion, ParserVersion: parse.Version}, v)
 
-		w = get(h, "/api/v1/healthz?page=1")
-		require.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Equal(t, dto.CodeUnknownParam, decodeProblem(t, w).Code)
+		requireParamProblem(t, get(h, "/api/v1/healthz?page=1"), dto.ParamPage, "not taken here")
 	}
 }
 
@@ -165,12 +175,12 @@ func TestNotFoundAndMethodNotAllowed(t *testing.T) {
 	a, _ := newTestAPI(t, nil)
 	w := get(a.Public(), "/api/v1/nope")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, dto.CodeNotFound, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type)
 	assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 
 	w = do(a.Public(), httptest.NewRequest(http.MethodDelete, "/api/v1/healthz", nil))
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	assert.Equal(t, dto.CodeMethodNotAllowed, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeMethodNotAllowed, decodeProblem(t, w).Type)
 	assert.Equal(t, []string{http.MethodGet}, w.Header().Values("Allow"))
 }
 
@@ -262,7 +272,7 @@ func TestAllRoutesLeak(t *testing.T) {
 					strings.NewReader(`{"x":"`+sentinel+`body"}`))
 				req.Header.Set(headerRequestID, sentinel+" not a valid id")
 				w = do(r, req)
-				assert.Equal(t, http.StatusBadRequest, w.Code)
+				requireParamProblem(t, w, "", "unknown param, never echoed")
 				assertNoSentinel(t, w, logs)
 
 				if s.content {

@@ -74,6 +74,9 @@ Design rules for API code:
 - A string field with a closed value set is a named string type in `dto` with an
   `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
   `string` field is free text and always hashed.
+- Errors are RFC 9457 problems (`docs/api/problems.md`). A problem `detail` is only ever a
+  catalogue message from `newDetail` in `internal/api/details.go` (package-level vars), never
+  built from input or content; a new problem type gets a `## <slug>` section there.
 - Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
   query param allowlists. Logs carry route patterns and param names, never query values or
   bodies.

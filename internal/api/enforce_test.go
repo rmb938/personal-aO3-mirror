@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -43,7 +42,7 @@ func TestEnforceUnknownKey(t *testing.T) {
 	for _, target := range []string{"/bad", "/bad" + revealQuery} {
 		w := get(a.public, target)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+		assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
 		assertNoSentinel(t, w, logs)
 	}
 	assert.Contains(t, logs.String(), "api response refused by enforcer")
@@ -59,7 +58,8 @@ func TestEnforceNonJSON(t *testing.T) {
 	w := get(a.public, "/text")
 	require.Equal(t, http.StatusForbidden, w.Code)
 	p := decodeProblem(t, w)
-	assert.Equal(t, dto.CodeRevealRequired, p.Code)
+	assert.Equal(t, dto.TypeRevealRequired, p.Type)
+	assert.Equal(t, detailNotJSON.msg, p.Detail)
 	assert.Empty(t, w.Header().Get("Location"), "a replaced response drops the handler's headers")
 	assertNoSentinel(t, w, logs)
 
@@ -78,7 +78,7 @@ func TestEnforceMissingContentType(t *testing.T) {
 	})
 	w := get(a.public, "/raw")
 	require.Equal(t, http.StatusForbidden, w.Code, "JSON without a JSON content type is not trusted")
-	assert.Equal(t, dto.CodeRevealRequired, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeRevealRequired, decodeProblem(t, w).Type)
 }
 
 func TestEnforceInvalidJSON(t *testing.T) {
@@ -89,7 +89,7 @@ func TestEnforceInvalidJSON(t *testing.T) {
 	})
 	w := get(a.public, "/broken")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
 }
 
 // JSON written around respond has no Go type to check against: refused even when it would
@@ -103,7 +103,7 @@ func TestEnforceUntypedJSON(t *testing.T) {
 	for _, target := range []string{"/raw", "/raw" + revealQuery} {
 		w := get(a.public, target)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+		assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
 	}
 	assert.Contains(t, logs.String(), "not written by respond")
 }
@@ -117,7 +117,7 @@ func TestEnforceUnregisteredType(t *testing.T) {
 	a.public.Get("/other", a.handle(func(*http.Request) (any, error) { return other{Status: "ok"}, nil }))
 	w := get(a.public, "/other")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
 }
 
 func TestEnforceEmptyBody(t *testing.T) {
@@ -144,7 +144,7 @@ func TestEnforceResponseTooLarge(t *testing.T) {
 	})
 	w := get(a.public, "/huge")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
 	assert.Contains(t, logs.String(), "response too large")
 }
 
@@ -153,9 +153,9 @@ func TestMiddlewareProblemsAreWellFormed(t *testing.T) {
 	a, _ := newTestAPI(t, nil)
 	for _, target := range []string{"/nope", "/api/v1/healthz?x=1", "/api/v1/healthz?" + strings.Repeat("a", maxURLBytes)} {
 		w := get(a.Public(), target)
-		var p map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &p))
-		_, known := dto.ProblemCode(p["code"].(string)).Info()
-		assert.True(t, known, p["code"])
+		p := decodeProblem(t, w)
+		_, known := p.Type.Info()
+		assert.True(t, known, p.Type)
+		assert.True(t, p.Detail != "" || len(p.Errors) > 0, "every middleware problem explains itself")
 	}
 }

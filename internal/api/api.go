@@ -122,7 +122,7 @@ func (a *API) router(admin bool) *chi.Mux {
 		a.crossOrigin(),
 		a.reveal,
 	)
-	r.NotFound(a.handle(func(*http.Request) (any, error) { return nil, errCode(dto.CodeNotFound) }))
+	r.NotFound(a.handle(func(*http.Request) (any, error) { return nil, errDetail(dto.TypeNotFound, detailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
 
 	r.Get("/api/v1/healthz", a.handle(a.healthz))
@@ -158,5 +158,5 @@ func (a *API) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	respondError(w, r, a.log, errCode(dto.CodeMethodNotAllowed))
+	respondError(w, r, a.log, errDetail(dto.TypeMethodNotAllowed, detailMethodNotAllowed))
 }

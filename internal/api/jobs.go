@@ -17,13 +17,13 @@ func (a *API) listJobs(r *http.Request) (any, error) {
 		return nil, err
 	}
 	var f model.JobFilter
-	if f.State, err = q.enum(string(dto.ParamState), dto.JobState("")); err != nil {
+	if f.State, err = q.enum(string(dto.ParamState), dto.JobState(""), detailJobState); err != nil {
 		return nil, err
 	}
-	if f.Kind, err = q.enum(string(dto.ParamKind), dto.JobKind("")); err != nil {
+	if f.Kind, err = q.enum(string(dto.ParamKind), dto.JobKind(""), detailJobKind); err != nil {
 		return nil, err
 	}
-	if f.SourceID, err = q.int(string(dto.ParamSourceID), 0, 1, MaxID); err != nil {
+	if f.SourceID, err = q.int(string(dto.ParamSourceID), 0, 1, MaxID, detailID); err != nil {
 		return nil, err
 	}
 	p, err := q.page()

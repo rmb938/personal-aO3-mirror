@@ -30,7 +30,7 @@ with a keyed hash by a mandatory response enforcer, so a handler bug cannot leak
 | CLI | The source, status, jobs and debug commands become API clients of the admin socket. They fail clearly if `serve` isn't running. `run`, `reparse`, `fetch-work`, `config`, `dev` and `version` stay direct. |
 | Reveal | `reveal_fanwork=1` is the only way to get real content, per request, on every route. No flag, config or header reveals globally. |
 | Strict server flag | `serve --no-reveal` makes the server refuse reveal (403 `reveal_disabled`). It can only make the server stricter. The guard forces it on every `serve` that Claude starts. |
-| Search | Free text and complex criteria go in a JSON body using **QUERY** (RFC 10008, June 2026). There is no POST alias. Free-text fields (`q`, name lookups) return 400 `reveal_required` without reveal. |
+| Search | Free text and complex criteria go in a JSON body using **QUERY** (RFC 10008, June 2026). There is no POST alias. Free-text fields (`q`, name lookups) return 400 `reveal-required` without reveal. |
 | Router | `github.com/go-chi/chi/v5` (v5.5.0) for sub-routers and middleware. It supports QUERY natively (`r.Query(pattern, h)`, `mQUERY` in `tree.go`), so it needs no `RegisterMethod`. `github.com/go-chi/httprate` (v0.16.1) for rate limits. Run `go list -m X@latest` again when adding them. |
 | Auth | Placeholder stage only. No design now. A future `users.db` is separate from meta/content. |
 
@@ -86,7 +86,7 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    Handlers never get a raw `http.ResponseWriter` (a lint test greps handler files for it).
 2. **Enforcer middleware** (`redact.Enforcer`) wraps the whole router, outermost after
    recovery. In hashed mode (the default) it buffers the body (with a cap) and requires a JSON
-   content type. Any other content type is replaced with 403 `reveal_required`. It then walks the
+   content type. Any other content type is replaced with 403 `reveal-required`. It then walks the
    JSON against the **schema of the Go type** `respond` marshaled it from (from 3c-3), compiled
    at startup by reflecting over the registered DTO types. JSON not written by `respond` (no
    type) or of an unregistered type gives 500.
@@ -118,12 +118,16 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    400. It is parsed once by middleware into the context. `serve --no-reveal` turns it into 403.
 4. **Non-JSON content** (images, in a later stage) is reveal-only by construction: the enforcer
    refuses non-JSON in hashed mode.
-5. **Errors** use RFC 9457 `application/problem+json` with only enumerable fields: `code` (enum),
-   `title` (a fixed string per code, registered), `status`, and `field` (a registered key name).
-   There is no free-text `detail`. Job `last_error` is split into `last_error_code` (enum) and
-   `last_error_detail` (hashed).
+5. **Errors** are RFC 9457 `application/problem+json` (from 3d): `type` (a URI per problem
+   type, `docs/api/problems.md#<slug>`), `title` (fixed per type), `status`, an optional
+   `detail`, and on `validation-error` an `errors` extension of `{detail, parameter}` items
+   (`pointer`, a JSON Pointer into the body, comes with 3e). Every string is from a fixed set:
+   `detail` messages are a catalogue in `api/details.go` (`newDetail`, package-level vars only),
+   registered with the enforcer as the only values of the two `detail` fields, and never include
+   client input. `parameter` is a `dto.ParamName` (query and path names only). Job `last_error`
+   is split into `last_error_code` (enum) and `last_error_detail` (hashed).
 6. **Free-text inputs** (`q`, `name`) need reveal. In hashed mode they return 400
-   `reveal_required` (the oracle rule). Structured inputs (IDs, enums, numeric ranges, dates) are
+   `reveal-required` (the oracle rule). Structured inputs (IDs, enums, numeric ranges, dates) are
    always allowed.
 7. **The all-routes leak test** (added in stage 2, grows with every route):
    - Walk the chi route table. Every route must have a sample request in the test table, or the
@@ -215,7 +219,8 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
     content in cursors).
   - The hashed-mode buffer cap is 32 MiB (a 500 above it).
 - **Errors** map controller/store sentinels to status codes in one place (`api/errors.go`):
-  `ErrNo*` → 404, `ErrStateConflict` → 409, `ExistsError` → 409, validation → 400/422, anything
+  `ErrNo*` → 404, `ErrStateConflict` → 409, `ExistsError` → 409, invalid parameters → 422
+  `validation-error`, unreadable query or body → 400, anything
   else → 500 (`internal`).
 
 ### Config (`api:` section in `internal/config`, with validation)
@@ -592,7 +597,32 @@ Status: tick when the PR merges.
           enum value in `Health.status` is hashed), untyped and unregistered responses refused,
           and two fuzzers whose oracle reads allowed values from the Go type by reflection
           (structured random values marshaled with json/v2, and raw JSON).
-- [ ] **4. Add source (public)**
+- [x] **3d. Refactor: RFC 9457 problems.** The first problems had no `type` (so implicitly
+  `about:blank`, whose `title` should be the status phrase; ours weren't), stopped at one bare
+  `field`, and had no `detail`. As built:
+  - `dto.Problem{type, title, status, detail, errors}` and `dto.ProblemError{detail, parameter}`.
+    `dto.ProblemType` (URI enum, `ProblemTypeBase` + slug) replaces `ProblemCode`; the
+    type → `{Status, Title}` table stays in `dto/problem.go`. Titles are status-phrase style
+    ("Not Found", "Validation Error").
+  - Our own 16 types, documented one `## <slug>` section each in `docs/api/problems.md` (a
+    test checks the sections match the types). Invalid, unknown and repeated query/path
+    parameters are 422 `validation-error` (was 400 `invalid_param` / `unknown_param` /
+    `duplicate_param`); a malformed query string or too many parameters stay 400 `bad-request`.
+  - `api.Error{Type, Status, Detail, Errors []ParamError}`; helpers `errType`, `errDetail`,
+    `errParam`. The detail catalogue is `api/details.go`: `newDetail` at package init only,
+    `oneOf(enum)` for "must be one of: …". `newEnforcer` registers the catalogue as the only
+    values of `Problem.detail` and `ProblemError.detail`; anything else there is hashed.
+    `q.int`, `q.enum` and `parseInt` take the detail describing their range.
+  - An unknown parameter's error item names it only when it is a declared `ParamName` (e.g.
+    `page` on a route without paging); otherwise it has no `parameter`.
+  - `dto.ParamName` holds query and path names only.
+- [ ] **3e. Request validation.** Validation functions per request type that collect every
+  error (not first-fail) into `errors`; query-parameter checks collect too. Body errors carry
+  `pointer` (RFC 6901 JSON Pointer), checked by the enforcer against the request DTO's Go
+  type (each segment a json key of the struct at that level, or an index into a slice), so
+  nested keys and array items need no list. `ao3url` returns typed reasons, each with its own
+  catalogue message (the CLI's URL hints).
+- [ ] **4. Add source (public)** (draft PR #32, to be rebased onto 3d/3e)
   - `POST /api/v1/sources` with body `{url, order?, priority?, poll_interval?}` returns
     202 + `{job_id}` + `Location: /api/v1/source-adds/{job_id}`. A single-work URL returns 201.
   - Uses `QueueSourceAdd`. `confirm` is **never** accepted publicly: large sources wait for
@@ -681,6 +711,6 @@ Status: tick when the PR merges.
   port and the admin socket (`curl --unix-socket data/api/admin.sock`). The guard blocks Claude
   from naming `data/`, so Claude asks the user to run these commands and share the output, and
   does not work around it with a scratch data dir. It checks that strings are `h_…` hashes,
-  that `X-Fanwork: hashed` is set, that free text gives `reveal_required`, and that rate limits
+  that `X-Fanwork: hashed` is set, that free text gives `reveal-required`, and that rate limits
   return 429. Claude never sends `reveal_fanwork`; the user checks reveal mode themselves.
 - Stage 0: `make guard-test` covers the new guard rules.

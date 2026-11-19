@@ -64,15 +64,11 @@ func TestListJobs(t *testing.T) {
 		"/api/v1/jobs?per_page=101": dto.ParamPerPage,
 		"/api/v1/jobs?page=0":       dto.ParamPage,
 	} {
-		w := get(h, target)
-		require.Equal(t, http.StatusBadRequest, w.Code, target)
-		p := decodeProblem(t, w)
-		assert.Equal(t, dto.CodeInvalidParam, p.Code, target)
-		assert.Equal(t, field, p.Field, target)
+		requireParamProblem(t, get(h, target), field, target)
 	}
-	w := get(h, "/api/v1/jobs?target=1")
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, dto.CodeUnknownParam, decodeProblem(t, w).Code)
+	requireParamProblem(t, get(h, "/api/v1/jobs?target=1"), "", "unknown param")
+	w := get(h, "/api/v1/jobs?state=bogus")
+	assert.Equal(t, detailJobState.msg, decodeProblem(t, w).Errors[0].Detail, "the detail lists the values")
 }
 
 func TestGetJob(t *testing.T) {
@@ -93,15 +89,11 @@ func TestGetJob(t *testing.T) {
 
 	w := get(h, "/api/v1/jobs/99")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, dto.CodeNotFound, decodeProblem(t, w).Code)
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeNotFound, p.Type)
+	assert.Equal(t, detailNoJob.msg, p.Detail)
 	for _, id := range []string{"0", "abc", "-1", "9007199254740992"} {
-		w := get(h, "/api/v1/jobs/"+id)
-		require.Equal(t, http.StatusBadRequest, w.Code, id)
-		p := decodeProblem(t, w)
-		assert.Equal(t, dto.CodeInvalidParam, p.Code)
-		assert.Equal(t, dto.ParamID, p.Field)
+		requireParamProblem(t, get(h, "/api/v1/jobs/"+id), dto.ParamID, id)
 	}
-	w = get(h, "/api/v1/jobs/1?state=done")
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, dto.CodeUnknownParam, decodeProblem(t, w).Code)
+	requireParamProblem(t, get(h, "/api/v1/jobs/1?state=done"), dto.ParamState, "declared name, not taken here")
 }

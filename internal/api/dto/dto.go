@@ -11,20 +11,6 @@
 // text and is always hashed.
 package dto
 
-// Problem is an RFC 9457 problem details body (application/problem+json). It has only
-// enumerable fields: no free-text detail.
-type Problem struct {
-	// Code is the machine-readable error code.
-	Code ProblemCode `json:"code"`
-	// Title is the fixed human-readable title for Code.
-	Title ProblemTitle `json:"title"`
-	// Status is the HTTP status code.
-	Status int `json:"status"`
-	// Field names the request parameter or body field at fault, when there is one. It is
-	// always a name the API declares, never echoed client input.
-	Field ParamName `json:"field,omitzero"`
-}
-
 // HealthStatus is Health.Status (an enum).
 type HealthStatus string
 

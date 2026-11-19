@@ -58,21 +58,23 @@ func TestHandleError(t *testing.T) {
 	w := serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, store.ErrNoWork })
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, contentTypeProblem, w.Header().Get("Content-Type"))
-	assert.JSONEq(t, `{"code":"not_found","title":"Not found","status":404}`, w.Body.String())
+	assert.JSONEq(t, `{"type":"`+string(dto.TypeNotFound)+`","title":"Not Found","status":404}`, w.Body.String())
 	assert.Empty(t, logs.String(), "expected errors are not logged")
 
-	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errField(dto.CodeInvalidParam, "page") })
-	assert.JSONEq(t, `{"code":"invalid_param","title":"Invalid parameter","status":400,"field":"page"}`, w.Body.String())
+	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errParam("page", detailPage) })
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.JSONEq(t, `{"type":"`+string(dto.TypeValidation)+`","title":"Validation Error","status":422,`+
+		`"detail":"`+detailInvalidParams.msg+`","errors":[{"detail":"`+detailPage.msg+`","parameter":"page"}]}`, w.Body.String())
 
 	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errors.New("db exploded") })
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.JSONEq(t, `{"code":"internal","title":"Internal server error","status":500}`, w.Body.String())
+	assert.JSONEq(t, `{"type":"`+string(dto.TypeInternal)+`","title":"Internal Server Error","status":500}`, w.Body.String())
 	assert.NotContains(t, w.Body.String(), "exploded", "error text never reaches the client")
 	assert.Contains(t, logs.String(), "api handler error")
 }
 
 func TestHandleQuery415AdvertisesAcceptQuery(t *testing.T) {
-	h := func(*http.Request) (any, error) { return nil, errCode(dto.CodeUnsupportedMediaType) }
+	h := func(*http.Request) (any, error) { return nil, errDetail(dto.TypeUnsupportedMediaType, detailMediaType) }
 	w := serve(t, discardLogger(), methodQuery, h)
 	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Accept-Query"))

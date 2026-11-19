@@ -15,25 +15,25 @@ import (
 //   - Content-Type must be application/json (charset, if given, utf-8), else 415;
 //   - the body is capped at maxBodyBytes by handle (413 above it);
 //   - exactly one JSON value: no trailing data, no unknown fields, no duplicate keys, valid
-//     UTF-8 (encoding/json/v2 defaults plus RejectUnknownMembers); else 400 invalid_body.
+//     UTF-8 (encoding/json/v2 defaults plus RejectUnknownMembers); else 400 invalid-body.
 //
 // Errors never quote the body. Callers still validate each field (ranges, checkText).
 func decodeJSON(r *http.Request, dst any) error {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		return errCode(dto.CodeUnsupportedMediaType)
+		return errDetail(dto.TypeUnsupportedMediaType, detailMediaType)
 	}
 	if r.Body == nil {
-		return errCode(dto.CodeInvalidBody)
+		return errDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			return errCode(dto.CodeBodyTooLarge)
+			return errDetail(dto.TypeBodyTooLarge, detailBodyTooLarge)
 		}
-		return errCode(dto.CodeInvalidBody)
+		return errDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
 	if err := json.Unmarshal(raw, dst, json.RejectUnknownMembers(true)); err != nil {
-		return errCode(dto.CodeInvalidBody)
+		return errDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
 	return nil
 }
