@@ -8,6 +8,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
@@ -24,6 +25,8 @@ func TestEnumSetsMatchModel(t *testing.T) {
 	assert.ElementsMatch(t, states, dto.SourceState("").EnumValues(), "source states")
 	assert.ElementsMatch(t, model.JobStates(), dto.JobState("").EnumValues(), "job states")
 	assert.ElementsMatch(t, kinds, dto.SourceKind("").EnumValues(), "source kinds")
+	assert.ElementsMatch(t, jobs.Kinds(), dto.JobKind("").EnumValues(), "job kinds")
+	assert.Equal(t, model.JobQueued, string(dto.JobQueued))
 	assert.ElementsMatch(t, ao3url.OrderNames(), dto.Order("").EnumValues(), "orders")
 	assert.ElementsMatch(t, controllers.JobErrorCodes(), dto.JobErrorCode("").EnumValues(), "job error codes")
 }

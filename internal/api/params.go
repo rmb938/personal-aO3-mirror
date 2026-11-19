@@ -70,6 +70,18 @@ func (q query) int(name string, def, lo, hi int64) (int64, error) {
 	return parseInt(name, s, lo, hi)
 }
 
+// enum returns parameter name when it is one of e's values, or "" when it is absent.
+func (q query) enum(name string, e interface{ EnumValues() []string }) (string, error) {
+	s, ok := q[name]
+	if !ok {
+		return "", nil
+	}
+	if !slices.Contains(e.EnumValues(), s) {
+		return "", errField(dto.CodeInvalidParam, name)
+	}
+	return s, nil
+}
+
 // parseInt parses s as a base-10 integer (digits only, optional leading '-') in [lo, hi].
 func parseInt(field, s string, lo, hi int64) (int64, error) {
 	if s == "" || s[0] == '+' {
@@ -99,16 +111,16 @@ func (p Page) Offset() int64 { return (p.Page - 1) * p.PerPage }
 // page reads `page` (default 1) and `per_page` (default 20, max 100), and enforces
 // (page-1)*per_page <= maxOffset without overflowing.
 func (q query) page() (Page, error) {
-	per, err := q.int("per_page", defaultPerPage, 1, maxPerPage)
+	per, err := q.int(string(dto.ParamPerPage), defaultPerPage, 1, maxPerPage)
 	if err != nil {
 		return Page{}, err
 	}
-	pg, err := q.int("page", 1, 1, maxOffset+1)
+	pg, err := q.int(string(dto.ParamPage), 1, 1, maxOffset+1)
 	if err != nil {
 		return Page{}, err
 	}
 	if pg-1 > maxOffset/per {
-		return Page{}, errField(dto.CodeInvalidParam, "page")
+		return Page{}, errField(dto.CodeInvalidParam, string(dto.ParamPage))
 	}
 	return Page{Page: pg, PerPage: per}, nil
 }

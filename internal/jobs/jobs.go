@@ -26,6 +26,11 @@ const (
 	KindSourceAdd = "source_add"
 )
 
+// Kinds lists every job kind (the API's dto.JobKind set is tested against it).
+func Kinds() []string {
+	return []string{KindPoll, KindBackfill, KindWork, KindTagInfo, KindSeries, KindSourceAdd}
+}
+
 // SourceAddKey is the dedupe key for adding one source; hash is a content-free hash of its
 // kind, target and filters.
 func SourceAddKey(hash string) string { return "source_add:" + hash }

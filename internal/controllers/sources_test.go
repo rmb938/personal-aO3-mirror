@@ -207,4 +207,11 @@ func TestListJobsPageAndTotal(t *testing.T) {
 	require.Equal(t, ids[1], page[0].ID, "second newest work job")
 	_, _, err = e.svc.ListJobs(ctx, model.JobFilter{Limit: 0})
 	require.Error(t, err)
+
+	j, err := e.svc.GetJob(ctx, ids[2])
+	require.NoError(t, err)
+	assert.Equal(t, ids[2], j.ID)
+	assert.Equal(t, jobs.KindWork, j.Kind)
+	_, err = e.svc.GetJob(ctx, 999)
+	require.ErrorIs(t, err, store.ErrNoJob)
 }

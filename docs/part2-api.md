@@ -471,7 +471,7 @@ Status: tick when the PR merges.
         - `serve` closes the store when `serve()` returns, and `newServer` closes it on any
           error after opening it. The store and controllers log through the API's logger, so
           the leak test also checks their lines.
-    - [ ] **3b. Jobs**, in three PRs:
+    - [x] **3b. Jobs**, in three PRs:
       - [x] **3b-1. Store + controller: paged jobs.** Store offset/limit + `CountJobs` for
         `JobFilter`, a controller returning `(page, total)`.
         - The jobs table grows with every work fetch. Check that its indexes cover each filter
@@ -504,9 +504,22 @@ Status: tick when the PR merges.
         Update every caller (store, controllers, scheduler tests, cmd).
         - As built: both live in `model/job.go`; `store.jobWhere` and the store tests take
           `model.JobFilter`. No other change.
-      - [ ] **3b-3. Jobs routes**: `GET /jobs` (state, kind, source_id, page, per_page), and
+      - [x] **3b-3. Jobs routes**: `GET /jobs` (state, kind, source_id, page, per_page), and
         `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
         convert test against the `jobs.Kind*` constants.
+        - As built:
+          - `dto.Job`: id, kind, target (hashed), `source_id` (omitted when none), priority,
+            state, attempts, max_attempts, `last_error_code`/`last_error_detail`,
+            `not_before_at`, `created_at`, `started_at`, `finished_at` (zero times omitted). The
+            dedupe key is not exposed (debug, stage 5, may add it).
+          - `JobState`/`JobErrorCode` moved to `dto/job.go` beside `JobKind`.
+          - Jobs are newest first; `state=queued` lists them oldest first (queue order), as the
+            CLI `jobs` command does. `state`/`kind` must be in their dto set (`query.enum`),
+            else 400 `invalid_param`; `source_id` is an ID. `dto.ParamName` gains `state`,
+            `kind`, `source_id`.
+          - New `jobs.Kinds()` (a jobs test parses `jobs.go` so every `Kind*` constant is in
+            it) and controller `GetJob` (`store.ErrNoJob` → 404).
+          - Seed gains a queued backfill job of the tag source with a sentinel target.
     - [ ] **3c. Status**: `GET /status`. Maps are not allowed in DTOs, so the heartbeat map
       becomes fixed fields (pid, phase, current_job, `heartbeat_at`, pacer fields,
       `backoff_until_at`, …) and the count maps (works by status, jobs by kind and state,

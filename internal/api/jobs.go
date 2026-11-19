@@ -1,0 +1,58 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/api/convert"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
+)
+
+// listJobs is GET /api/v1/jobs (state, kind, source_id, page, per_page). Jobs come newest
+// first, except a state=queued listing, which is in queue order (oldest first).
+func (a *API) listJobs(r *http.Request) (any, error) {
+	q, err := parseQuery(r, string(dto.ParamState), string(dto.ParamKind), string(dto.ParamSourceID),
+		string(dto.ParamPage), string(dto.ParamPerPage))
+	if err != nil {
+		return nil, err
+	}
+	var f model.JobFilter
+	if f.State, err = q.enum(string(dto.ParamState), dto.JobState("")); err != nil {
+		return nil, err
+	}
+	if f.Kind, err = q.enum(string(dto.ParamKind), dto.JobKind("")); err != nil {
+		return nil, err
+	}
+	if f.SourceID, err = q.int(string(dto.ParamSourceID), 0, 1, MaxID); err != nil {
+		return nil, err
+	}
+	p, err := q.page()
+	if err != nil {
+		return nil, err
+	}
+	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	if f.State == string(dto.JobQueued) {
+		f.Order = model.JobsOldest
+	}
+	items, total, err := a.ctl.ListJobs(r.Context(), f)
+	if err != nil {
+		return nil, err
+	}
+	return convert.JobList(items, total, p.Page, p.PerPage), nil
+}
+
+// getJob is GET /api/v1/jobs/{id}.
+func (a *API) getJob(r *http.Request) (any, error) {
+	if _, err := parseQuery(r); err != nil {
+		return nil, err
+	}
+	id, err := pathID(r, dto.ParamID)
+	if err != nil {
+		return nil, err
+	}
+	j, err := a.ctl.GetJob(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	return convert.Job(j), nil
+}
