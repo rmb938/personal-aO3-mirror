@@ -111,11 +111,11 @@ func (p Page) Offset() int64 { return (p.Page - 1) * p.PerPage }
 // page reads `page` (default 1) and `per_page` (default 20, max 100), and enforces
 // (page-1)*per_page <= maxOffset without overflowing.
 func (q query) page() (Page, error) {
-	per, err := q.int("per_page", defaultPerPage, 1, maxPerPage)
+	per, err := q.int(string(dto.ParamPerPage), defaultPerPage, 1, maxPerPage)
 	if err != nil {
 		return Page{}, err
 	}
-	pg, err := q.int("page", 1, 1, maxOffset+1)
+	pg, err := q.int(string(dto.ParamPage), 1, 1, maxOffset+1)
 	if err != nil {
 		return Page{}, err
 	}
