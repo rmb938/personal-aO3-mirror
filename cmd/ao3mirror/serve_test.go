@@ -69,7 +69,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	// --no-reveal: the reveal param is refused, not honoured.
 	status, _, body := get(t, tcp, base+"/api/v1/healthz?"+api.RevealParam+"=1")
 	assert.Equal(t, http.StatusForbidden, status)
-	assert.Equal(t, string(dto.CodeRevealDisabled), body["code"])
+	assert.Equal(t, string(dto.TypeRevealDisabled), body["type"])
 
 	// The store is open: a store-backed route answers on a fresh data dir.
 	status, _, body = get(t, tcp, base+"/api/v1/sources")

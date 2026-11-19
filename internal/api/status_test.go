@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net/http"
 	"testing"
 	"time"
 
@@ -53,7 +52,5 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, seedFailedAdd, s.FailedJobs[0].ID)
 	assert.True(t, isHash(s.FailedJobs[0].LastErrorDetail), "failed job detail hashed")
 
-	w := get(h, "/api/v1/status?verbose=1")
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, dto.CodeUnknownParam, decodeProblem(t, w).Code)
+	requireParamProblem(t, get(h, "/api/v1/status?verbose=1"), "", "unknown param")
 }

@@ -13,13 +13,27 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 )
 
-// requireAPIError asserts err is an *Error with the code and field.
-func requireAPIError(t *testing.T, err error, code dto.ProblemCode, field string) {
+// requireAPIError asserts err is an *Error of type typ and, when param is set, a validation
+// error naming exactly that (raw) parameter.
+func requireAPIError(t *testing.T, err error, typ dto.ProblemType, param string) {
+	t.Helper()
+	e := asAPIError(t, err)
+	assert.Equal(t, typ, e.Type)
+	if param != "" {
+		require.Len(t, e.Errors, 1)
+		assert.Equal(t, param, e.Errors[0].Param)
+		assert.NotEmpty(t, e.Errors[0].Detail.msg, "every parameter error explains itself")
+	} else {
+		assert.Empty(t, e.Errors)
+	}
+}
+
+// asAPIError requires err to be an *Error and returns it.
+func asAPIError(t *testing.T, err error) *Error {
 	t.Helper()
 	e, ok := errors.AsType[*Error](err)
 	require.True(t, ok, "want *Error, got %v", err)
-	assert.Equal(t, code, e.Code)
-	assert.Equal(t, field, e.Field)
+	return e
 }
 
 func TestParseQuery(t *testing.T) {
@@ -41,46 +55,54 @@ func TestParseQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, query{"page": "1"}, q)
 
+	// An unknown name is never echoed; a declared name the route doesn't take is named.
 	_, err = parse("SENTINEL=1", "page")
-	requireAPIError(t, err, dto.CodeUnknownParam, "")
+	requireAPIError(t, err, dto.TypeValidation, "SENTINEL")
+	assert.Equal(t, []dto.ProblemError{{Detail: detailUnknownParam.msg}}, asAPIError(t, err).problem().Errors)
+	_, err = parse("per_page=1", "page")
+	requireAPIError(t, err, dto.TypeValidation, "per_page")
+	assert.Equal(t, []dto.ProblemError{{Detail: detailUnknownParam.msg, Parameter: dto.ParamPerPage}},
+		asAPIError(t, err).problem().Errors)
 
 	_, err = parse("page=1&page=2", "page")
-	requireAPIError(t, err, dto.CodeDuplicateParam, "page")
+	requireAPIError(t, err, dto.TypeValidation, "page")
 
 	_, err = parse(RevealParam + "=1&" + RevealParam + "=1")
-	requireAPIError(t, err, dto.CodeDuplicateParam, RevealParam)
+	requireAPIError(t, err, dto.TypeValidation, RevealParam)
 
 	_, err = parse("page=%zz", "page")
-	requireAPIError(t, err, dto.CodeBadRequest, "")
+	requireAPIError(t, err, dto.TypeBadRequest, "")
 
 	_, err = parse("page=1;per_page=2", "page", "per_page")
-	requireAPIError(t, err, dto.CodeBadRequest, "")
+	requireAPIError(t, err, dto.TypeBadRequest, "")
 
 	many := strings.Repeat("a=1&", maxQueryParams) + "a=1"
 	_, err = parse(many, "a")
-	requireAPIError(t, err, dto.CodeBadRequest, "")
+	requireAPIError(t, err, dto.TypeBadRequest, "")
 }
 
 func TestParseInt(t *testing.T) {
 	ok := map[string]int64{"1": 1, "42": 42, "007": 7, "100": 100}
 	for s, want := range ok {
-		v, err := parseInt("page", s, 1, 100)
+		v, err := parseInt("page", s, 1, 100, detailPage)
 		require.NoError(t, err, s)
 		assert.Equal(t, want, v, s)
 	}
 	for _, s := range []string{"", "0", "101", "+5", "-1", "1.5", "1e3", " 1", "1 ", "0x10", "abc",
 		"99999999999999999999"} {
-		_, err := parseInt("page", s, 1, 100)
-		requireAPIError(t, err, dto.CodeInvalidParam, "page")
+		_, err := parseInt("page", s, 1, 100, detailPage)
+		requireAPIError(t, err, dto.TypeValidation, "page")
+		assert.Equal(t, detailPage, asAPIError(t, err).Errors[0].Detail)
 	}
 
 	v, err := parseID("id", "9007199254740991")
 	require.NoError(t, err)
 	assert.Equal(t, int64(MaxID), v)
 	_, err = parseID("id", "9007199254740992")
-	requireAPIError(t, err, dto.CodeInvalidParam, "id")
+	requireAPIError(t, err, dto.TypeValidation, "id")
+	assert.Equal(t, detailID, asAPIError(t, err).Errors[0].Detail)
 	_, err = parseID("id", "0")
-	requireAPIError(t, err, dto.CodeInvalidParam, "id")
+	requireAPIError(t, err, dto.TypeValidation, "id")
 }
 
 func TestPage(t *testing.T) {
@@ -104,7 +126,7 @@ func TestPage(t *testing.T) {
 	for _, c := range cases {
 		p, err := c.q.page()
 		if c.badField != "" {
-			requireAPIError(t, err, dto.CodeInvalidParam, c.badField)
+			requireAPIError(t, err, dto.TypeValidation, c.badField)
 			continue
 		}
 		require.NoError(t, err, c.q)
@@ -118,6 +140,6 @@ func TestCheckText(t *testing.T) {
 	require.NoError(t, checkText("q", "hello wörld", 11))
 	require.NoError(t, checkText("q", "", 1))
 	for _, s := range []string{"\x00", "a\nb", "tab\t", "\u0085", "bad\xff", "twelve runes"} {
-		requireAPIError(t, checkText("q", s, 11), dto.CodeInvalidParam, "q")
+		requireAPIError(t, checkText("q", s, 11), dto.TypeValidation, "q")
 	}
 }

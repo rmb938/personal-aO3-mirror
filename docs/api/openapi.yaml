@@ -156,13 +156,29 @@ components:
   schemas:
     Problem:
       type: object
-      required: [code, title, status]
+      description: |
+        RFC 9457 problem details. Every string is from a fixed set (types, titles, the detail
+        catalogue, declared parameter names); docs/api/problems.md documents each type.
+      required: [type, title, status]
       additionalProperties: false
       properties:
-        code: { type: string, description: "Machine-readable error code (closed set)." }
-        title: { type: string, description: "Fixed title for the code." }
+        type:
+          type: string
+          format: uri
+          description: Problem type URI, `https://github.com/rmb938/personal-aO3-mirror/blob/main/docs/api/problems.md#<slug>`.
+        title: { type: string, description: "The type's fixed title." }
         status: { type: integer }
-        field: { type: string, description: "The request parameter or body field at fault." }
+        detail: { type: string, description: "What went wrong in this occurrence and how to fix it." }
+        errors:
+          type: array
+          description: The invalid parts of the request (validation-error).
+          items:
+            type: object
+            required: [detail]
+            additionalProperties: false
+            properties:
+              detail: { type: string }
+              parameter: { type: string, description: "The query or path parameter at fault, when it is a declared name." }
     Health:
       type: object
       required: [status]

@@ -70,11 +70,7 @@ func TestListSources(t *testing.T) {
 		"/api/v1/sources?page=0":                 dto.ParamPage,
 		"/api/v1/sources?page=1002&per_page=100": dto.ParamPage,
 	} {
-		w := get(h, target)
-		require.Equal(t, http.StatusBadRequest, w.Code, target)
-		p := decodeProblem(t, w)
-		assert.Equal(t, dto.CodeInvalidParam, p.Code, target)
-		assert.Equal(t, field, p.Field, target)
+		requireParamProblem(t, get(h, target), field, target)
 	}
 }
 
@@ -98,17 +94,13 @@ func TestGetSource(t *testing.T) {
 
 	w := get(h, "/api/v1/sources/99")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, dto.CodeNotFound, decodeProblem(t, w).Code)
+	p := decodeProblem(t, w)
+	assert.Equal(t, dto.TypeNotFound, p.Type)
+	assert.Equal(t, detailNoSource.msg, p.Detail)
 	for _, id := range []string{"0", "abc", "-1", "9007199254740992"} {
-		w := get(h, "/api/v1/sources/"+id)
-		require.Equal(t, http.StatusBadRequest, w.Code, id)
-		p := decodeProblem(t, w)
-		assert.Equal(t, dto.CodeInvalidParam, p.Code)
-		assert.Equal(t, dto.ParamID, p.Field)
+		requireParamProblem(t, get(h, "/api/v1/sources/"+id), dto.ParamID, id)
 	}
-	w = get(h, "/api/v1/sources/1?page=1")
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, dto.CodeUnknownParam, decodeProblem(t, w).Code)
+	requireParamProblem(t, get(h, "/api/v1/sources/1?page=1"), dto.ParamPage, "declared name, not taken here")
 }
 
 func TestGetSourceAdd(t *testing.T) {
@@ -134,11 +126,9 @@ func TestGetSourceAdd(t *testing.T) {
 	for _, id := range []string{"3", "99"} { // a work job, and no job
 		w := get(h, "/api/v1/source-adds/"+id)
 		require.Equal(t, http.StatusNotFound, w.Code, id)
-		assert.Equal(t, dto.CodeNotFound, decodeProblem(t, w).Code)
+		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type)
 	}
-	w := get(h, "/api/v1/source-adds/x")
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, dto.ParamJobID, decodeProblem(t, w).Field)
+	requireParamProblem(t, get(h, "/api/v1/source-adds/x"), dto.ParamJobID, "bad job id")
 }
 
 // The access log names the numeric path ID, never the response's content.

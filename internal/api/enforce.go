@@ -136,7 +136,7 @@ func (a *API) enforce(next http.Handler) http.Handler {
 		case mode == redact.Revealed:
 			a.write(w, mode, bw.header, status, body, "")
 		default:
-			a.writeProblem(w, mode, &Error{Code: dto.CodeRevealRequired, Status: http.StatusForbidden})
+			a.writeProblem(w, mode, &Error{Type: dto.TypeRevealRequired, Status: http.StatusForbidden, Detail: detailNotJSON})
 		}
 	})
 }
@@ -148,7 +148,7 @@ func (a *API) enforceFailed(w http.ResponseWriter, r *http.Request, mode redact.
 		slog.String("req_id", state(r.Context()).id),
 		slog.String("route", routePattern(r)),
 		slog.String("err", err.Error()))
-	a.writeProblem(w, mode, errCode(dto.CodeInternal))
+	a.writeProblem(w, mode, errType(dto.TypeInternal))
 }
 
 // writeProblem sends e's problem in place of the handler's response. Problems hold only

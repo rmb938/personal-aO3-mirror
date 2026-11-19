@@ -105,7 +105,7 @@ func TestClientIPTrust(t *testing.T) {
 
 func TestAccessLogIsContentFree(t *testing.T) {
 	a, logs := newTestAPI(t, nil)
-	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) { return nil, errCode(dto.CodeNotFound) }))
+	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) { return nil, errType(dto.TypeNotFound) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/items/42/parts/"+sentinel+"part?page="+sentinel+"v&"+sentinel+"n=1", nil)
 	req.Header.Set(headerFunnel, "?1")
@@ -169,7 +169,7 @@ func TestRecoverer(t *testing.T) {
 	a.public.Get("/panic", func(http.ResponseWriter, *http.Request) { panic(sentinel + "panic value") })
 	w := get(a.public, "/panic")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.CodeInternal, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
 	assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), "security headers survive a panic")
 	assert.Contains(t, logs.String(), `"panic_type":"string"`)
@@ -197,7 +197,7 @@ func TestURLLimits(t *testing.T) {
 	long := "/api/v1/healthz?x=" + strings.Repeat("a", maxURLBytes)
 	w := get(a.Public(), long)
 	require.Equal(t, http.StatusRequestURITooLong, w.Code)
-	assert.Equal(t, dto.CodeURITooLong, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeURITooLong, decodeProblem(t, w).Type)
 
 	w = get(a.Public(), "/"+strings.Repeat("a", maxURLBytes))
 	assert.Equal(t, http.StatusRequestURITooLong, w.Code)
@@ -214,7 +214,7 @@ func TestRateLimit(t *testing.T) {
 	assert.Equal(t, http.StatusOK, fromIP("198.51.100.1").Code)
 	w := fromIP("198.51.100.1")
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
-	assert.Equal(t, dto.CodeRateLimited, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeRateLimited, decodeProblem(t, w).Type)
 	assert.Equal(t, "60", w.Header().Get("Retry-After"))
 	assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 
@@ -260,7 +260,7 @@ func TestThrottleBacklogWaitTimesOut(t *testing.T) {
 	// The next waits in the backlog and times out while the first holds the only slot.
 	w := do(h, httptest.NewRequest(http.MethodGet, "/", nil))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, dto.CodeUnavailable, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeUnavailable, decodeProblem(t, w).Type)
 	assert.Equal(t, "1", w.Header().Get("Retry-After"))
 
 	close(release)
@@ -324,7 +324,7 @@ func TestRequestTimeout(t *testing.T) {
 	}))
 	w := get(a.public, "/slow")
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, dto.CodeUnavailable, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeUnavailable, decodeProblem(t, w).Type)
 }
 
 func TestCrossOrigin(t *testing.T) {
@@ -333,7 +333,7 @@ func TestCrossOrigin(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	w := do(a.Public(), req)
 	require.Equal(t, http.StatusForbidden, w.Code)
-	assert.Equal(t, dto.CodeForbidden, decodeProblem(t, w).Code)
+	assert.Equal(t, dto.TypeForbidden, decodeProblem(t, w).Type)
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/healthz", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
@@ -358,24 +358,20 @@ func TestReveal(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Cache-Control"))
 	assert.NotEmpty(t, w.Header().Get(headerFanworkEpoch))
 
-	bad := map[string]struct {
-		query string
-		code  dto.ProblemCode
-	}{
-		"other value": {"?" + RevealParam + "=true", dto.CodeInvalidParam},
-		"empty value": {"?" + RevealParam + "=", dto.CodeInvalidParam},
-		"repeated":    {revealQuery + "&" + RevealParam + "=1", dto.CodeDuplicateParam},
-		"bad query":   {"?%zz", dto.CodeBadRequest},
-	}
-	for name, c := range bad {
+	for name, q := range map[string]string{
+		"other value": "?" + RevealParam + "=true",
+		"empty value": "?" + RevealParam + "=",
+		"repeated":    revealQuery + "&" + RevealParam + "=1",
+	} {
 		t.Run(name, func(t *testing.T) {
-			w := get(a.Public(), "/api/v1/healthz"+c.query)
-			require.Equal(t, http.StatusBadRequest, w.Code)
-			p := decodeProblem(t, w)
-			assert.Equal(t, c.code, p.Code)
+			w := get(a.Public(), "/api/v1/healthz"+q)
+			requireParamProblem(t, w, dto.ParamReveal, name)
 			assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 		})
 	}
+	w = get(a.Public(), "/api/v1/healthz?%zz")
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, dto.TypeBadRequest, decodeProblem(t, w).Type)
 }
 
 func TestNoRevealRefusesReveal(t *testing.T) {
@@ -383,7 +379,7 @@ func TestNoRevealRefusesReveal(t *testing.T) {
 	for _, h := range []http.Handler{a.Public(), a.Admin()} {
 		w := get(h, "/api/v1/healthz"+revealQuery)
 		require.Equal(t, http.StatusForbidden, w.Code)
-		assert.Equal(t, dto.CodeRevealDisabled, decodeProblem(t, w).Code)
+		assert.Equal(t, dto.TypeRevealDisabled, decodeProblem(t, w).Type)
 		assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 		assert.Equal(t, http.StatusOK, get(h, "/api/v1/healthz").Code)
 	}

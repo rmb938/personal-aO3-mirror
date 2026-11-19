@@ -22,12 +22,20 @@ var responseTypes = []any{
 
 // newEnforcer builds the response enforcer from the DTO types. version is the running build
 // version, registered as the only dto.Version.Version value (it is known only at runtime).
+// Problem details are the fixed catalogue (details.go).
 func newEnforcer(h *redact.Hasher, version string) (*redact.Enforcer, error) {
 	reg := redact.NewRegistry()
 	if err := reg.RegisterTypes(responseTypes...); err != nil {
 		return nil, err
 	}
 	if err := reg.RegisterFieldEnum(dto.Version{}, "version", version); err != nil {
+		return nil, err
+	}
+	cat := detailCatalogue()
+	if err := reg.RegisterFieldEnum(dto.Problem{}, "detail", cat...); err != nil {
+		return nil, err
+	}
+	if err := reg.RegisterFieldEnum(dto.ProblemError{}, "detail", cat...); err != nil {
 		return nil, err
 	}
 	return redact.NewEnforcer(reg, h)
