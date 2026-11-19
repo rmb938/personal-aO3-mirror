@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 )
 
@@ -74,7 +75,7 @@ func respondError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err 
 		w.Header().Set("Accept-Query", contentTypeJSON)
 	}
 	if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
-		w.Header().Set("Location", pathFor(routeSource, ex.ID)) // the source that already exists
+		w.Header().Set("Location", route.Path(route.Source, ex.ID)) // the source that already exists
 	}
 	respond(w, r, log, p.Status, contentTypeProblem, p)
 }

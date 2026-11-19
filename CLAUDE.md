@@ -82,7 +82,9 @@ Design rules for API code:
   `parseParams` and return `q.Err()`. Request bodies are types in `internal/api/request`
   (same import rule as `dto`), each with a `Validate(*problem.Validation)` method recording
   every invalid member and listed in `request.Types()`; `decodeJSON` takes a `request.Request`
-  and validates it. `Location` paths come from `pathFor(route, ids...)` over `api/routes.go`.
+  and validates it. Route patterns are constants in `internal/api/route` (stdlib
+  only, shared with `internal/apiclient`); `Location` and client paths come from
+  `route.Path(pattern, ids...)`.
 - Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
   query param allowlists. Logs carry route patterns and param names, never query values or
   bodies.

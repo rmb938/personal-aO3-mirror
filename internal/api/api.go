@@ -14,6 +14,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 )
 
@@ -129,27 +130,27 @@ func (a *API) router(admin bool) *chi.Mux {
 	r.NotFound(a.handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, detailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
 
-	r.Get(routeHealthz, a.handle(a.healthz))
-	r.Get(routeVersion, a.handle(a.version))
-	r.Get(routeSources, a.handle(a.listSources))
-	r.With(a.rateLimit(addRate, time.Hour, listener)).Post(routeSources, a.handle(a.addSource(admin)))
-	r.Get(routeSource, a.handle(a.getSource))
-	r.Get(routeSourceAdd, a.handle(a.getSourceAdd))
-	r.Get(routeJobs, a.handle(a.listJobs))
-	r.Get(routeJob, a.handle(a.getJob))
-	r.Get(routeStatus, a.handle(a.status))
+	r.Get(route.Healthz, a.handle(a.healthz))
+	r.Get(route.Version, a.handle(a.version))
+	r.Get(route.Sources, a.handle(a.listSources))
+	r.With(a.rateLimit(addRate, time.Hour, listener)).Post(route.Sources, a.handle(a.addSource(admin)))
+	r.Get(route.Source, a.handle(a.getSource))
+	r.Get(route.SourceAdd, a.handle(a.getSourceAdd))
+	r.Get(route.Jobs, a.handle(a.listJobs))
+	r.Get(route.Job, a.handle(a.getJob))
+	r.Get(route.Status, a.handle(a.status))
 
 	if admin {
 		// Admin-only routes; the public router never has them.
-		r.Post(routeSourceConfirm, a.handle(a.sourceAction(a.ctl.ConfirmSource)))
-		r.Post(routeSourcePause, a.handle(a.sourceAction(a.ctl.PauseSource)))
-		r.Post(routeSourceResume, a.handle(a.sourceAction(a.ctl.ResumeSource)))
-		r.Post(routeSourceCancel, a.handle(a.cancelSource))
-		r.Post(routeSourceRefresh, a.handle(a.refreshSource))
-		r.Patch(routeSource, a.handle(a.setSourceSettings))
-		r.Delete(routeSource, a.handle(a.sourceAction(a.ctl.RemoveSource)))
-		r.Get(routeDebugJob, a.handle(a.debugJob))
-		r.Get(routeDebugWork, a.handle(a.debugWork))
+		r.Post(route.SourceConfirm, a.handle(a.sourceAction(a.ctl.ConfirmSource)))
+		r.Post(route.SourcePause, a.handle(a.sourceAction(a.ctl.PauseSource)))
+		r.Post(route.SourceResume, a.handle(a.sourceAction(a.ctl.ResumeSource)))
+		r.Post(route.SourceCancel, a.handle(a.cancelSource))
+		r.Post(route.SourceRefresh, a.handle(a.refreshSource))
+		r.Patch(route.Source, a.handle(a.setSourceSettings))
+		r.Delete(route.Source, a.handle(a.sourceAction(a.ctl.RemoveSource)))
+		r.Get(route.DebugJob, a.handle(a.debugJob))
+		r.Get(route.DebugWork, a.handle(a.debugWork))
 	}
 	return r
 }
