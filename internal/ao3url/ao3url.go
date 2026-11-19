@@ -33,6 +33,11 @@ const (
 	KindWork          Kind = "work"
 )
 
+// Kinds lists every Kind.
+func Kinds() []Kind {
+	return []Kind{KindTag, KindUser, KindPseud, KindUserBookmarks, KindSeries, KindCollection, KindWork}
+}
+
 // Source identifies what to mirror. Filters are work_search-style params (never sort/page).
 type Source struct {
 	Kind    Kind
@@ -257,6 +262,16 @@ func ParseOrder(s string) (Order, error) {
 		return Order{}, fmt.Errorf("order %q: field must be one of %s, direction asc|desc", s, strings.Join(names, ","))
 	}
 	return Order{Column: col, Direction: dir}, nil
+}
+
+// OrderNames lists every name ParseOrder accepts ("<field>_<asc|desc>"), sorted.
+func OrderNames() []string {
+	names := make([]string, 0, 2*len(orderColumns))
+	for k := range orderColumns {
+		names = append(names, k+"_asc", k+"_desc")
+	}
+	sort.Strings(names)
+	return names
 }
 
 // UpdateOrder is used for update polls: most recently revised first.

@@ -13,11 +13,14 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 )
 
 // Options configures the API. `serve` fills it from the `api:` config section.
 type Options struct {
 	Logger *slog.Logger
+	// Controllers serve every store-backed route. `serve` builds them with no AO3 client.
+	Controllers *controllers.Controllers
 	// Version is the build version reported by /api/v1/version.
 	Version string
 	// NoReveal makes the server refuse the reveal param (403 reveal_disabled).
@@ -43,6 +46,7 @@ const adminRateFactor = 10
 type API struct {
 	opts   Options
 	log    *slog.Logger
+	ctl    *controllers.Controllers
 	enf    *redact.Enforcer
 	public *chi.Mux
 	admin  *chi.Mux
@@ -52,6 +56,9 @@ type API struct {
 func New(opts Options) (*API, error) {
 	if opts.Logger == nil {
 		return nil, errors.New("api: nil logger")
+	}
+	if opts.Controllers == nil {
+		return nil, errors.New("api: nil controllers")
 	}
 	if opts.Version == "" {
 		return nil, errors.New("api: empty version")
@@ -78,7 +85,7 @@ func New(opts Options) (*API, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &API{opts: opts, log: opts.Logger, enf: enf}
+	a := &API{opts: opts, log: opts.Logger, ctl: opts.Controllers, enf: enf}
 	a.public = a.router(false)
 	a.admin = a.router(true)
 	return a, nil
@@ -120,6 +127,9 @@ func (a *API) router(admin bool) *chi.Mux {
 
 	r.Get("/api/v1/healthz", a.handle(a.healthz))
 	r.Get("/api/v1/version", a.handle(a.version))
+	r.Get("/api/v1/sources", a.handle(a.listSources))
+	r.Get("/api/v1/sources/{id}", a.handle(a.getSource))
+	r.Get("/api/v1/source-adds/{job_id}", a.handle(a.getSourceAdd))
 
 	if admin {
 		r.Group(func(chi.Router) {

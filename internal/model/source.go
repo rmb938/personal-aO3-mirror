@@ -13,6 +13,11 @@ const (
 	SourceDoneBackfill   SourceState = "done_backfill"
 )
 
+// SourceStates lists every SourceState.
+func SourceStates() []SourceState {
+	return []SourceState{SourcePendingConfirm, SourceActive, SourcePaused, SourceCancelled, SourceDoneBackfill}
+}
+
 // Source is one sources row. Target and FiltersJSON may hold tag/user names: never log them.
 type Source struct {
 	ID             int64

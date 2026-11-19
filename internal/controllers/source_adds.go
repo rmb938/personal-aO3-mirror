@@ -142,13 +142,18 @@ type SourceAddOutcome struct {
 	Result *AddSourceResult // set once done
 }
 
-// SourceAddOutcome reports on the add_source job jobID, for a CLI waiting on the daemon.
+// SourceAddOutcome reports on the add_source job jobID, for a CLI waiting on the daemon. A job
+// that is not a source add is store.ErrNoJob; a done add whose source was removed since is
+// store.ErrNoSource.
 func (c *Controllers) SourceAddOutcome(ctx context.Context, jobID int64) (SourceAddOutcome, error) {
 	var out SourceAddOutcome
 	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
 		j, err := tx.GetJob(ctx, jobID)
 		if err != nil {
 			return err
+		}
+		if j.Kind != jobs.KindSourceAdd {
+			return store.ErrNoJob
 		}
 		out.State, out.Error = j.State, j.LastError
 		if j.State != model.JobDone {

@@ -177,7 +177,27 @@ const (
 	CodeNoTag       ErrorCode = "no_tag"
 
 	CodePanic ErrorCode = "panic" // the job handler panicked (set by the scheduler)
+	// CodeInternal: an unexpected (store, transport) error; the scheduler records
+	// "internal:<message>" and retries.
+	CodeInternal ErrorCode = "internal"
 )
+
+// JobErrorCodes lists every code a job's last_error can start with (it is "code" or
+// "code:detail"): each ErrorCode, the RetryError codes and the store's crash code. The API's
+// dto.JobErrorCode must hold all of them (a convert test checks), or the code comes out hashed.
+func JobErrorCodes() []string {
+	codes := []ErrorCode{
+		CodeParseUnexpected, CodeParseError, CodeNotFound, CodeRestricted, CodeHidden, CodeAdultGate,
+		CodeTooLarge, CodeRobotsDisallowed, CodeRobotsUnavailable, CodeOddResponse,
+		CodeBadSource, CodeBadFilters, CodeBadCursor, CodeBadWorkID, CodeBadSeriesID, CodeNoSource, CodeNoTag,
+		CodePanic, CodeInternal, CodeSourceExists, CodeNoSourceAdd,
+	}
+	out := make([]string, 0, len(codes)+3)
+	for _, c := range codes {
+		out = append(out, string(c))
+	}
+	return append(out, string(httpx.ClassRateLimited), string(httpx.ClassUnavailable), store.CodeCrashed)
+}
 
 // PermanentError means a retry cannot help (not found, parse failure, bad input).
 type PermanentError struct {

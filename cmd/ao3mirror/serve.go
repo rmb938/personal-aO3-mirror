@@ -19,6 +19,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // HTTP server limits (docs/part2-api.md, "HTTP hardening").
@@ -62,20 +63,33 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger, args []s
 	return 0
 }
 
-// server is the API bound to its two listeners, not yet serving.
+// server is the API bound to its two listeners, not yet serving. It owns the store: serve
+// closes it when it returns.
 type server struct {
 	log           *slog.Logger
 	cfg           config.API
 	noReveal      bool
+	store         *store.Store
 	tcp, sock     net.Listener
 	public, admin *http.Server
 }
 
-// newServer builds the API and binds both listeners. ctx is every request's base context, so
-// a signal cancels in-flight requests while shutdown waits for them.
-func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool) (*server, error) {
+// newServer opens the store, builds the API over offline controllers (no AO3 client) and binds
+// both listeners. ctx is every request's base context, so a signal cancels in-flight requests
+// while shutdown waits for them. On an error, everything opened so far is closed.
+func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool) (s *server, err error) {
+	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, st.Close())
+		}
+	}()
 	a, err := api.New(api.Options{
 		Logger:          log,
+		Controllers:     newControllers(cfg, log, st, nil),
 		Version:         version,
 		NoReveal:        noReveal,
 		TrustedProxies:  cfg.API.TrustedProxies,
@@ -96,7 +110,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		return nil, errors.Join(fmt.Errorf("admin socket: %w", err), tcp.Close())
 	}
 	return &server{
-		log: log, cfg: cfg.API, noReveal: noReveal, tcp: tcp, sock: sock,
+		log: log, cfg: cfg.API, noReveal: noReveal, store: st, tcp: tcp, sock: sock,
 		public: newHTTPServer(ctx, a.Public(), log),
 		admin:  newHTTPServer(ctx, a.Admin(), log),
 	}, nil
@@ -169,8 +183,10 @@ func removeStaleSocket(ctx context.Context, path string) error {
 	return os.Remove(path)
 }
 
-// serve runs both listeners until ctx ends or one fails, then shuts both down gracefully.
-func (s *server) serve(ctx context.Context) error {
+// serve runs both listeners until ctx ends or one fails, then shuts both down gracefully and
+// closes the store.
+func (s *server) serve(ctx context.Context) (err error) {
+	defer func() { err = errors.Join(err, s.store.Close()) }()
 	attrs := []any{
 		"listen", s.tcp.Addr().String(), "admin_socket", s.sock.Addr().String(),
 		"trusted_proxies", s.cfg.TrustedProxies, "no_reveal", s.noReveal,
