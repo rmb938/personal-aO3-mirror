@@ -14,7 +14,7 @@ func (a *API) listSources(r *http.Request) (any, error) {
 		return nil, err
 	}
 	p := q.page()
-	if err := q.err(); err != nil {
+	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	items, total, err := a.ctl.ListSources(r.Context(), int(p.Offset()), int(p.PerPage))
@@ -31,7 +31,7 @@ func (a *API) getSource(r *http.Request) (any, error) {
 		return nil, err
 	}
 	id := q.pathID(dto.ParamID)
-	if err := q.err(); err != nil {
+	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	s, err := a.ctl.GetSource(r.Context(), id)
@@ -48,7 +48,7 @@ func (a *API) getSourceAdd(r *http.Request) (any, error) {
 		return nil, err
 	}
 	id := q.pathID(dto.ParamJobID)
-	if err := q.err(); err != nil {
+	if err := q.Err(); err != nil {
 		return nil, err
 	}
 	o, err := a.ctl.SourceAddOutcome(r.Context(), id)

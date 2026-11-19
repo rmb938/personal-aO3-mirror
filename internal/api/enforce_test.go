@@ -59,7 +59,7 @@ func TestEnforceNonJSON(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code)
 	p := decodeProblem(t, w)
 	assert.Equal(t, dto.TypeRevealRequired, p.Type)
-	assert.Equal(t, detailNotJSON.msg, p.Detail)
+	assert.Equal(t, detailNotJSON.Message(), p.Detail)
 	assert.Empty(t, w.Header().Get("Location"), "a replaced response drops the handler's headers")
 	assertNoSentinel(t, w, logs)
 

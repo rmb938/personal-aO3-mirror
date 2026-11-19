@@ -44,6 +44,7 @@ internal/api/                server, router, middleware, handlers (calls control
 internal/api/redact/         hasher + response enforcer (no HTTP deps; fuzzed)
 internal/api/dto/            response/request types, registered with the enforcer
 internal/api/convert/        model/controller results -> DTOs (from stage 3a-4)
+internal/api/problem/        problem Error, detail catalogue, Validation collector (from 3g)
 internal/apiclient/          typed client over the admin socket, used by the CLI
 docs/api/openapi.yaml        hand-written OpenAPI 3.1; a test checks that it matches the route table
 ```
@@ -131,7 +132,7 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    type, `docs/api/problems.md#<slug>`), `title` (fixed per type), `status`, an optional
    `detail`, and on `validation-error` an `errors` extension of `{detail, parameter | pointer}`
    items listing every invalid part (from 3e). Every string is from a fixed set:
-   `detail` messages are a catalogue in `api/details.go` (`newDetail`, package-level vars only),
+   `detail` messages are a catalogue (`problem.NewDetail`, package-level vars only),
    registered with the enforcer as the only values of the two `detail` fields, and never include
    client input. `parameter` is a `dto.ParamName` (query and path names only); `pointer` must
    name a member of a registered request type (`api.requestTypes`). Job `last_error`
@@ -661,8 +662,20 @@ Status: tick when the PR merges.
   - Renamed (API change): `Source.poll_interval_s` → `poll_interval`, `Estimate.duration_s` →
     `duration`, status `pacer.interval_ms` → `interval`, `request_errors[].duration_ms` /
     `waited_ms` → `duration` / `waited`. OpenAPI has a shared `Duration` schema.
-- [ ] **3g. Refactor: shared `internal/api/problem` package** for the detail catalogue and the
-  validation collector, so request types can live in their own package (stage 4).
+- [x] **3g. Refactor: shared `internal/api/problem` package** for the detail catalogue and the
+  validation collector, so request types can live in their own package (stage 4). As built:
+  - `problem` imports only `dto`, `ao3url` and the standard library. It holds `Detail`
+    (`Message()`), `NewDetail`, `OneOf` and `Catalogue()` (every message from any package,
+    sorted, deduplicated); `Error{Type, Status, Detail, Errors []Item}` with `Problem()`, and
+    the constructors `New(t)`, `WithDetail(t, d)` and `ForParam(name, d)` (were
+    `errType`/`errDetail`/`errParam`); `Validation` with `Param`, `Member`, `Len` and `Err`;
+    `ValidText`; and the details request types share: `DetailInvalidRequest`, `DetailText` and
+    `URLDetail(err)` (the per-`ao3url.Reason` hints).
+  - `api/details.go` keeps the api package's own details, made with `problem.NewDetail`;
+    `newEnforcer` registers `problem.Catalogue()`. `params` embeds `problem.Validation`, so
+    handlers return `q.Err()`. `problemFor` (store and controller errors → problems) stays
+    in `api`.
+  - No API change.
 - [ ] **4. Add source (public)** (draft PR #32, to be rebased onto 3f/3g). Request types move
   to a new `internal/api/request` package with `Validate` methods and a `request.Request`
   interface that `decodeJSON` requires; `poll_interval` is a `dto.Duration`; `Location` paths

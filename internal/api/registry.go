@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
 )
 
@@ -21,12 +22,13 @@ var responseTypes = []any{
 }
 
 // requestTypes are every request body DTO. A validation error's errors[].pointer passes only
-// when it names a member of one of them (validation.member builds it from their json keys).
+// when it names a member of one of them (problem.Validation.Member builds it from their json
+// keys).
 var requestTypes = []any{}
 
 // newEnforcer builds the response enforcer from the DTO types. version is the running build
 // version, registered as the only dto.Version.Version value (it is known only at runtime).
-// Problem details are the fixed catalogue (details.go).
+// Problem details are the fixed catalogue (problem.Catalogue, which details.go adds to).
 func newEnforcer(h *redact.Hasher, version string) (*redact.Enforcer, error) {
 	reg := redact.NewRegistry()
 	if err := reg.RegisterTypes(responseTypes...); err != nil {
@@ -35,7 +37,7 @@ func newEnforcer(h *redact.Hasher, version string) (*redact.Enforcer, error) {
 	if err := reg.RegisterFieldEnum(dto.Version{}, "version", version); err != nil {
 		return nil, err
 	}
-	cat := detailCatalogue()
+	cat := problem.Catalogue()
 	if err := reg.RegisterFieldEnum(dto.Problem{}, "detail", cat...); err != nil {
 		return nil, err
 	}

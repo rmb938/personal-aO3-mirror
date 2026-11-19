@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
 const (
@@ -265,7 +266,7 @@ func (a *API) recoverer(next http.Handler) http.Handler {
 				slog.String("panic_type", fmt.Sprintf("%T", v)),
 				slog.String("stack", string(debug.Stack())))
 			w.Header().Set(headerFanwork, "hashed")
-			p := errType(dto.TypeInternal).problem()
+			p := problem.New(dto.TypeInternal).Problem()
 			respond(w, r, a.log, p.Status, contentTypeProblem, p)
 		}()
 		next.ServeHTTP(w, r)
@@ -290,7 +291,7 @@ func securityHeaders(next http.Handler) http.Handler {
 func (a *API) urlLimits(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(r.URL.EscapedPath())+len(r.URL.RawQuery) > maxURLBytes {
-			respondError(w, r, a.log, errDetail(dto.TypeURITooLong, detailURITooLong))
+			respondError(w, r, a.log, problem.WithDetail(dto.TypeURITooLong, detailURITooLong))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -310,7 +311,7 @@ func (a *API) rateLimit(n int, window time.Duration, listener string) func(http.
 	}
 	return httprate.LimitBy(n, window, key,
 		httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
-			respondError(w, r, a.log, errDetail(dto.TypeRateLimited, detailRateLimited))
+			respondError(w, r, a.log, problem.WithDetail(dto.TypeRateLimited, detailRateLimited))
 		}),
 		httprate.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
 			respondError(w, r, a.log, fmt.Errorf("rate limiter: %w", err))
@@ -327,7 +328,7 @@ func (a *API) throttle(inFlight, backlog int, wait time.Duration) func(http.Hand
 	queue := make(chan struct{}, inFlight+backlog)
 	reject := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "1")
-		respondError(w, r, a.log, errDetail(dto.TypeUnavailable, detailBusy))
+		respondError(w, r, a.log, problem.WithDetail(dto.TypeUnavailable, detailBusy))
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -372,7 +373,7 @@ func timeout(d time.Duration) func(http.Handler) http.Handler {
 func (a *API) crossOrigin() func(http.Handler) http.Handler {
 	c := http.NewCrossOriginProtection()
 	c.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		respondError(w, r, a.log, errDetail(dto.TypeForbidden, detailCrossOrigin))
+		respondError(w, r, a.log, problem.WithDetail(dto.TypeForbidden, detailCrossOrigin))
 	}))
 	return c.Handler
 }
@@ -383,7 +384,7 @@ func (a *API) reveal(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vals, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			respondError(w, r, a.log, errDetail(dto.TypeBadRequest, detailMalformedQuery))
+			respondError(w, r, a.log, problem.WithDetail(dto.TypeBadRequest, detailMalformedQuery))
 			return
 		}
 		vs, ok := vals[RevealParam]
@@ -393,11 +394,11 @@ func (a *API) reveal(next http.Handler) http.Handler {
 		}
 		switch {
 		case len(vs) != 1:
-			respondError(w, r, a.log, errParam(RevealParam, detailDuplicate))
+			respondError(w, r, a.log, problem.ForParam(RevealParam, detailDuplicate))
 		case vs[0] != "1":
-			respondError(w, r, a.log, errParam(RevealParam, detailRevealValue))
+			respondError(w, r, a.log, problem.ForParam(RevealParam, detailRevealValue))
 		case a.opts.NoReveal:
-			respondError(w, r, a.log, errDetail(dto.TypeRevealDisabled, detailRevealDisabled))
+			respondError(w, r, a.log, problem.WithDetail(dto.TypeRevealDisabled, detailRevealDisabled))
 		default:
 			state(r.Context()).reveal = true
 			next.ServeHTTP(w, r)

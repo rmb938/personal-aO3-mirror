@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 )
@@ -122,7 +123,7 @@ func (a *API) router(admin bool) *chi.Mux {
 		a.crossOrigin(),
 		a.reveal,
 	)
-	r.NotFound(a.handle(func(*http.Request) (any, error) { return nil, errDetail(dto.TypeNotFound, detailNoRoute) }))
+	r.NotFound(a.handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, detailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
 
 	r.Get("/api/v1/healthz", a.handle(a.healthz))
@@ -158,5 +159,5 @@ func (a *API) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	respondError(w, r, a.log, errDetail(dto.TypeMethodNotAllowed, detailMethodNotAllowed))
+	respondError(w, r, a.log, problem.WithDetail(dto.TypeMethodNotAllowed, detailMethodNotAllowed))
 }

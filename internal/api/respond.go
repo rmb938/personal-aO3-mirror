@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
 const (
@@ -73,7 +74,7 @@ func respond(w http.ResponseWriter, r *http.Request, log *slog.Logger, status in
 	if err != nil {
 		log.LogAttrs(r.Context(), slog.LevelError, "api encode error",
 			slog.String("route", r.Pattern), slog.String("type", typeName(v)))
-		p := errType(dto.TypeInternal).problem()
+		p := problem.New(dto.TypeInternal).Problem()
 		body, _ = json.Marshal(p) // a Problem always marshals
 		status, contentType, typ = p.Status, contentTypeProblem, reflect.TypeOf(p)
 	}

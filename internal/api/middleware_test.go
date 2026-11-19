@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
 func TestRequestID(t *testing.T) {
@@ -105,7 +106,7 @@ func TestClientIPTrust(t *testing.T) {
 
 func TestAccessLogIsContentFree(t *testing.T) {
 	a, logs := newTestAPI(t, nil)
-	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) { return nil, errType(dto.TypeNotFound) }))
+	a.public.Get("/items/{id}/parts/{part}", a.handle(func(*http.Request) (any, error) { return nil, problem.New(dto.TypeNotFound) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/items/42/parts/"+sentinel+"part?page="+sentinel+"v&"+sentinel+"n=1", nil)
 	req.Header.Set(headerFunnel, "?1")

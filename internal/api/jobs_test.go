@@ -77,7 +77,7 @@ func TestListJobs(t *testing.T) {
 	}
 	assert.Equal(t, []dto.ParamName{"", dto.ParamState, dto.ParamKind, dto.ParamSourceID, dto.ParamPerPage}, params)
 	w = get(h, "/api/v1/jobs?state=bogus")
-	assert.Equal(t, detailJobState.msg, decodeProblem(t, w).Errors[0].Detail, "the detail lists the values")
+	assert.Equal(t, detailJobState.Message(), decodeProblem(t, w).Errors[0].Detail, "the detail lists the values")
 }
 
 func TestGetJob(t *testing.T) {
@@ -100,7 +100,7 @@ func TestGetJob(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 	p := decodeProblem(t, w)
 	assert.Equal(t, dto.TypeNotFound, p.Type)
-	assert.Equal(t, detailNoJob.msg, p.Detail)
+	assert.Equal(t, detailNoJob.Message(), p.Detail)
 	for _, id := range []string{"0", "abc", "-1", "9007199254740992"} {
 		requireParamProblem(t, get(h, "/api/v1/jobs/"+id), dto.ParamID, id)
 	}

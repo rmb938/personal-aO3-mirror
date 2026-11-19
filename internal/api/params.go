@@ -6,12 +6,11 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
 )
 
 // RevealParam is the query parameter that asks for real fanwork content on one request. Its
@@ -31,15 +30,15 @@ const (
 )
 
 // params is one request's query and path parameters being validated. Each getter records an
-// invalid value in the embedded validation and returns a zero value, so a handler reads every
-// parameter, then returns err(): one validation-error listing all of them.
+// invalid value in the embedded problem.Validation and returns a zero value, so a handler reads
+// every parameter, then returns Err(): one validation-error listing all of them.
 //
 //	p, err := parseParams(r, "page", "per_page")
 //	if err != nil { return nil, err }
 //	pg := p.page()
-//	if err := p.err(); err != nil { return nil, err }
+//	if err := p.Err(); err != nil { return nil, err }
 type params struct {
-	validation
+	problem.Validation
 	r    *http.Request
 	vals map[string]string // one value per name; RevealParam left out
 }
@@ -50,14 +49,14 @@ type params struct {
 func parseParams(r *http.Request, allowed ...string) (*params, error) {
 	vals, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return nil, errDetail(dto.TypeBadRequest, detailMalformedQuery)
+		return nil, problem.WithDetail(dto.TypeBadRequest, detailMalformedQuery)
 	}
 	n := 0
 	for _, vs := range vals {
 		n += len(vs)
 	}
 	if n > maxQueryParams {
-		return nil, errDetail(dto.TypeBadRequest, detailTooManyParams)
+		return nil, problem.WithDetail(dto.TypeBadRequest, detailTooManyParams)
 	}
 	p := &params{r: r, vals: make(map[string]string, len(vals))}
 	names := make([]string, 0, len(vals))
@@ -69,9 +68,9 @@ func parseParams(r *http.Request, allowed ...string) (*params, error) {
 		vs := vals[name]
 		switch {
 		case name != RevealParam && !slices.Contains(allowed, name):
-			p.param(name, detailUnknownParam)
+			p.Param(name, detailUnknownParam)
 		case len(vs) > 1:
-			p.param(name, detailDuplicate)
+			p.Param(name, detailDuplicate)
 		case name != RevealParam:
 			p.vals[name] = vs[0]
 		}
@@ -85,32 +84,32 @@ func noParams(r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return p.err()
+	return p.Err()
 }
 
 // int returns parameter name as an integer in [1, hi], or def when it is absent. d describes
 // the accepted range.
-func (p *params) int(name string, def, hi int64, d detail) int64 {
+func (p *params) int(name string, def, hi int64, d problem.Detail) int64 {
 	s, ok := p.vals[name]
 	if !ok {
 		return def
 	}
 	v, ok := parseInt(s, hi)
 	if !ok {
-		p.param(name, d)
+		p.Param(name, d)
 	}
 	return v
 }
 
 // enum returns parameter name when it is one of e's values, or "" when it is absent. d lists
-// the values (oneOf(e)).
-func (p *params) enum(name string, e interface{ EnumValues() []string }, d detail) string {
+// the values (problem.OneOf(e)).
+func (p *params) enum(name string, e interface{ EnumValues() []string }, d problem.Detail) string {
 	s, ok := p.vals[name]
 	if !ok {
 		return ""
 	}
 	if !slices.Contains(e.EnumValues(), s) {
-		p.param(name, d)
+		p.Param(name, d)
 		return ""
 	}
 	return s
@@ -120,7 +119,7 @@ func (p *params) enum(name string, e interface{ EnumValues() []string }, d detai
 func (p *params) pathID(name dto.ParamName) int64 {
 	v, ok := parseInt(chi.URLParam(p.r, string(name)), MaxID)
 	if !ok {
-		p.param(string(name), detailID)
+		p.Param(string(name), detailID)
 	}
 	return v
 }
@@ -149,28 +148,14 @@ func (p Page) Offset() int64 { return (p.Page - 1) * p.PerPage }
 // page reads `page` (default 1) and `per_page` (default 20, max 100), and enforces
 // (page-1)*per_page <= maxOffset without overflowing (when per_page itself is valid).
 func (p *params) page() Page {
-	n := len(p.items)
+	n := p.Len()
 	per := p.int(string(dto.ParamPerPage), defaultPerPage, maxPerPage, detailPerPage)
-	m := len(p.items)
+	m := p.Len()
 	pg := p.int(string(dto.ParamPage), 1, maxOffset+1, detailPage)
-	if m == n && len(p.items) == m && pg-1 > maxOffset/per { // both valid: check the cap
-		p.param(string(dto.ParamPage), detailPage)
+	if m == n && p.Len() == m && pg-1 > maxOffset/per { // both valid: check the cap
+		p.Param(string(dto.ParamPage), detailPage)
 	}
 	return Page{Page: pg, PerPage: per}
-}
-
-// validText reports whether s is valid UTF-8 with no control characters and at most maxRunes
-// runes.
-func validText(s string, maxRunes int) bool {
-	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxRunes {
-		return false
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) {
-			return false
-		}
-	}
-	return true
 }
 
 func typeName(v any) string { return fmt.Sprintf("%T", v) }

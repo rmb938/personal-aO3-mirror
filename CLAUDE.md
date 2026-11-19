@@ -75,11 +75,12 @@ Design rules for API code:
   `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
   `string` field is free text and always hashed.
 - Errors are RFC 9457 problems (`docs/api/problems.md`). A problem `detail` is only ever a
-  catalogue message from `newDetail` in `internal/api/details.go` (package-level vars), never
-  built from input or content; a new problem type gets a `## <slug>` section there.
+  catalogue message from `problem.NewDetail` (`internal/api/problem`; package-level vars only,
+  e.g. `internal/api/details.go`), never built from input or content; a new problem type gets
+  a `## <slug>` section there.
 - Validation reports every invalid part at once: handlers read all params through
-  `parseParams` and return `q.err()`; each request body DTO gets a validate function that
-  records members on the handler's `validation` and is listed in `api.requestTypes`.
+  `parseParams` and return `q.Err()`; each request body DTO gets a validate function that
+  records members on the handler's `problem.Validation` and is listed in `api.requestTypes`.
 - Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
   query param allowlists. Logs carry route patterns and param names, never query values or
   bodies.
