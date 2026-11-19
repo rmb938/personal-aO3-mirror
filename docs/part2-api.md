@@ -2,8 +2,9 @@
 
 > How to use this file: each stage below is one PR (or a small group), followed by `/clear`. A new
 > session reads CLAUDE.md, then this file's "Conventions" and its own stage section, implements
-> it, runs `make check`, opens the PR and ticks the stage's box (in the same PR). If a stage
-> changes a decision or convention, update this file in that PR too.
+> it, ticks the stage's box, runs `make check`, then **stops and waits**: the user reviews the
+> uncommitted changes and says when to commit and open the PR. Never commit, push or open a PR
+> unasked. If a stage changes a decision or convention, update this file in the same change.
 
 ## Context
 
