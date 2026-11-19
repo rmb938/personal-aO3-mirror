@@ -28,6 +28,11 @@ const (
 	StatusUnrevealed WorkStatus = "unrevealed" // in an unrevealed collection
 )
 
+// WorkStatuses lists every WorkStatus (the works.status CHECK).
+func WorkStatuses() []WorkStatus {
+	return []WorkStatus{StatusOK, StatusDeleted, StatusHidden, StatusRestricted, StatusUnrevealed}
+}
+
 // Origin says where a Work value was parsed from; it controls which fields are authoritative.
 type Origin int
 

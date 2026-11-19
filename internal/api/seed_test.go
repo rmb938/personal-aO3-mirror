@@ -106,6 +106,14 @@ func seed(t *testing.T, st *store.Store) {
 			return err
 		}
 		require.Equal(t, seedBackfillJob, id)
-		return nil
+
+		if err := tx.SetHeartbeat(ctx, model.Heartbeat{PID: 42, Phase: model.DaemonRunning, CurrentJob: seedOtherJob,
+			Interval: 10 * time.Second, SlowFactor: 1.5, DayCount: 3, BackoffUntil: seedTime.Add(time.Minute)}); err != nil {
+			return err
+		}
+		// A failed request: status lists it, with every text field a sentinel.
+		return tx.InsertRequest(ctx, store.RequestRow{Time: seedTime, ReqID: sentinel + "req", JobID: seedBackfillJob,
+			Kind: "listing", Path: "/tags/" + sentinel + "reqpath/works", Status: 429, Class: "rate_limited",
+			Reason: sentinel + "reason", Duration: time.Second})
 	}))
 }

@@ -17,6 +17,11 @@ const (
 	ImageDisallowed = "disallowed"
 )
 
+// ImageStatuses lists every image status.
+func ImageStatuses() []string {
+	return []string{ImageQueued, ImageOK, ImageFailed, ImageSkipped, ImageTooLarge, ImageDisallowed}
+}
+
 // ImageRow is one queued image. URL may contain names: never log it (log ID and hashed host).
 type ImageRow struct {
 	ID       int64
