@@ -191,40 +191,17 @@ func (s *ReadTx) GetJob(ctx context.Context, id int64) (model.Job, error) {
 	return j, err
 }
 
-// JobFilter selects jobs; zero fields match everything. Offset, Limit and Order only apply to
-// FindJobs (CountJobs ignores them).
-type JobFilter struct {
-	State        string
-	Kind         string
-	SourceID     int64
-	DedupeKey    string // exact match
-	DedupePrefix string
-	NotQueued    bool // only jobs that left the queue (running, done, failed, cancelled)
-	Offset       int  // rows to skip (≥ 0)
-	Limit        int  // max rows (≥ 1)
-	Order        JobOrder
-}
-
-// JobOrder sorts FindJobs results.
-type JobOrder int
-
-const (
-	JobsNewest      JobOrder = iota // id descending (default)
-	JobsOldest                      // id ascending: queue order for queued jobs
-	JobsLastStarted                 // most recently started first
-)
-
 // FindJobs returns up to f.Limit jobs matching f, skipping the first f.Offset.
-func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]model.Job, error) {
+func (s *ReadTx) FindJobs(ctx context.Context, f model.JobFilter) ([]model.Job, error) {
 	if f.Offset < 0 || f.Limit < 1 {
 		return nil, fmt.Errorf("store: find jobs: bad page (offset %d, limit %d)", f.Offset, f.Limit)
 	}
 	where, args := jobWhere(f)
 	q := `SELECT ` + jobCols + ` FROM jobs` + where
 	switch f.Order {
-	case JobsOldest:
+	case model.JobsOldest:
 		q += ` ORDER BY id ASC`
-	case JobsLastStarted:
+	case model.JobsLastStarted:
 		q += ` ORDER BY started_at DESC, id DESC`
 	default:
 		q += ` ORDER BY id DESC`
@@ -248,7 +225,7 @@ func (s *ReadTx) FindJobs(ctx context.Context, f JobFilter) ([]model.Job, error)
 }
 
 // CountJobs returns the number of jobs matching f's filters.
-func (s *ReadTx) CountJobs(ctx context.Context, f JobFilter) (int, error) {
+func (s *ReadTx) CountJobs(ctx context.Context, f model.JobFilter) (int, error) {
 	where, args := jobWhere(f)
 	var n int
 	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`+where, args...).Scan(&n)
@@ -256,7 +233,7 @@ func (s *ReadTx) CountJobs(ctx context.Context, f JobFilter) (int, error) {
 }
 
 // jobWhere builds the WHERE clause (with a leading space) and its args for f's filters.
-func jobWhere(f JobFilter) (string, []any) {
+func jobWhere(f model.JobFilter) (string, []any) {
 	q := ` WHERE 1=1`
 	var args []any
 	if f.State != "" {

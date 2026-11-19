@@ -67,7 +67,7 @@ func (c *Controllers) Status(ctx context.Context) (StatusReport, error) {
 		if r.RequestErrors, err = tx.RecentRequests(ctx, true, 0, "", 10); err != nil {
 			return err
 		}
-		r.FailedJobs, err = tx.FindJobs(ctx, store.JobFilter{State: model.JobFailed, Limit: 10})
+		r.FailedJobs, err = tx.FindJobs(ctx, model.JobFilter{State: model.JobFailed, Limit: 10})
 		return err
 	})
 	return r, err
@@ -112,7 +112,7 @@ func (c *Controllers) DebugWork(ctx context.Context, id int64) (WorkDebug, error
 		if d.Diag, err = tx.WorkDiag(ctx, id); err != nil {
 			return err
 		}
-		if d.Jobs, err = tx.FindJobs(ctx, store.JobFilter{DedupeKey: jobs.WorkKey(id), Limit: 20}); err != nil {
+		if d.Jobs, err = tx.FindJobs(ctx, model.JobFilter{DedupeKey: jobs.WorkKey(id), Limit: 20}); err != nil {
 			return err
 		}
 		d.Requests, err = tx.RecentRequests(ctx, false, 0, "/works/"+strconv.FormatInt(id, 10), 20)
@@ -144,7 +144,7 @@ func (c *Controllers) GetSource(ctx context.Context, id int64) (model.Source, er
 
 // ListJobs returns one page of the jobs matching f (f.Offset ≥ 0, f.Limit ≥ 1, ordered by
 // f.Order) and the number of matching jobs over all pages, read in one transaction so they agree.
-func (c *Controllers) ListJobs(ctx context.Context, f store.JobFilter) (page []model.Job, total int, err error) {
+func (c *Controllers) ListJobs(ctx context.Context, f model.JobFilter) (page []model.Job, total int, err error) {
 	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
 		var err error
 		if page, err = tx.FindJobs(ctx, f); err != nil {
@@ -157,7 +157,7 @@ func (c *Controllers) ListJobs(ctx context.Context, f store.JobFilter) (page []m
 }
 
 // FindJobs lists jobs matching f.
-func (c *Controllers) FindJobs(ctx context.Context, f store.JobFilter) ([]model.Job, error) {
+func (c *Controllers) FindJobs(ctx context.Context, f model.JobFilter) ([]model.Job, error) {
 	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Job, error) {
 		return tx.FindJobs(ctx, f)
 	})

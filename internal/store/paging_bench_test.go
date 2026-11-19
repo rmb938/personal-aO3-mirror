@@ -81,7 +81,7 @@ func BenchmarkJobsCount(b *testing.B) {
 }
 
 // filterName names a GET /jobs filter combination for a benchmark.
-func filterName(f JobFilter) string {
+func filterName(f model.JobFilter) string {
 	n := ""
 	if f.State != "" {
 		n += "state,"

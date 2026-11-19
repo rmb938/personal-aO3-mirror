@@ -10,7 +10,6 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
-	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 // runJobs lists jobs. Content-free: targets are numeric work/tag/series ids or page numbers.
@@ -31,11 +30,11 @@ func runJobs(ctx context.Context, ctl *controllers.Controllers, args []string, o
 	if *limit <= 0 {
 		*limit = 50
 	}
-	order := store.JobsNewest
+	order := model.JobsNewest
 	if *state == model.JobQueued {
-		order = store.JobsOldest
+		order = model.JobsOldest
 	}
-	js, err := ctl.FindJobs(ctx, store.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})
+	js, err := ctl.FindJobs(ctx, model.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})
 	if err != nil {
 		fmt.Fprintf(errOut, "jobs: %v\n", err)
 		return 1

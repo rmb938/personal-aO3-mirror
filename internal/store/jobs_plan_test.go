@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
 // jobPlanFilters are the API's GET /jobs filter combinations (state, kind, source_id).
-var jobPlanFilters = []JobFilter{
+var jobPlanFilters = []model.JobFilter{
 	{},
 	{State: "done"},
 	{Kind: "work"},
