@@ -120,7 +120,7 @@ func (q query) page() (Page, error) {
 		return Page{}, err
 	}
 	if pg-1 > maxOffset/per {
-		return Page{}, errField(dto.CodeInvalidParam, "page")
+		return Page{}, errField(dto.CodeInvalidParam, string(dto.ParamPage))
 	}
 	return Page{Page: pg, PerPage: per}, nil
 }
