@@ -10,16 +10,20 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/api/request"
 )
 
-// decodeJSON strictly decodes r's body into dst (a pointer to a DTO):
+// decodeJSON strictly decodes r's body into dst (a pointer to a request type), then validates
+// it, recording every invalid member on v:
 //   - Content-Type must be application/json (charset, if given, utf-8), else 415;
 //   - the body is capped at maxBodyBytes by handle (413 above it);
 //   - exactly one JSON value: no trailing data, no unknown fields, no duplicate keys, valid
 //     UTF-8 (encoding/json/v2 defaults plus RejectUnknownMembers); else 400 invalid-body.
 //
-// Errors never quote the body. Callers still validate each field (ranges, problem.ValidText).
-func decodeJSON(r *http.Request, dst any) error {
+// An unreadable body is returned at once (before any parameter error); validation problems
+// are only recorded, so the caller returns them with its other ones (v.Err). Errors never
+// quote the body.
+func decodeJSON(r *http.Request, dst request.Request, v *problem.Validation) error {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
 		return problem.WithDetail(dto.TypeUnsupportedMediaType, detailMediaType)
 	}
@@ -36,6 +40,7 @@ func decodeJSON(r *http.Request, dst any) error {
 	if err := json.Unmarshal(raw, dst, json.RejectUnknownMembers(true)); err != nil {
 		return problem.WithDetail(dto.TypeInvalidBody, detailInvalidBody)
 	}
+	dst.Validate(v)
 	return nil
 }
 

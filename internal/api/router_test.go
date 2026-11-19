@@ -74,12 +74,13 @@ func testOptions(t *testing.T, logs io.Writer) Options {
 	t.Helper()
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return Options{
-		Logger:         log,
-		Controllers:    newTestControllers(t, log),
-		Version:        testVersion,
-		TrustedProxies: []string{"127.0.0.1/32", "::1/128"},
-		RequestTimeout: 10 * time.Second,
-		GeneralPerMin:  1000,
+		Logger:           log,
+		Controllers:      newTestControllers(t, log),
+		Version:          testVersion,
+		TrustedProxies:   []string{"127.0.0.1/32", "::1/128"},
+		RequestTimeout:   10 * time.Second,
+		GeneralPerMin:    1000,
+		SourceAddPerHour: 1000,
 	}
 }
 
@@ -142,6 +143,7 @@ func TestNewValidatesOptions(t *testing.T) {
 		"no rate":       func(o *Options) { o.GeneralPerMin = 0 },
 		"short rotate":  func(o *Options) { o.HashKeyRotation = time.Minute },
 		"negative rate": func(o *Options) { o.GeneralPerMin = -1 },
+		"no add rate":   func(o *Options) { o.SourceAddPerHour = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -191,16 +193,31 @@ type routeSample struct {
 	// content: the response holds seeded fanwork content, so revealed it must contain a
 	// sentinel (the per-route positive control).
 	content bool
+	// body is a JSON request body (sent as application/json), or "" for none.
+	body string
+}
+
+// request builds the sample's request, with suffix appended to its target.
+func (s routeSample) request(method, suffix string) *http.Request {
+	if s.body == "" {
+		return httptest.NewRequest(method, s.target+suffix, nil)
+	}
+	req := httptest.NewRequest(method, s.target+suffix, strings.NewReader(s.body))
+	req.Header.Set("Content-Type", contentTypeJSON)
+	return req
 }
 
 // routeSamples has a sample request for every route, keyed "METHOD pattern". The leak test fails
 // when a route has no sample or a sample has no route. Add one with every new route; the ids are
 // the seeded rows (seed_test.go).
 var routeSamples = map[string]routeSample{
-	"GET /api/v1/healthz":              {target: "/api/v1/healthz", status: http.StatusOK},
-	"GET /api/v1/version":              {target: "/api/v1/version", status: http.StatusOK},
-	"GET /api/v1/sources":              {target: "/api/v1/sources", status: http.StatusOK, content: true},
-	"GET /api/v1/sources/{id}":         {target: "/api/v1/sources/1", status: http.StatusOK, content: true},
+	"GET /api/v1/healthz":      {target: "/api/v1/healthz", status: http.StatusOK},
+	"GET /api/v1/version":      {target: "/api/v1/version", status: http.StatusOK},
+	"GET /api/v1/sources":      {target: "/api/v1/sources", status: http.StatusOK, content: true},
+	"GET /api/v1/sources/{id}": {target: "/api/v1/sources/1", status: http.StatusOK, content: true},
+	// Queued on the first listener; the second gets the same job (created false).
+	"POST /api/v1/sources": {target: "/api/v1/sources", status: http.StatusAccepted,
+		body: `{"url":"https://archiveofourown.org/tags/` + sentinel + `url/works"}`},
 	"GET /api/v1/source-adds/{job_id}": {target: "/api/v1/source-adds/1", status: http.StatusOK, content: true},
 	"GET /api/v1/jobs":                 {target: "/api/v1/jobs?state=failed&kind=source_add", status: http.StatusOK, content: true},
 	"GET /api/v1/jobs/{id}":            {target: "/api/v1/jobs/2", status: http.StatusOK, content: true},
@@ -257,7 +274,7 @@ func TestAllRoutesLeak(t *testing.T) {
 			}
 			method, _, _ := strings.Cut(rt, " ")
 			t.Run(name+" "+rt, func(t *testing.T) {
-				w := do(r, httptest.NewRequest(method, s.target, nil))
+				w := do(r, s.request(method, ""))
 				assert.Equal(t, s.status, w.Code)
 				assert.Equal(t, "hashed", w.Header().Get(headerFanwork))
 				assertNoSentinel(t, w, logs)
@@ -269,14 +286,23 @@ func TestAllRoutesLeak(t *testing.T) {
 					sep = "&"
 				}
 				req := httptest.NewRequest(method, s.target+sep+sentinel+"name="+sentinel+"value",
-					strings.NewReader(`{"x":"`+sentinel+`body"}`))
+					strings.NewReader(`{"x":"`+sentinel+`body", "`+sentinel+`key":1}`))
 				req.Header.Set(headerRequestID, sentinel+" not a valid id")
+				if s.body != "" {
+					req.Header.Set("Content-Type", contentTypeJSON)
+				}
 				w = do(r, req)
-				requireParamProblem(t, w, "", "unknown param, never echoed")
+				if s.body == "" {
+					requireParamProblem(t, w, "", "unknown param, never echoed")
+				} else {
+					// An unreadable body is reported before the parameters.
+					require.Equal(t, http.StatusBadRequest, w.Code)
+					assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type)
+				}
 				assertNoSentinel(t, w, logs)
 
 				if s.content {
-					w = do(r, httptest.NewRequest(method, s.target+sep+RevealParam+"=1", nil))
+					w = do(r, s.request(method, sep+RevealParam+"=1"))
 					assert.Equal(t, s.status, w.Code)
 					assert.Equal(t, "revealed", w.Header().Get(headerFanwork))
 					assert.Contains(t, w.Body.String(), sentinel, "revealed response holds the seeded content")

@@ -35,6 +35,9 @@ type Options struct {
 	// GeneralPerMin is the general per-client rate limit on the public listener. The admin
 	// socket allows adminRateFactor times as many.
 	GeneralPerMin int
+	// SourceAddPerHour is the per-client limit on POST /api/v1/sources (public listener; the
+	// admin socket allows adminRateFactor times as many), on top of the general limit.
+	SourceAddPerHour int
 	// Now is the hasher's clock (nil: time.Now). Tests use it to drive key rotation.
 	Now func() time.Time
 }
@@ -75,8 +78,8 @@ func New(opts Options) (*API, error) {
 	if opts.RequestTimeout <= 0 {
 		return nil, errors.New("api: request timeout must be positive")
 	}
-	if opts.GeneralPerMin <= 0 {
-		return nil, errors.New("api: general rate limit must be positive")
+	if opts.GeneralPerMin <= 0 || opts.SourceAddPerHour <= 0 {
+		return nil, errors.New("api: rate limits must be positive")
 	}
 	h, err := redact.NewHasher(opts.HashKeyRotation, opts.Now)
 	if err != nil {
@@ -101,9 +104,9 @@ func (a *API) Admin() http.Handler { return a.admin }
 // router builds one listener's router with the full middleware chain (docs/part2-api.md, "HTTP
 // hardening"; the order matters).
 func (a *API) router(admin bool) *chi.Mux {
-	listener, rate := "public", a.opts.GeneralPerMin
+	listener, rate, addRate := "public", a.opts.GeneralPerMin, a.opts.SourceAddPerHour
 	if admin {
-		listener, rate = "admin", rate*adminRateFactor
+		listener, rate, addRate = "admin", rate*adminRateFactor, addRate*adminRateFactor
 	}
 	r := chi.NewRouter()
 	r.Use(requestID)
@@ -126,14 +129,15 @@ func (a *API) router(admin bool) *chi.Mux {
 	r.NotFound(a.handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, detailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
 
-	r.Get("/api/v1/healthz", a.handle(a.healthz))
-	r.Get("/api/v1/version", a.handle(a.version))
-	r.Get("/api/v1/sources", a.handle(a.listSources))
-	r.Get("/api/v1/sources/{id}", a.handle(a.getSource))
-	r.Get("/api/v1/source-adds/{job_id}", a.handle(a.getSourceAdd))
-	r.Get("/api/v1/jobs", a.handle(a.listJobs))
-	r.Get("/api/v1/jobs/{id}", a.handle(a.getJob))
-	r.Get("/api/v1/status", a.handle(a.status))
+	r.Get(routeHealthz, a.handle(a.healthz))
+	r.Get(routeVersion, a.handle(a.version))
+	r.Get(routeSources, a.handle(a.listSources))
+	r.With(a.rateLimit(addRate, time.Hour, listener)).Post(routeSources, a.handle(a.addSource(admin)))
+	r.Get(routeSource, a.handle(a.getSource))
+	r.Get(routeSourceAdd, a.handle(a.getSourceAdd))
+	r.Get(routeJobs, a.handle(a.listJobs))
+	r.Get(routeJob, a.handle(a.getJob))
+	r.Get(routeStatus, a.handle(a.status))
 
 	if admin {
 		r.Group(func(chi.Router) {

@@ -52,6 +52,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SourceList" }
         default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: addSource
+      summary: Add a source.
+      description: |
+        A listing source (tag, user, pseud, bookmarks, collection, series) is queued for the
+        daemon, which fetches page 1 and creates it (202; poll the Location). A single work is
+        added at once (201). An existing source is 409 `already-exists`, with the source as
+        Location. Invalid members are one 422 `validation-error` listing each by `pointer`; a
+        URL that is not a supported AO3 source page gets its reason's hint at `/url`. `confirm`
+        is accepted only on the admin socket (a validation error at `/confirm` on the public
+        listener), so a source over `sources.auto_confirm_max` added publicly waits for
+        `source confirm`. Rate limited per client by `api.rate.source_add_per_hour`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceAddRequest" }
+      responses:
+        "201":
+          description: The single-work source was added.
+          headers:
+            Location: { description: "The source.", schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceAddResult" }
+        "202":
+          description: The add is queued (or the same add already was).
+          headers:
+            Location: { description: "The source add (`/api/v1/source-adds/{job_id}`).", schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceAddQueued" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/sources/{id}:
     get:
       operationId: getSource
@@ -280,14 +313,36 @@ components:
         state: { $ref: "#/components/schemas/JobState" }
         last_error_code: { $ref: "#/components/schemas/JobErrorCode" }
         last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
-        result:
-          type: object
-          required: [source, blurbs, estimate]
-          additionalProperties: false
-          properties:
-            source: { $ref: "#/components/schemas/Source" }
-            blurbs: { type: integer, description: "Listing blurbs stored from page 1." }
-            estimate: { $ref: "#/components/schemas/Estimate" }
+        result: { $ref: "#/components/schemas/SourceAddResult" }
+    SourceAddResult:
+      type: object
+      required: [source, blurbs, estimate]
+      additionalProperties: false
+      properties:
+        source: { $ref: "#/components/schemas/Source" }
+        blurbs: { type: integer, description: "Listing blurbs stored from page 1." }
+        estimate: { $ref: "#/components/schemas/Estimate" }
+    SourceAddRequest:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url: { type: string, maxLength: 2048, description: "An AO3 tag, user, pseud, bookmarks, collection, series or work URL." }
+        order: { $ref: "#/components/schemas/Order" }
+        priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+        poll_interval:
+          allOf: [{ $ref: "#/components/schemas/Duration" }]
+          description: >-
+            Update poll interval, from 10m to 720h (30 days); absent (or zero) uses
+            `sources.poll_interval`. Any Go duration string is accepted (`6h`, `90m`).
+        confirm: { type: boolean, description: "Skip the auto_confirm_max gate (admin socket only)." }
+    SourceAddQueued:
+      type: object
+      required: [job_id, created]
+      additionalProperties: false
+      properties:
+        job_id: { $ref: "#/components/schemas/ID" }
+        created: { type: boolean, description: "False when the same add was already queued (this request's options were dropped)." }
     Estimate:
       type: object
       required: [total, pages, listing_requests, work_fetches, requests, duration, disk_bytes, windowed]

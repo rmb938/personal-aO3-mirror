@@ -79,8 +79,10 @@ Design rules for API code:
   e.g. `internal/api/details.go`), never built from input or content; a new problem type gets
   a `## <slug>` section there.
 - Validation reports every invalid part at once: handlers read all params through
-  `parseParams` and return `q.Err()`; each request body DTO gets a validate function that
-  records members on the handler's `problem.Validation` and is listed in `api.requestTypes`.
+  `parseParams` and return `q.Err()`. Request bodies are types in `internal/api/request`
+  (same import rule as `dto`), each with a `Validate(*problem.Validation)` method recording
+  every invalid member and listed in `request.Types()`; `decodeJSON` takes a `request.Request`
+  and validates it. `Location` paths come from `pathFor(route, ids...)` over `api/routes.go`.
 - Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
   query param allowlists. Logs carry route patterns and param names, never query values or
   bodies.

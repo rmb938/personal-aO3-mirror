@@ -132,3 +132,11 @@ type Estimate struct {
 	// Windowed means the backfill is sliced into revised-date windows (over 100k results).
 	Windowed bool `json:"windowed"`
 }
+
+// SourceAddQueued is a queued source add (POST /api/v1/sources, 202).
+type SourceAddQueued struct {
+	JobID int64 `json:"job_id"`
+	// Created is false when the same add was already queued: JobID is that job, and this
+	// request's options were dropped.
+	Created bool `json:"created"`
+}
