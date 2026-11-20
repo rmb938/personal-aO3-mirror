@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/apiclient"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
@@ -18,11 +21,12 @@ import (
 
 // app bundles the long-lived pieces commands need.
 type app struct {
-	cfg    config.Config
-	log    *slog.Logger
-	store  *store.Store
-	client *httpx.Client
-	ctl    *controllers.Controllers
+	cfg       config.Config
+	log       *slog.Logger
+	store     *store.Store
+	client    *httpx.Client
+	ctl       *controllers.Controllers
+	apiClient *apiclient.Client
 }
 
 func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, error) {
@@ -61,6 +65,28 @@ func openApp(ctx context.Context, cfg config.Config, log *slog.Logger) (*app, er
 		return nil, err
 	}
 	a.ctl = newControllers(cfg, log, st, a.client)
+
+	clientOpt := apiclient.WithClient(&http.Client{
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost:   1,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
+
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				var d net.Dialer
+				adminSocket := path.Join(a.cfg.DataDir, "api", "admin.sock")
+				return d.DialContext(ctx, "unix", adminSocket)
+			},
+		},
+	})
+
+	a.apiClient, err = apiclient.NewClient("http://unix", clientOpt)
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+
 	return a, nil
 }
 

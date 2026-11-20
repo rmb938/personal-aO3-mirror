@@ -80,7 +80,11 @@ paths:
         "202":
           description: The add is queued (or the same add already was).
           headers:
-            Location: { description: "The source add (`/api/v1/source-adds/{job_id}`).", schema: { type: string } }
+            Location:
+              {
+                description: "The source add (`/api/v1/source-adds/{job_id}`).",
+                schema: { type: string },
+              }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SourceAddQueued" }
@@ -330,7 +334,11 @@ components:
           description: Problem type URI, `https://github.com/rmb938/personal-aO3-mirror/blob/main/docs/api/problems.md#<slug>`.
         title: { type: string, description: "The type's fixed title." }
         status: { type: integer }
-        detail: { type: string, description: "What went wrong in this occurrence and how to fix it." }
+        detail:
+          {
+            type: string,
+            description: "What went wrong in this occurrence and how to fix it.",
+          }
         errors:
           type: array
           description: The invalid parts of the request (validation-error).
@@ -340,8 +348,16 @@ components:
             additionalProperties: false
             properties:
               detail: { type: string }
-              parameter: { type: string, description: "The query or path parameter at fault, when it is a declared name." }
-              pointer: { type: string, description: "RFC 6901 JSON Pointer to the body member at fault." }
+              parameter:
+                {
+                  type: string,
+                  description: "The query or path parameter at fault, when it is a declared name.",
+                }
+              pointer:
+                {
+                  type: string,
+                  description: "RFC 6901 JSON Pointer to the body member at fault.",
+                }
     Health:
       type: object
       required: [status]
@@ -362,7 +378,7 @@ components:
     Duration:
       type: string
       description: A Go duration string, e.g. `6h0m0s`, `1.5s` (what Go's time.Duration.String writes).
-      pattern: '^-?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$'
+      format: duration
       example: 6h0m0s
     Timestamp:
       type: string
@@ -380,19 +396,62 @@ components:
     Order:
       type: string
       description: Listing sort, `<field>_<asc|desc>`.
-      enum: [author_asc, author_desc, bookmarks_asc, bookmarks_desc, comments_asc, comments_desc,
-        created_asc, created_desc, hits_asc, hits_desc, kudos_asc, kudos_desc, revised_asc,
-        revised_desc, title_asc, title_desc, words_asc, words_desc]
+      enum:
+        [
+          author_asc,
+          author_desc,
+          bookmarks_asc,
+          bookmarks_desc,
+          comments_asc,
+          comments_desc,
+          created_asc,
+          created_desc,
+          hits_asc,
+          hits_desc,
+          kudos_asc,
+          kudos_desc,
+          revised_asc,
+          revised_desc,
+          title_asc,
+          title_desc,
+          words_asc,
+          words_desc,
+        ]
     Source:
       type: object
-      required: [id, kind, target, filters, path, state, poll_interval, priority, total_works,
-        est_requests, member_works, fetched_works]
+      required:
+        [
+          id,
+          kind,
+          target,
+          filters,
+          path,
+          state,
+          poll_interval,
+          priority,
+          total_works,
+          est_requests,
+          member_works,
+          fetched_works,
+        ]
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/ID" }
-        kind: { type: string, enum: [tag, user, pseud, user_bookmarks, series, collection, work] }
-        target: { type: string, description: "Tag, user or collection name, or series/work id (hashed)." }
-        target_id: { $ref: "#/components/schemas/ID", description: "Numeric target of a series or work source." }
+        kind:
+          {
+            type: string,
+            enum: [tag, user, pseud, user_bookmarks, series, collection, work],
+          }
+        target:
+          {
+            type: string,
+            description: "Tag, user or collection name, or series/work id (hashed).",
+          }
+        target_id:
+          {
+            $ref: "#/components/schemas/ID",
+            description: "Numeric target of a series or work source.",
+          }
         filters:
           type: array
           description: work_search filters, sorted by name.
@@ -408,8 +467,10 @@ components:
         order: { $ref: "#/components/schemas/Order" }
         poll_interval: { $ref: "#/components/schemas/Duration" }
         priority: { type: integer }
-        total_works: { type: [integer, "null"], description: "null until known." }
-        est_requests: { type: [integer, "null"], description: "null until known." }
+        total_works:
+          { type: [integer, "null"], description: "null until known." }
+        est_requests:
+          { type: [integer, "null"], description: "null until known." }
         member_works: { type: integer }
         fetched_works: { type: integer }
         backfill: { $ref: "#/components/schemas/Backfill" }
@@ -419,19 +480,28 @@ components:
         next_poll_at: { $ref: "#/components/schemas/Timestamp" }
         last_full_scan_at: { $ref: "#/components/schemas/Timestamp" }
         backfill_done_at: { $ref: "#/components/schemas/Timestamp" }
-        last_error: { type: string, description: "Last poll or backfill error (hashed whole)." }
+        last_error:
+          {
+            type: string,
+            description: "Last poll or backfill error (hashed whole).",
+          }
     Backfill:
       type: object
       required: [next_page]
       additionalProperties: false
       properties:
-        next_page: { type: integer, description: "0 once the listing walk is done." }
+        next_page:
+          { type: integer, description: "0 once the listing walk is done." }
         order: { $ref: "#/components/schemas/Order" }
         window_start_on: { type: string, format: date }
         window_end_on: { type: string, format: date }
         rescan: { type: boolean }
         rescan_started_at: { $ref: "#/components/schemas/Timestamp" }
-        blocked_parser: { type: integer, description: "Parser version that failed on next_page." }
+        blocked_parser:
+          {
+            type: integer,
+            description: "Parser version that failed on next_page.",
+          }
         retry_at: { $ref: "#/components/schemas/Timestamp" }
     SourceAdd:
       type: object
@@ -441,7 +511,8 @@ components:
         job_id: { $ref: "#/components/schemas/ID" }
         state: { $ref: "#/components/schemas/JobState" }
         last_error_code: { $ref: "#/components/schemas/JobErrorCode" }
-        last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
+        last_error_detail:
+          { type: string, description: "The rest of the last error (hashed)." }
         existing_source_id:
           allOf: [{ $ref: "#/components/schemas/ID" }]
           description: >-
@@ -454,14 +525,20 @@ components:
       additionalProperties: false
       properties:
         source: { $ref: "#/components/schemas/Source" }
-        blurbs: { type: integer, description: "Listing blurbs stored from page 1." }
+        blurbs:
+          { type: integer, description: "Listing blurbs stored from page 1." }
         estimate: { $ref: "#/components/schemas/Estimate" }
     SourceAddRequest:
       type: object
       required: [url]
       additionalProperties: false
       properties:
-        url: { type: string, maxLength: 2048, description: "An AO3 tag, user, pseud, bookmarks, collection, series or work URL." }
+        url:
+          {
+            type: string,
+            maxLength: 2048,
+            description: "An AO3 tag, user, pseud, bookmarks, collection, series or work URL.",
+          }
         order: { $ref: "#/components/schemas/Order" }
         priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
         poll_interval:
@@ -469,34 +546,66 @@ components:
           description: >-
             Update poll interval, from 10m to 720h (30 days); absent (or zero) uses
             `sources.poll_interval`. Any Go duration string is accepted (`6h`, `90m`).
-        confirm: { type: boolean, description: "Skip the auto_confirm_max gate (admin socket only)." }
+        confirm:
+          {
+            type: boolean,
+            description: "Skip the auto_confirm_max gate (admin socket only).",
+          }
     SourceAddQueued:
       type: object
       required: [job_id, created]
       additionalProperties: false
       properties:
         job_id: { $ref: "#/components/schemas/ID" }
-        created: { type: boolean, description: "False when the same add was already queued (this request's options were dropped)." }
+        created:
+          {
+            type: boolean,
+            description: "False when the same add was already queued (this request's options were dropped).",
+          }
     SourceCancelled:
       type: object
       required: [dropped_jobs]
       additionalProperties: false
       properties:
-        dropped_jobs: { type: integer, minimum: 0, description: "How many of the source's queued jobs were cancelled." }
+        dropped_jobs:
+          {
+            type: integer,
+            minimum: 0,
+            description: "How many of the source's queued jobs were cancelled.",
+          }
     SourceRefreshRequest:
       type: object
       additionalProperties: false
       properties:
-        full: { type: boolean, default: false, description: "Re-walk the whole listing now (rescan) and clear a parse-failure block." }
+        full:
+          {
+            type: boolean,
+            default: false,
+            description: "Re-walk the whole listing now (rescan) and clear a parse-failure block.",
+          }
     SourceRefreshed:
       type: object
       required: [poll_now, requeued_works, rescan_started, unblocked_parser]
       additionalProperties: false
       properties:
-        poll_now: { type: boolean, description: "The next update poll is due now." }
-        requeued_works: { type: integer, minimum: 0, description: "How many of the source's failed work fetches were queued again." }
-        rescan_started: { type: boolean, description: "A full refresh of a done_backfill source started a re-walk (the source is active again)." }
-        unblocked_parser: { type: boolean, description: "A full refresh cleared the backfill's parse-failure block." }
+        poll_now:
+          { type: boolean, description: "The next update poll is due now." }
+        requeued_works:
+          {
+            type: integer,
+            minimum: 0,
+            description: "How many of the source's failed work fetches were queued again.",
+          }
+        rescan_started:
+          {
+            type: boolean,
+            description: "A full refresh of a done_backfill source started a re-walk (the source is active again).",
+          }
+        unblocked_parser:
+          {
+            type: boolean,
+            description: "A full refresh cleared the backfill's parse-failure block.",
+          }
     SourceSettingsRequest:
       type: object
       additionalProperties: false
@@ -513,7 +622,17 @@ components:
           description: Priority within a scheduling class (higher first); absent or null keeps the current one.
     Estimate:
       type: object
-      required: [total, pages, listing_requests, work_fetches, requests, duration, disk_bytes, windowed]
+      required:
+        [
+          total,
+          pages,
+          listing_requests,
+          work_fetches,
+          requests,
+          duration,
+          disk_bytes,
+          windowed,
+        ]
       additionalProperties: false
       properties:
         total: { type: integer }
@@ -523,7 +642,11 @@ components:
         requests: { type: integer }
         duration: { $ref: "#/components/schemas/Duration" }
         disk_bytes: { type: integer }
-        windowed: { type: boolean, description: "Backfill sliced into revised-date windows (over 100k results)." }
+        windowed:
+          {
+            type: boolean,
+            description: "Backfill sliced into revised-date windows (over 100k results).",
+          }
     JobState:
       type: string
       enum: [queued, running, done, failed, cancelled]
@@ -533,10 +656,33 @@ components:
     JobErrorCode:
       type: string
       description: A job's last error code (before the first `:`).
-      enum: [parse_unexpected, parse_error, not_found, restricted, hidden, adult_gate, too_large,
-        robots_disallowed, robots_unavailable, unexpected_response, bad_source, bad_filters,
-        bad_cursor, bad_work_id, bad_series_id, no_source, no_tag, panic, internal,
-        source_exists, no_source_add, rate_limited, unavailable, crashed]
+      enum:
+        [
+          parse_unexpected,
+          parse_error,
+          not_found,
+          restricted,
+          hidden,
+          adult_gate,
+          too_large,
+          robots_disallowed,
+          robots_unavailable,
+          unexpected_response,
+          bad_source,
+          bad_filters,
+          bad_cursor,
+          bad_work_id,
+          bad_series_id,
+          no_source,
+          no_tag,
+          panic,
+          internal,
+          source_exists,
+          no_source_add,
+          rate_limited,
+          unavailable,
+          crashed,
+        ]
     JobList:
       type: object
       required: [items, page, per_page, total]
@@ -553,15 +699,28 @@ components:
       properties:
         id: { $ref: "#/components/schemas/ID" }
         kind: { $ref: "#/components/schemas/JobKind" }
-        target: { type: string, description: "Page number, work/tag/series id or source add id (hashed)." }
-        source_id: { $ref: "#/components/schemas/ID", description: "The job's source, when it has one." }
+        target:
+          {
+            type: string,
+            description: "Page number, work/tag/series id or source add id (hashed).",
+          }
+        source_id:
+          {
+            $ref: "#/components/schemas/ID",
+            description: "The job's source, when it has one.",
+          }
         priority: { type: integer, description: "Class: lower runs first." }
         state: { $ref: "#/components/schemas/JobState" }
         attempts: { type: integer }
         max_attempts: { type: integer }
         last_error_code: { $ref: "#/components/schemas/JobErrorCode" }
-        last_error_detail: { type: string, description: "The rest of the last error (hashed)." }
-        not_before_at: { $ref: "#/components/schemas/Timestamp", description: "A queued job waits until then." }
+        last_error_detail:
+          { type: string, description: "The rest of the last error (hashed)." }
+        not_before_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "A queued job waits until then.",
+          }
         created_at: { $ref: "#/components/schemas/Timestamp" }
         started_at: { $ref: "#/components/schemas/Timestamp" }
         finished_at: { $ref: "#/components/schemas/Timestamp" }
@@ -570,8 +729,23 @@ components:
       enum: [pending_confirm, active, paused, cancelled, done_backfill]
     Status:
       type: object
-      required: [daemon, works, tags, creators, series, raw_pages, requests, sources, images, tag_info,
-        jobs, partial_series, request_errors, failed_jobs]
+      required:
+        [
+          daemon,
+          works,
+          tags,
+          creators,
+          series,
+          raw_pages,
+          requests,
+          sources,
+          images,
+          tag_info,
+          jobs,
+          partial_series,
+          request_errors,
+          failed_jobs,
+        ]
       additionalProperties: false
       properties:
         daemon: { $ref: "#/components/schemas/Daemon" }
@@ -587,11 +761,23 @@ components:
                 required: [status, count]
                 additionalProperties: false
                 properties:
-                  status: { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
+                  status:
+                    {
+                      type: string,
+                      enum: [ok, deleted, hidden, restricted, unrevealed],
+                    }
                   count: { type: integer }
             fetched: { type: integer }
-            never_fetched: { type: integer, description: "Ok works with no fetched page yet." }
-            parse_failures: { type: integer, description: "Fetched works the current parser could not parse." }
+            never_fetched:
+              {
+                type: integer,
+                description: "Ok works with no fetched page yet.",
+              }
+            parse_failures:
+              {
+                type: integer,
+                description: "Fetched works the current parser could not parse.",
+              }
         tags: { type: integer }
         creators: { type: integer }
         series: { type: integer }
@@ -640,7 +826,12 @@ components:
                 required: [status, count]
                 additionalProperties: false
                 properties:
-                  status: { type: string, enum: [queued, ok, failed, skipped, too_large, disallowed] }
+                  status:
+                    {
+                      type: string,
+                      enum:
+                        [queued, ok, failed, skipped, too_large, disallowed],
+                    }
                   count: { type: integer }
             bytes: { type: integer, description: "Size of the stored images." }
         tag_info:
@@ -652,10 +843,18 @@ components:
             types:
               type: array
               description: The configured tag types (empty when tag info is off).
-              items: { type: string, enum: [Fandom, Relationship, Character, Freeform] }
+              items:
+                {
+                  type: string,
+                  enum: [Fandom, Relationship, Character, Freeform],
+                }
             total: { type: integer }
             fetched: { type: integer }
-            due: { type: integer, description: "Never fetched or older than the refresh interval." }
+            due:
+              {
+                type: integer,
+                description: "Never fetched or older than the refresh interval.",
+              }
         jobs:
           type: array
           description: Job counts by kind and state, sorted by kind, then state.
@@ -672,14 +871,25 @@ components:
           description: Series that are not sources and have fewer mirrored works than AO3 lists.
           items:
             type: object
-            required: [id, works_total, mirrored, missing_positions, missing_work_ids]
+            required:
+              [id, works_total, mirrored, missing_positions, missing_work_ids]
             additionalProperties: false
             properties:
               id: { $ref: "#/components/schemas/ID" }
               works_total: { type: integer, description: "AO3's count." }
               mirrored: { type: integer }
-              missing_positions: { type: array, items: { type: integer }, description: "Part numbers none of our works has." }
-              missing_work_ids: { type: array, items: { $ref: "#/components/schemas/ID" }, description: "Known members not fetched." }
+              missing_positions:
+                {
+                  type: array,
+                  items: { type: integer },
+                  description: "Part numbers none of our works has.",
+                }
+              missing_work_ids:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/ID" },
+                  description: "Known members not fetched.",
+                }
         request_errors:
           type: array
           description: The most recent requests whose outcome was not ok, newest first.
@@ -693,15 +903,35 @@ components:
       required: [running, pacer]
       additionalProperties: false
       properties:
-        running: { type: boolean, description: "A heartbeat within 2 minutes that is not a clean stop." }
-        heartbeat_at: { $ref: "#/components/schemas/Timestamp", description: "Omitted when the daemon never ran." }
+        running:
+          {
+            type: boolean,
+            description: "A heartbeat within 2 minutes that is not a clean stop.",
+          }
+        heartbeat_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "Omitted when the daemon never ran.",
+          }
         pid: { type: integer }
         phase: { type: string, enum: [idle, running, between, stopped] }
         current_job: { $ref: "#/components/schemas/ID" }
-        waiting_until_at: { $ref: "#/components/schemas/Timestamp", description: "When a waiting request gets its slot." }
+        waiting_until_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "When a waiting request gets its slot.",
+          }
         pacer:
           type: object
-          required: [interval, slow_factor, consec_fails, breaker_open, day_count, daily_budget]
+          required:
+            [
+              interval,
+              slow_factor,
+              consec_fails,
+              breaker_open,
+              day_count,
+              daily_budget,
+            ]
           additionalProperties: false
           properties:
             interval: { $ref: "#/components/schemas/Duration" }
@@ -713,25 +943,58 @@ components:
             backoff_until_at: { $ref: "#/components/schemas/Timestamp" }
     RequestClass:
       type: string
-      enum: [ok, not_found, restricted, hidden, adult_gate, rate_limited, unavailable, parse_unexpected]
+      enum:
+        [
+          ok,
+          not_found,
+          restricted,
+          hidden,
+          adult_gate,
+          rate_limited,
+          unavailable,
+          parse_unexpected,
+        ]
     Request:
       type: object
       description: One AO3 request the scraper made.
-      required: [requested_at, req_id, kind, path, status, class, reason, bytes, duration, waited, hop]
+      required:
+        [
+          requested_at,
+          req_id,
+          kind,
+          path,
+          status,
+          class,
+          reason,
+          bytes,
+          duration,
+          waited,
+          hop,
+        ]
       additionalProperties: false
       properties:
         requested_at: { $ref: "#/components/schemas/Timestamp" }
-        req_id: { type: string, description: "Request id in the logs (hashed)." }
-        job_id: { $ref: "#/components/schemas/ID", description: "The job that made it." }
+        req_id:
+          { type: string, description: "Request id in the logs (hashed)." }
+        job_id:
+          {
+            $ref: "#/components/schemas/ID",
+            description: "The job that made it.",
+          }
         kind: { type: string, enum: [robots, listing, work, tag, series, page] }
         path: { type: string, description: "Request path (hashed)." }
-        status: { type: integer, description: "HTTP status (0 when the request failed in transport)." }
+        status:
+          {
+            type: integer,
+            description: "HTTP status (0 when the request failed in transport).",
+          }
         class: { $ref: "#/components/schemas/RequestClass" }
         reason: { type: string, description: "Classifier reason (hashed)." }
         bytes: { type: integer }
         duration: { $ref: "#/components/schemas/Duration" }
         waited: { $ref: "#/components/schemas/Duration" }
-        hop: { type: integer, description: "Redirect hop (0: the first request)." }
+        hop:
+          { type: integer, description: "Redirect hop (0: the first request)." }
     JobEventType:
       type: string
       enum: [start, done, failed, retry, error, wait]
@@ -741,7 +1004,11 @@ components:
       additionalProperties: false
       properties:
         job: { $ref: "#/components/schemas/Job" }
-        dedupe_key: { type: string, description: "Keeps a second copy of the job from being queued (hashed)." }
+        dedupe_key:
+          {
+            type: string,
+            description: "Keeps a second copy of the job from being queued (hashed).",
+          }
         events:
           type: array
           description: The job's trace events, oldest first.
@@ -771,14 +1038,44 @@ components:
         source_add: { $ref: "#/components/schemas/SourceAddDetail" }
     JobOutcome:
       type: object
-      required: [attempt, target, duration, error_code, error_detail, next_state, not_before_at]
+      required:
+        [
+          attempt,
+          target,
+          duration,
+          error_code,
+          error_detail,
+          next_state,
+          not_before_at,
+        ]
       additionalProperties: false
       properties:
-        attempt: { type: [integer, "null"], description: "Start event: the attempt number, counting this one." }
-        target: { type: [string, "null"], description: "Start event: the job's target (hashed)." }
-        duration: { anyOf: [{ $ref: "#/components/schemas/Duration" }, { type: "null" }], description: "How long the handler ran." }
-        error_code: { anyOf: [{ $ref: "#/components/schemas/JobErrorCode" }, { type: "null" }] }
-        error_detail: { type: [string, "null"], description: "The rest of the error after the first `:` (hashed)." }
+        attempt:
+          {
+            type: [integer, "null"],
+            description: "Start event: the attempt number, counting this one.",
+          }
+        target:
+          {
+            type: [string, "null"],
+            description: "Start event: the job's target (hashed).",
+          }
+        duration:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/Duration" }, { type: "null" }],
+            description: "How long the handler ran.",
+          }
+        error_code:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/JobErrorCode" }, { type: "null" }],
+          }
+        error_detail:
+          {
+            type: [string, "null"],
+            description: "The rest of the error after the first `:` (hashed).",
+          }
         next_state:
           anyOf: [{ $ref: "#/components/schemas/JobState" }, { type: "null" }]
           description: After a retryable error, queued again or failed when out of attempts.
@@ -787,23 +1084,74 @@ components:
           description: The requeued job waits until then.
     PollDetail:
       type: object
-      required: [page, blurbs, new, changed, work_jobs, requeued_unfetched, continue, total, req_id]
+      required:
+        [
+          page,
+          blurbs,
+          new,
+          changed,
+          work_jobs,
+          requeued_unfetched,
+          continue,
+          total,
+          req_id,
+        ]
       additionalProperties: false
       properties:
         page: { type: [integer, "null"] }
         blurbs: { type: [integer, "null"] }
-        new: { type: [integer, "null"], description: "Works new to the mirror." }
-        changed: { type: [integer, "null"], description: "Works whose listing changed." }
-        work_jobs: { type: [integer, "null"], description: "Work fetches queued." }
-        requeued_unfetched: { type: [integer, "null"], description: "Member works queued again because an earlier fetch failed or never ran." }
-        continue: { type: [boolean, "null"], description: "The poll goes on to the next page." }
-        total: { type: [integer, "null"], description: "The listing's work count (-1 when it shows none)." }
-        req_id: { type: [string, "null"], description: "Request id in the logs (hashed)." }
+        new:
+          { type: [integer, "null"], description: "Works new to the mirror." }
+        changed:
+          {
+            type: [integer, "null"],
+            description: "Works whose listing changed.",
+          }
+        work_jobs:
+          { type: [integer, "null"], description: "Work fetches queued." }
+        requeued_unfetched:
+          {
+            type: [integer, "null"],
+            description: "Member works queued again because an earlier fetch failed or never ran.",
+          }
+        continue:
+          {
+            type: [boolean, "null"],
+            description: "The poll goes on to the next page.",
+          }
+        total:
+          {
+            type: [integer, "null"],
+            description: "The listing's work count (-1 when it shows none).",
+          }
+        req_id:
+          {
+            type: [string, "null"],
+            description: "Request id in the logs (hashed).",
+          }
     BackfillDetail:
       type: object
-      required: [page, blurbs, new, rescan, work_jobs, total, req_id, next_page, window_start_on, window_end_on,
-        shrink_span_days, truncated_at_max_results, total_beyond_pages, stale_after_fetch, stale, cursor_page,
-        blocked_parser, retry_at]
+      required:
+        [
+          page,
+          blurbs,
+          new,
+          rescan,
+          work_jobs,
+          total,
+          req_id,
+          next_page,
+          window_start_on,
+          window_end_on,
+          shrink_span_days,
+          truncated_at_max_results,
+          total_beyond_pages,
+          stale_after_fetch,
+          stale,
+          cursor_page,
+          blocked_parser,
+          retry_at,
+        ]
       additionalProperties: false
       properties:
         page: { type: [integer, "null"] }
@@ -811,40 +1159,108 @@ components:
         new: { type: [integer, "null"] }
         rescan: { type: [boolean, "null"] }
         work_jobs: { type: [integer, "null"] }
-        total: { type: [integer, "null"], description: "The listing's work count (-1 when it shows none)." }
-        req_id: { type: [string, "null"], description: "Request id in the logs (hashed)." }
+        total:
+          {
+            type: [integer, "null"],
+            description: "The listing's work count (-1 when it shows none).",
+          }
+        req_id:
+          {
+            type: [string, "null"],
+            description: "Request id in the logs (hashed).",
+          }
         next_page: { type: [integer, "null"] }
-        window_start_on: { type: [string, "null"], format: date, description: "Revised-date window walked (windowed sources)." }
+        window_start_on:
+          {
+            type: [string, "null"],
+            format: date,
+            description: "Revised-date window walked (windowed sources).",
+          }
         window_end_on: { type: [string, "null"], format: date }
-        shrink_span_days: { type: [integer, "null"], description: "New window span after a window over AO3's result limit was halved." }
+        shrink_span_days:
+          {
+            type: [integer, "null"],
+            description: "New window span after a window over AO3's result limit was halved.",
+          }
         truncated_at_max_results: { type: [boolean, "null"] }
-        total_beyond_pages: { type: [boolean, "null"], description: "The listing total is more than the pages walked hold." }
-        stale_after_fetch: { type: [boolean, "null"], description: "A refresh moved the cursor during the fetch; the cursor was left alone." }
-        stale: { type: [boolean, "null"], description: "The cursor was already past this page (at cursor_page); nothing was fetched." }
+        total_beyond_pages:
+          {
+            type: [boolean, "null"],
+            description: "The listing total is more than the pages walked hold.",
+          }
+        stale_after_fetch:
+          {
+            type: [boolean, "null"],
+            description: "A refresh moved the cursor during the fetch; the cursor was left alone.",
+          }
+        stale:
+          {
+            type: [boolean, "null"],
+            description: "The cursor was already past this page (at cursor_page); nothing was fetched.",
+          }
         cursor_page: { type: [integer, "null"] }
-        blocked_parser: { type: [integer, "null"], description: "Parser version the backfill is blocked on after a parse failure." }
+        blocked_parser:
+          {
+            type: [integer, "null"],
+            description: "Parser version the backfill is blocked on after a parse failure.",
+          }
         retry_at:
           anyOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }]
           description: The page is held back until then after a permanent failure.
     WorkDetail:
       type: object
-      required: [work_id, class, bytes, req_id, status, chapters, words, content, revived, left_sources, images_queued,
-        meta_changed, chapter_count_mismatch]
+      required:
+        [
+          work_id,
+          class,
+          bytes,
+          req_id,
+          status,
+          chapters,
+          words,
+          content,
+          revived,
+          left_sources,
+          images_queued,
+          meta_changed,
+          chapter_count_mismatch,
+        ]
       additionalProperties: false
       properties:
         work_id: { type: [integer, "null"] }
-        class: { anyOf: [{ $ref: "#/components/schemas/RequestClass" }, { type: "null" }] }
+        class:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/RequestClass" }, { type: "null" }],
+          }
         bytes: { type: [integer, "null"] }
-        req_id: { type: [string, "null"], description: "Request id in the logs (hashed)." }
+        req_id:
+          {
+            type: [string, "null"],
+            description: "Request id in the logs (hashed).",
+          }
         status:
           type: [string, "null"]
           enum: [ok, deleted, hidden, restricted, unrevealed, null]
           description: The work's new status when AO3 no longer serves it.
         chapters: { type: [integer, "null"] }
         words: { type: [integer, "null"] }
-        content: { type: [string, "null"], enum: [new, changed, unchanged, null], description: "Stored content compared with the copy before." }
-        revived: { type: [boolean, "null"], description: "The work was deleted, hidden or restricted before." }
-        left_sources: { type: [integer, "null"], description: "Sources that dropped the work after missing it in rescans." }
+        content:
+          {
+            type: [string, "null"],
+            enum: [new, changed, unchanged, null],
+            description: "Stored content compared with the copy before.",
+          }
+        revived:
+          {
+            type: [boolean, "null"],
+            description: "The work was deleted, hidden or restricted before.",
+          }
+        left_sources:
+          {
+            type: [integer, "null"],
+            description: "Sources that dropped the work after missing it in rescans.",
+          }
         images_queued: { type: [integer, "null"] }
         meta_changed:
           type: [array, "null"]
@@ -853,28 +1269,74 @@ components:
         chapter_count_mismatch: { type: [boolean, "null"] }
     TagType:
       type: string
-      enum: [Rating, ArchiveWarning, Category, Fandom, Relationship, Character, Freeform, Media, Unknown]
+      enum:
+        [
+          Rating,
+          ArchiveWarning,
+          Category,
+          Fandom,
+          Relationship,
+          Character,
+          Freeform,
+          Media,
+          Unknown,
+        ]
     TagInfoDetail:
       type: object
       required: [tag_id, class, req_id, type, canonical, parents]
       additionalProperties: false
       properties:
         tag_id: { type: [integer, "null"] }
-        class: { anyOf: [{ $ref: "#/components/schemas/RequestClass" }, { type: "null" }] }
-        req_id: { type: [string, "null"], description: "Request id in the logs (hashed)." }
-        type: { anyOf: [{ $ref: "#/components/schemas/TagType" }, { type: "null" }] }
+        class:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/RequestClass" }, { type: "null" }],
+          }
+        req_id:
+          {
+            type: [string, "null"],
+            description: "Request id in the logs (hashed).",
+          }
+        type:
+          {
+            anyOf: [{ $ref: "#/components/schemas/TagType" }, { type: "null" }],
+          }
         canonical: { type: [boolean, "null"] }
         parents: { type: [integer, "null"] }
     SeriesInfoDetail:
       type: object
-      required: [series_id, class, req_id, works_count, known_works_refreshed, members_seen]
+      required:
+        [
+          series_id,
+          class,
+          req_id,
+          works_count,
+          known_works_refreshed,
+          members_seen,
+        ]
       additionalProperties: false
       properties:
         series_id: { type: [integer, "null"] }
-        class: { anyOf: [{ $ref: "#/components/schemas/RequestClass" }, { type: "null" }] }
-        req_id: { type: [string, "null"], description: "Request id in the logs (hashed)." }
-        works_count: { type: [integer, "null"], description: "AO3's count of the series' works." }
-        known_works_refreshed: { type: [integer, "null"], description: "Mirrored works updated from the series page." }
+        class:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/RequestClass" }, { type: "null" }],
+          }
+        req_id:
+          {
+            type: [string, "null"],
+            description: "Request id in the logs (hashed).",
+          }
+        works_count:
+          {
+            type: [integer, "null"],
+            description: "AO3's count of the series' works.",
+          }
+        known_works_refreshed:
+          {
+            type: [integer, "null"],
+            description: "Mirrored works updated from the series page.",
+          }
         members_seen: { type: [integer, "null"] }
     SourceAddDetail:
       type: object
@@ -882,9 +1344,17 @@ components:
       additionalProperties: false
       properties:
         source_id: { type: [integer, "null"] }
-        state: { anyOf: [{ $ref: "#/components/schemas/SourceState" }, { type: "null" }] }
+        state:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/SourceState" }, { type: "null" }],
+          }
         blurbs: { type: [integer, "null"] }
-        estimate: { anyOf: [{ $ref: "#/components/schemas/Estimate" }, { type: "null" }] }
+        estimate:
+          {
+            anyOf:
+              [{ $ref: "#/components/schemas/Estimate" }, { type: "null" }],
+          }
     WorkDebug:
       type: object
       required: [work, jobs, requests]
@@ -902,17 +1372,35 @@ components:
     WorkDiag:
       type: object
       description: A work's numbers, dates and states. Unset dates and times are omitted.
-      required: [id, status, words, chapters_posted, stats, restricted, anonymous, parser_version, rows]
+      required:
+        [
+          id,
+          status,
+          words,
+          chapters_posted,
+          stats,
+          restricted,
+          anonymous,
+          parser_version,
+          rows,
+        ]
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/ID" }
-        status: { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
+        status:
+          { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
         published_on: { type: string, format: date }
         revised_on: { type: string, format: date }
-        fetched_revised_on: { type: string, format: date, description: "The revised date at the last full fetch." }
+        fetched_revised_on:
+          {
+            type: string,
+            format: date,
+            description: "The revised date at the last full fetch.",
+          }
         words: { type: integer }
         chapters_posted: { type: integer }
-        chapters_expected: { type: integer, description: "Omitted when unknown." }
+        chapters_expected:
+          { type: integer, description: "Omitted when unknown." }
         stats:
           type: object
           required: [kudos, hits, comments, bookmarks]
@@ -924,16 +1412,34 @@ components:
             bookmarks: { type: integer }
         restricted: { type: boolean }
         anonymous: { type: boolean }
-        parser_version: { type: integer, description: "The parser that last parsed it (0: never, or it failed)." }
+        parser_version:
+          {
+            type: integer,
+            description: "The parser that last parsed it (0: never, or it failed).",
+          }
         first_seen_at: { $ref: "#/components/schemas/Timestamp" }
         last_listed_at: { $ref: "#/components/schemas/Timestamp" }
         last_fetched_at: { $ref: "#/components/schemas/Timestamp" }
         last_checked_at: { $ref: "#/components/schemas/Timestamp" }
-        fetch_failed_at: { $ref: "#/components/schemas/Timestamp", description: "The last full fetch that gave up." }
+        fetch_failed_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "The last full fetch that gave up.",
+          }
         rows:
           type: object
           description: Stored rows that belong to the work.
-          required: [tags, creators, chapters, sources, images, raw_pages, raw_bytes, chapter_bodies]
+          required:
+            [
+              tags,
+              creators,
+              chapters,
+              sources,
+              images,
+              raw_pages,
+              raw_bytes,
+              chapter_bodies,
+            ]
           additionalProperties: false
           properties:
             tags: { type: integer }
@@ -942,5 +1448,7 @@ components:
             sources: { type: integer }
             images: { type: integer }
             raw_pages: { type: integer, description: "Stored page versions." }
-            raw_bytes: { type: integer, description: "Their uncompressed size." }
-            chapter_bodies: { type: integer, description: "Stored chapter texts." }
+            raw_bytes:
+              { type: integer, description: "Their uncompressed size." }
+            chapter_bodies:
+              { type: integer, description: "Stored chapter texts." }

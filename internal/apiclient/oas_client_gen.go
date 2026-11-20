@@ -5,6 +5,7 @@ package apiclient
 import (
 	"context"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -13,6 +14,64 @@ import (
 	ht "github.com/ogen-go/ogen/http"
 	"github.com/ogen-go/ogen/uri"
 )
+
+type requestConfig struct {
+	Client       ht.Client
+	ServerURL    *url.URL
+	EditRequest  func(req *http.Request) error
+	EditResponse func(resp *http.Response) error
+}
+
+func (cfg *requestConfig) setDefaults(c baseClient) {
+	if cfg.Client == nil {
+		cfg.Client = c.cfg.Client
+	}
+}
+
+func (cfg *requestConfig) onRequest(req *http.Request) error {
+	if fn := cfg.EditRequest; fn != nil {
+		return fn(req)
+	}
+	return nil
+}
+
+func (cfg *requestConfig) onResponse(resp *http.Response) error {
+	if fn := cfg.EditResponse; fn != nil {
+		return fn(resp)
+	}
+	return nil
+}
+
+// RequestOption defines options for request.
+type RequestOption func(cfg *requestConfig)
+
+// WithRequestClient sets client for request.
+func WithRequestClient(client ht.Client) RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.Client = client
+	}
+}
+
+// WithServerURL sets client for request.
+func WithServerURL(u *url.URL) RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.ServerURL = u
+	}
+}
+
+// WithEditRequest sets function to edit request.
+func WithEditRequest(fn func(req *http.Request) error) RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.EditRequest = fn
+	}
+}
+
+// WithEditResponse sets function to edit response.
+func WithEditResponse(fn func(resp *http.Response) error) RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.EditResponse = fn
+	}
+}
 
 func trimTrailingSlashes(u *url.URL) {
 	u.Path = strings.TrimRight(u.Path, "/")
@@ -32,86 +91,86 @@ type Invoker interface {
 	// for `source confirm`. Rate limited per client by `api.rate.source_add_per_hour`.
 	//
 	// POST /api/v1/sources
-	AddSource(ctx context.Context, request *SourceAddRequest) (AddSourceRes, error)
+	AddSource(ctx context.Context, request *SourceAddRequest, options ...RequestOption) (AddSourceRes, error)
 	// CancelSource invokes cancelSource operation.
 	//
 	// An already cancelled source is 409 `state-conflict`.
 	//
 	// POST /api/v1/sources/{id}/cancel
-	CancelSource(ctx context.Context, params CancelSourceParams) (*SourceCancelled, error)
+	CancelSource(ctx context.Context, params CancelSourceParams, options ...RequestOption) (*SourceCancelled, error)
 	// ConfirmSource invokes confirmSource operation.
 	//
 	// Any other state is 409 `state-conflict`.
 	//
 	// POST /api/v1/sources/{id}/confirm
-	ConfirmSource(ctx context.Context, params ConfirmSourceParams) error
+	ConfirmSource(ctx context.Context, params ConfirmSourceParams, options ...RequestOption) error
 	// DebugJob invokes debugJob operation.
 	//
 	// One job's content-free trace, with its events and requests.
 	//
 	// GET /api/v1/debug/jobs/{id}
-	DebugJob(ctx context.Context, params DebugJobParams) (*JobDebug, error)
+	DebugJob(ctx context.Context, params DebugJobParams, options ...RequestOption) (*JobDebug, error)
 	// DebugWork invokes debugWork operation.
 	//
 	// No content (title, names, tags, text) is included, even when revealed.
 	//
 	// GET /api/v1/debug/works/{id}
-	DebugWork(ctx context.Context, params DebugWorkParams) (*WorkDebug, error)
+	DebugWork(ctx context.Context, params DebugWorkParams, options ...RequestOption) (*WorkDebug, error)
 	// GetHealthz invokes getHealthz operation.
 	//
 	// Liveness check.
 	//
 	// GET /api/v1/healthz
-	GetHealthz(ctx context.Context) (*Health, error)
+	GetHealthz(ctx context.Context, options ...RequestOption) (*Health, error)
 	// GetJob invokes getJob operation.
 	//
 	// One job.
 	//
 	// GET /api/v1/jobs/{id}
-	GetJob(ctx context.Context, params GetJobParams) (*Job, error)
+	GetJob(ctx context.Context, params GetJobParams, options ...RequestOption) (*Job, error)
 	// GetSource invokes getSource operation.
 	//
 	// One source.
 	//
 	// GET /api/v1/sources/{id}
-	GetSource(ctx context.Context, params GetSourceParams) (*Source, error)
+	GetSource(ctx context.Context, params GetSourceParams, options ...RequestOption) (*Source, error)
 	// GetSourceAdd invokes getSourceAdd operation.
 	//
 	// 404 when the job does not exist or is not a source add, and when a done add's source was removed
 	// since.
 	//
 	// GET /api/v1/source-adds/{job_id}
-	GetSourceAdd(ctx context.Context, params GetSourceAddParams) (*SourceAdd, error)
+	GetSourceAdd(ctx context.Context, params GetSourceAddParams, options ...RequestOption) (*SourceAdd, error)
 	// GetStatus invokes getStatus operation.
 	//
 	// Daemon, queue and progress overview.
 	//
 	// GET /api/v1/status
-	GetStatus(ctx context.Context) (*Status, error)
+	GetStatus(ctx context.Context, options ...RequestOption) (*Status, error)
 	// GetVersion invokes getVersion operation.
 	//
 	// Build and parser versions.
 	//
 	// GET /api/v1/version
-	GetVersion(ctx context.Context) (*Version, error)
+	GetVersion(ctx context.Context, options ...RequestOption) (*Version, error)
 	// ListJobs invokes listJobs operation.
 	//
 	// One page of jobs, newest first (state=queued lists them in queue order).
 	//
 	// GET /api/v1/jobs
-	ListJobs(ctx context.Context, params ListJobsParams) (*JobList, error)
+	ListJobs(ctx context.Context, params ListJobsParams, options ...RequestOption) (*JobList, error)
 	// ListSources invokes listSources operation.
 	//
 	// One page of sources, ordered by id.
 	//
 	// GET /api/v1/sources
-	ListSources(ctx context.Context, params ListSourcesParams) (*SourceList, error)
+	ListSources(ctx context.Context, params ListSourcesParams, options ...RequestOption) (*SourceList, error)
 	// PauseSource invokes pauseSource operation.
 	//
 	// Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
 	//
 	// POST /api/v1/sources/{id}/pause
-	PauseSource(ctx context.Context, params PauseSourceParams) error
+	PauseSource(ctx context.Context, params PauseSourceParams, options ...RequestOption) error
 	// RefreshSource invokes refreshSource operation.
 	//
 	// Its next update poll is due now and its failed work fetches are queued again. With `full`, the whole
@@ -120,26 +179,26 @@ type Invoker interface {
 	// change up within seconds.
 	//
 	// POST /api/v1/sources/{id}/refresh
-	RefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams) (*SourceRefreshed, error)
+	RefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams, options ...RequestOption) (*SourceRefreshed, error)
 	// RemoveSource invokes removeSource operation.
 	//
 	// Remove a source and its memberships; mirrored works are kept.
 	//
 	// DELETE /api/v1/sources/{id}
-	RemoveSource(ctx context.Context, params RemoveSourceParams) error
+	RemoveSource(ctx context.Context, params RemoveSourceParams, options ...RequestOption) error
 	// ResumeSource invokes resumeSource operation.
 	//
 	// Any other state is 409 `state-conflict`.
 	//
 	// POST /api/v1/sources/{id}/resume
-	ResumeSource(ctx context.Context, params ResumeSourceParams) error
+	ResumeSource(ctx context.Context, params ResumeSourceParams, options ...RequestOption) error
 	// SetSourceSettings invokes setSourceSettings operation.
 	//
 	// An absent member keeps its current value, so `{}` changes nothing. A shorter poll interval takes
 	// effect at once (the next poll moves earlier if needed). GET the source for the new settings.
 	//
 	// PATCH /api/v1/sources/{id}
-	SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams) error
+	SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams, options ...RequestOption) error
 }
 
 // Client implements OAS client.
@@ -166,21 +225,6 @@ func NewClient(serverURL string, opts ...ClientOption) (*Client, error) {
 	}, nil
 }
 
-type serverURLKey struct{}
-
-// WithServerURL sets context key to override server URL.
-func WithServerURL(ctx context.Context, u *url.URL) context.Context {
-	return context.WithValue(ctx, serverURLKey{}, u)
-}
-
-func (c *Client) requestURL(ctx context.Context) *url.URL {
-	u, ok := ctx.Value(serverURLKey{}).(*url.URL)
-	if !ok {
-		return c.serverURL
-	}
-	return u
-}
-
 // AddSource invokes addSource operation.
 //
 // A listing source (tag, user, pseud, bookmarks, collection, series) is queued for the daemon, which
@@ -192,14 +236,24 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 // for `source confirm`. Rate limited per client by `api.rate.source_add_per_hour`.
 //
 // POST /api/v1/sources
-func (c *Client) AddSource(ctx context.Context, request *SourceAddRequest) (AddSourceRes, error) {
-	res, err := c.sendAddSource(ctx, request)
+func (c *Client) AddSource(ctx context.Context, request *SourceAddRequest, options ...RequestOption) (AddSourceRes, error) {
+	res, err := c.sendAddSource(ctx, request, options...)
 	return res, err
 }
 
-func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest) (res AddSourceRes, err error) {
+func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest, requestOptions ...RequestOption) (res AddSourceRes, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [1]string
 	pathParts[0] = "/api/v1/sources"
 	uri.AddPathParts(u, pathParts[:]...)
@@ -212,7 +266,11 @@ func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest) (
 		return res, errors.Wrap(err, "encode request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -224,6 +282,10 @@ func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest) (
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeAddSourceResponse(resp)
 	if err != nil {
@@ -238,14 +300,24 @@ func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest) (
 // An already cancelled source is 409 `state-conflict`.
 //
 // POST /api/v1/sources/{id}/cancel
-func (c *Client) CancelSource(ctx context.Context, params CancelSourceParams) (*SourceCancelled, error) {
-	res, err := c.sendCancelSource(ctx, params)
+func (c *Client) CancelSource(ctx context.Context, params CancelSourceParams, options ...RequestOption) (*SourceCancelled, error) {
+	res, err := c.sendCancelSource(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams) (res *SourceCancelled, err error) {
+func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams, requestOptions ...RequestOption) (res *SourceCancelled, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [3]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -277,7 +349,11 @@ func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -289,6 +365,10 @@ func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeCancelSourceResponse(resp)
 	if err != nil {
@@ -303,14 +383,24 @@ func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams
 // Any other state is 409 `state-conflict`.
 //
 // POST /api/v1/sources/{id}/confirm
-func (c *Client) ConfirmSource(ctx context.Context, params ConfirmSourceParams) error {
-	_, err := c.sendConfirmSource(ctx, params)
+func (c *Client) ConfirmSource(ctx context.Context, params ConfirmSourceParams, options ...RequestOption) error {
+	_, err := c.sendConfirmSource(ctx, params, options...)
 	return err
 }
 
-func (c *Client) sendConfirmSource(ctx context.Context, params ConfirmSourceParams) (res *ConfirmSourceNoContent, err error) {
+func (c *Client) sendConfirmSource(ctx context.Context, params ConfirmSourceParams, requestOptions ...RequestOption) (res *ConfirmSourceNoContent, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [3]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -342,7 +432,11 @@ func (c *Client) sendConfirmSource(ctx context.Context, params ConfirmSourcePara
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -354,6 +448,10 @@ func (c *Client) sendConfirmSource(ctx context.Context, params ConfirmSourcePara
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeConfirmSourceResponse(resp)
 	if err != nil {
@@ -368,14 +466,24 @@ func (c *Client) sendConfirmSource(ctx context.Context, params ConfirmSourcePara
 // One job's content-free trace, with its events and requests.
 //
 // GET /api/v1/debug/jobs/{id}
-func (c *Client) DebugJob(ctx context.Context, params DebugJobParams) (*JobDebug, error) {
-	res, err := c.sendDebugJob(ctx, params)
+func (c *Client) DebugJob(ctx context.Context, params DebugJobParams, options ...RequestOption) (*JobDebug, error) {
+	res, err := c.sendDebugJob(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendDebugJob(ctx context.Context, params DebugJobParams) (res *JobDebug, err error) {
+func (c *Client) sendDebugJob(ctx context.Context, params DebugJobParams, requestOptions ...RequestOption) (res *JobDebug, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/debug/jobs/"
 	{
@@ -406,7 +514,11 @@ func (c *Client) sendDebugJob(ctx context.Context, params DebugJobParams) (res *
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -418,6 +530,10 @@ func (c *Client) sendDebugJob(ctx context.Context, params DebugJobParams) (res *
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeDebugJobResponse(resp)
 	if err != nil {
@@ -432,14 +548,24 @@ func (c *Client) sendDebugJob(ctx context.Context, params DebugJobParams) (res *
 // No content (title, names, tags, text) is included, even when revealed.
 //
 // GET /api/v1/debug/works/{id}
-func (c *Client) DebugWork(ctx context.Context, params DebugWorkParams) (*WorkDebug, error) {
-	res, err := c.sendDebugWork(ctx, params)
+func (c *Client) DebugWork(ctx context.Context, params DebugWorkParams, options ...RequestOption) (*WorkDebug, error) {
+	res, err := c.sendDebugWork(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams) (res *WorkDebug, err error) {
+func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams, requestOptions ...RequestOption) (res *WorkDebug, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/debug/works/"
 	{
@@ -470,7 +596,11 @@ func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams) (res
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -482,6 +612,10 @@ func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams) (res
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeDebugWorkResponse(resp)
 	if err != nil {
@@ -496,14 +630,24 @@ func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams) (res
 // Liveness check.
 //
 // GET /api/v1/healthz
-func (c *Client) GetHealthz(ctx context.Context) (*Health, error) {
-	res, err := c.sendGetHealthz(ctx)
+func (c *Client) GetHealthz(ctx context.Context, options ...RequestOption) (*Health, error) {
+	res, err := c.sendGetHealthz(ctx, options...)
 	return res, err
 }
 
-func (c *Client) sendGetHealthz(ctx context.Context) (res *Health, err error) {
+func (c *Client) sendGetHealthz(ctx context.Context, requestOptions ...RequestOption) (res *Health, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [1]string
 	pathParts[0] = "/api/v1/healthz"
 	uri.AddPathParts(u, pathParts[:]...)
@@ -513,7 +657,11 @@ func (c *Client) sendGetHealthz(ctx context.Context) (res *Health, err error) {
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -525,6 +673,10 @@ func (c *Client) sendGetHealthz(ctx context.Context) (res *Health, err error) {
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeGetHealthzResponse(resp)
 	if err != nil {
@@ -539,14 +691,24 @@ func (c *Client) sendGetHealthz(ctx context.Context) (res *Health, err error) {
 // One job.
 //
 // GET /api/v1/jobs/{id}
-func (c *Client) GetJob(ctx context.Context, params GetJobParams) (*Job, error) {
-	res, err := c.sendGetJob(ctx, params)
+func (c *Client) GetJob(ctx context.Context, params GetJobParams, options ...RequestOption) (*Job, error) {
+	res, err := c.sendGetJob(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendGetJob(ctx context.Context, params GetJobParams) (res *Job, err error) {
+func (c *Client) sendGetJob(ctx context.Context, params GetJobParams, requestOptions ...RequestOption) (res *Job, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/jobs/"
 	{
@@ -577,7 +739,11 @@ func (c *Client) sendGetJob(ctx context.Context, params GetJobParams) (res *Job,
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -589,6 +755,10 @@ func (c *Client) sendGetJob(ctx context.Context, params GetJobParams) (res *Job,
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeGetJobResponse(resp)
 	if err != nil {
@@ -603,14 +773,24 @@ func (c *Client) sendGetJob(ctx context.Context, params GetJobParams) (res *Job,
 // One source.
 //
 // GET /api/v1/sources/{id}
-func (c *Client) GetSource(ctx context.Context, params GetSourceParams) (*Source, error) {
-	res, err := c.sendGetSource(ctx, params)
+func (c *Client) GetSource(ctx context.Context, params GetSourceParams, options ...RequestOption) (*Source, error) {
+	res, err := c.sendGetSource(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendGetSource(ctx context.Context, params GetSourceParams) (res *Source, err error) {
+func (c *Client) sendGetSource(ctx context.Context, params GetSourceParams, requestOptions ...RequestOption) (res *Source, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -641,7 +821,11 @@ func (c *Client) sendGetSource(ctx context.Context, params GetSourceParams) (res
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -653,6 +837,10 @@ func (c *Client) sendGetSource(ctx context.Context, params GetSourceParams) (res
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeGetSourceResponse(resp)
 	if err != nil {
@@ -668,14 +856,24 @@ func (c *Client) sendGetSource(ctx context.Context, params GetSourceParams) (res
 // since.
 //
 // GET /api/v1/source-adds/{job_id}
-func (c *Client) GetSourceAdd(ctx context.Context, params GetSourceAddParams) (*SourceAdd, error) {
-	res, err := c.sendGetSourceAdd(ctx, params)
+func (c *Client) GetSourceAdd(ctx context.Context, params GetSourceAddParams, options ...RequestOption) (*SourceAdd, error) {
+	res, err := c.sendGetSourceAdd(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendGetSourceAdd(ctx context.Context, params GetSourceAddParams) (res *SourceAdd, err error) {
+func (c *Client) sendGetSourceAdd(ctx context.Context, params GetSourceAddParams, requestOptions ...RequestOption) (res *SourceAdd, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/source-adds/"
 	{
@@ -706,7 +904,11 @@ func (c *Client) sendGetSourceAdd(ctx context.Context, params GetSourceAddParams
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -718,6 +920,10 @@ func (c *Client) sendGetSourceAdd(ctx context.Context, params GetSourceAddParams
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeGetSourceAddResponse(resp)
 	if err != nil {
@@ -732,14 +938,24 @@ func (c *Client) sendGetSourceAdd(ctx context.Context, params GetSourceAddParams
 // Daemon, queue and progress overview.
 //
 // GET /api/v1/status
-func (c *Client) GetStatus(ctx context.Context) (*Status, error) {
-	res, err := c.sendGetStatus(ctx)
+func (c *Client) GetStatus(ctx context.Context, options ...RequestOption) (*Status, error) {
+	res, err := c.sendGetStatus(ctx, options...)
 	return res, err
 }
 
-func (c *Client) sendGetStatus(ctx context.Context) (res *Status, err error) {
+func (c *Client) sendGetStatus(ctx context.Context, requestOptions ...RequestOption) (res *Status, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [1]string
 	pathParts[0] = "/api/v1/status"
 	uri.AddPathParts(u, pathParts[:]...)
@@ -749,7 +965,11 @@ func (c *Client) sendGetStatus(ctx context.Context) (res *Status, err error) {
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -761,6 +981,10 @@ func (c *Client) sendGetStatus(ctx context.Context) (res *Status, err error) {
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeGetStatusResponse(resp)
 	if err != nil {
@@ -775,14 +999,24 @@ func (c *Client) sendGetStatus(ctx context.Context) (res *Status, err error) {
 // Build and parser versions.
 //
 // GET /api/v1/version
-func (c *Client) GetVersion(ctx context.Context) (*Version, error) {
-	res, err := c.sendGetVersion(ctx)
+func (c *Client) GetVersion(ctx context.Context, options ...RequestOption) (*Version, error) {
+	res, err := c.sendGetVersion(ctx, options...)
 	return res, err
 }
 
-func (c *Client) sendGetVersion(ctx context.Context) (res *Version, err error) {
+func (c *Client) sendGetVersion(ctx context.Context, requestOptions ...RequestOption) (res *Version, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [1]string
 	pathParts[0] = "/api/v1/version"
 	uri.AddPathParts(u, pathParts[:]...)
@@ -792,7 +1026,11 @@ func (c *Client) sendGetVersion(ctx context.Context) (res *Version, err error) {
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -804,6 +1042,10 @@ func (c *Client) sendGetVersion(ctx context.Context) (res *Version, err error) {
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeGetVersionResponse(resp)
 	if err != nil {
@@ -818,14 +1060,24 @@ func (c *Client) sendGetVersion(ctx context.Context) (res *Version, err error) {
 // One page of jobs, newest first (state=queued lists them in queue order).
 //
 // GET /api/v1/jobs
-func (c *Client) ListJobs(ctx context.Context, params ListJobsParams) (*JobList, error) {
-	res, err := c.sendListJobs(ctx, params)
+func (c *Client) ListJobs(ctx context.Context, params ListJobsParams, options ...RequestOption) (*JobList, error) {
+	res, err := c.sendListJobs(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *JobList, err error) {
+func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams, requestOptions ...RequestOption) (res *JobList, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [1]string
 	pathParts[0] = "/api/v1/jobs"
 	uri.AddPathParts(u, pathParts[:]...)
@@ -926,7 +1178,11 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -938,6 +1194,10 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeListJobsResponse(resp)
 	if err != nil {
@@ -952,14 +1212,24 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 // One page of sources, ordered by id.
 //
 // GET /api/v1/sources
-func (c *Client) ListSources(ctx context.Context, params ListSourcesParams) (*SourceList, error) {
-	res, err := c.sendListSources(ctx, params)
+func (c *Client) ListSources(ctx context.Context, params ListSourcesParams, options ...RequestOption) (*SourceList, error) {
+	res, err := c.sendListSources(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams) (res *SourceList, err error) {
+func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams, requestOptions ...RequestOption) (res *SourceList, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [1]string
 	pathParts[0] = "/api/v1/sources"
 	uri.AddPathParts(u, pathParts[:]...)
@@ -1006,7 +1276,11 @@ func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams) 
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -1018,6 +1292,10 @@ func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams) 
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeListSourcesResponse(resp)
 	if err != nil {
@@ -1032,14 +1310,24 @@ func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams) 
 // Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
 //
 // POST /api/v1/sources/{id}/pause
-func (c *Client) PauseSource(ctx context.Context, params PauseSourceParams) error {
-	_, err := c.sendPauseSource(ctx, params)
+func (c *Client) PauseSource(ctx context.Context, params PauseSourceParams, options ...RequestOption) error {
+	_, err := c.sendPauseSource(ctx, params, options...)
 	return err
 }
 
-func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams) (res *PauseSourceNoContent, err error) {
+func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams, requestOptions ...RequestOption) (res *PauseSourceNoContent, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [3]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -1071,7 +1359,11 @@ func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams) 
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -1083,6 +1375,10 @@ func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams) 
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodePauseSourceResponse(resp)
 	if err != nil {
@@ -1100,14 +1396,24 @@ func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams) 
 // change up within seconds.
 //
 // POST /api/v1/sources/{id}/refresh
-func (c *Client) RefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams) (*SourceRefreshed, error) {
-	res, err := c.sendRefreshSource(ctx, request, params)
+func (c *Client) RefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams, options ...RequestOption) (*SourceRefreshed, error) {
+	res, err := c.sendRefreshSource(ctx, request, params, options...)
 	return res, err
 }
 
-func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams) (res *SourceRefreshed, err error) {
+func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams, requestOptions ...RequestOption) (res *SourceRefreshed, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [3]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -1142,7 +1448,11 @@ func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRe
 		return res, errors.Wrap(err, "encode request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -1154,6 +1464,10 @@ func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRe
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeRefreshSourceResponse(resp)
 	if err != nil {
@@ -1168,14 +1482,24 @@ func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRe
 // Remove a source and its memberships; mirrored works are kept.
 //
 // DELETE /api/v1/sources/{id}
-func (c *Client) RemoveSource(ctx context.Context, params RemoveSourceParams) error {
-	_, err := c.sendRemoveSource(ctx, params)
+func (c *Client) RemoveSource(ctx context.Context, params RemoveSourceParams, options ...RequestOption) error {
+	_, err := c.sendRemoveSource(ctx, params, options...)
 	return err
 }
 
-func (c *Client) sendRemoveSource(ctx context.Context, params RemoveSourceParams) (res *RemoveSourceNoContent, err error) {
+func (c *Client) sendRemoveSource(ctx context.Context, params RemoveSourceParams, requestOptions ...RequestOption) (res *RemoveSourceNoContent, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -1206,7 +1530,11 @@ func (c *Client) sendRemoveSource(ctx context.Context, params RemoveSourceParams
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -1218,6 +1546,10 @@ func (c *Client) sendRemoveSource(ctx context.Context, params RemoveSourceParams
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeRemoveSourceResponse(resp)
 	if err != nil {
@@ -1232,14 +1564,24 @@ func (c *Client) sendRemoveSource(ctx context.Context, params RemoveSourceParams
 // Any other state is 409 `state-conflict`.
 //
 // POST /api/v1/sources/{id}/resume
-func (c *Client) ResumeSource(ctx context.Context, params ResumeSourceParams) error {
-	_, err := c.sendResumeSource(ctx, params)
+func (c *Client) ResumeSource(ctx context.Context, params ResumeSourceParams, options ...RequestOption) error {
+	_, err := c.sendResumeSource(ctx, params, options...)
 	return err
 }
 
-func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams) (res *ResumeSourceNoContent, err error) {
+func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams, requestOptions ...RequestOption) (res *ResumeSourceNoContent, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [3]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -1271,7 +1613,11 @@ func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams
 		return res, errors.Wrap(err, "create request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -1283,6 +1629,10 @@ func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeResumeSourceResponse(resp)
 	if err != nil {
@@ -1298,14 +1648,24 @@ func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams
 // effect at once (the next poll moves earlier if needed). GET the source for the new settings.
 //
 // PATCH /api/v1/sources/{id}
-func (c *Client) SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams) error {
-	_, err := c.sendSetSourceSettings(ctx, request, params)
+func (c *Client) SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams, options ...RequestOption) error {
+	_, err := c.sendSetSourceSettings(ctx, request, params, options...)
 	return err
 }
 
-func (c *Client) sendSetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams) (res *SetSourceSettingsNoContent, err error) {
+func (c *Client) sendSetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams, requestOptions ...RequestOption) (res *SetSourceSettingsNoContent, err error) {
 
-	u := uri.Clone(c.requestURL(ctx))
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
 	var pathParts [2]string
 	pathParts[0] = "/api/v1/sources/"
 	{
@@ -1339,7 +1699,11 @@ func (c *Client) sendSetSourceSettings(ctx context.Context, request *SourceSetti
 		return res, errors.Wrap(err, "encode request")
 	}
 
-	resp, err := c.cfg.Client.Do(r)
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
 	if err != nil {
 		return res, errors.Wrap(err, "do request")
 	}
@@ -1351,6 +1715,10 @@ func (c *Client) sendSetSourceSettings(ctx context.Context, request *SourceSetti
 		_, _ = io.Copy(io.Discard, body)
 		_ = body.Close()
 	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
 
 	result, err := decodeSetSourceSettingsResponse(resp)
 	if err != nil {
