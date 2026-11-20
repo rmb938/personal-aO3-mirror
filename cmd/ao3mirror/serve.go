@@ -17,9 +17,10 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
 // HTTP server limits (docs/part2-api.md, "HTTP hardening").
@@ -87,9 +88,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 			err = errors.Join(err, st.Close())
 		}
 	}()
-	a, err := api.New(api.Options{
-		Logger:           log,
-		Controllers:      newControllers(cfg, log, st, nil),
+	a, err := api.New(runtime.Options{
 		Version:          version,
 		NoReveal:         noReveal,
 		TrustedProxies:   cfg.API.TrustedProxies,
@@ -97,7 +96,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		HashKeyRotation:  cfg.API.HashKeyRotation,
 		GeneralPerMin:    cfg.API.Rate.GeneralPerMin,
 		SourceAddPerHour: cfg.API.Rate.SourceAddPerHour,
-	})
+	}, log, newControllers(cfg, log, st, nil))
 	if err != nil {
 		return nil, err
 	}

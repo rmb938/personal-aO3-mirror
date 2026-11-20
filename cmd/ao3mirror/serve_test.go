@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/api"
-	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
 func serveConfig(t *testing.T) config.Config {
@@ -67,7 +67,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	assert.Equal(t, "hashed", hdr.Get("X-Fanwork"))
 
 	// --no-reveal: the reveal param is refused, not honoured.
-	status, _, body := get(t, tcp, base+"/api/v1/healthz?"+api.RevealParam+"=1")
+	status, _, body := get(t, tcp, base+"/api/v1/healthz?"+runtime.RevealParam+"=1")
 	assert.Equal(t, http.StatusForbidden, status)
 	assert.Equal(t, string(dto.TypeRevealDisabled), body["type"])
 
