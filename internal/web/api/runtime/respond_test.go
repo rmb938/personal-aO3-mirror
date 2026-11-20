@@ -17,6 +17,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 func discardLogger(t *testing.T) *slog.Logger {
@@ -29,17 +30,10 @@ type testItem struct {
 	Name string `json:"name"`
 }
 
-func serve(t *testing.T, log *slog.Logger, method string, h HandlerFunc) *httptest.ResponseRecorder {
-	t.Helper()
-	w := httptest.NewRecorder()
-	Handle(log, h)(w, httptest.NewRequest(method, "/x", nil))
-	return w
-}
-
 func TestHandleValue(t *testing.T) {
-	w := serve(t, discardLogger(t), http.MethodGet, func(*http.Request) (any, error) {
+	w := testutil.Do(t, Handle(discardLogger(t), func(*http.Request) (any, error) {
 		return testItem{ID: 1, Name: "n"}, nil
-	})
+	}), httptest.NewRequest(http.MethodGet, "/x", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 	assert.JSONEq(t, `{"id":1,"name":"n"}`, w.Body.String())
@@ -47,9 +41,9 @@ func TestHandleValue(t *testing.T) {
 }
 
 func TestHandleResponse(t *testing.T) {
-	w := serve(t, discardLogger(t), http.MethodPost, func(*http.Request) (any, error) {
+	w := testutil.Do(t, Handle(discardLogger(t), func(*http.Request) (any, error) {
 		return &Response{Status: http.StatusAccepted, Location: "/api/v1/source-adds/7", Body: testItem{ID: 7}}, nil
-	})
+	}), httptest.NewRequest(http.MethodPost, "/x", nil))
 	assert.Equal(t, http.StatusAccepted, w.Code)
 	assert.Equal(t, "/api/v1/source-adds/7", w.Header().Get("Location"))
 	assert.JSONEq(t, `{"id":7,"name":""}`, w.Body.String())
@@ -59,19 +53,19 @@ func TestHandleError(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
-	w := serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, store.ErrNoTag })
+	w := testutil.Do(t, Handle(log, func(*http.Request) (any, error) { return nil, store.ErrNoTag }), httptest.NewRequest(http.MethodGet, "/x", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, ContentTypeProblem, w.Header().Get("Content-Type"))
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeNotFound)+`","title":"Not Found","status":404}`, w.Body.String())
 	assert.Empty(t, logs.String(), "expected errors are not logged")
 
-	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, problem.ForParam("page", DetailPage) })
+	w = testutil.Do(t, Handle(log, func(*http.Request) (any, error) { return nil, problem.ForParam("page", DetailPage) }), httptest.NewRequest(http.MethodGet, "/x", nil))
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeValidation)+`","title":"Validation Error","status":422,`+
 		`"detail":"`+problem.DetailInvalidRequest.Message()+`","errors":[{"detail":"`+DetailPage.Message()+`","parameter":"page"}]}`,
 		w.Body.String())
 
-	w = serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return nil, errors.New("db exploded") })
+	w = testutil.Do(t, Handle(log, func(*http.Request) (any, error) { return nil, errors.New("db exploded") }), httptest.NewRequest(http.MethodGet, "/x", nil))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeInternal)+`","title":"Internal Server Error","status":500}`, w.Body.String())
 	assert.NotContains(t, w.Body.String(), "exploded", "error text never reaches the client")
@@ -82,18 +76,18 @@ func TestHandleQuery415AdvertisesAcceptQuery(t *testing.T) {
 	h := func(*http.Request) (any, error) {
 		return nil, problem.WithDetail(dto.TypeUnsupportedMediaType, DetailMediaType)
 	}
-	w := serve(t, discardLogger(t), MethodQuery, h)
+	w := testutil.Do(t, Handle(discardLogger(t), h), httptest.NewRequest(MethodQuery, "/x", nil))
 	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Accept-Query"))
 
-	w = serve(t, discardLogger(t), http.MethodPost, h)
+	w = testutil.Do(t, Handle(discardLogger(t), h), httptest.NewRequest(http.MethodPost, "/x", nil))
 	assert.Empty(t, w.Header().Get("Accept-Query"))
 }
 
 func TestHandleEncodeError(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
-	w := serve(t, log, http.MethodGet, func(*http.Request) (any, error) { return make(chan int), nil })
+	w := testutil.Do(t, Handle(log, func(*http.Request) (any, error) { return make(chan int), nil }), httptest.NewRequest(http.MethodGet, "/x", nil))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Equal(t, ContentTypeProblem, w.Header().Get("Content-Type"))
 	assert.Contains(t, logs.String(), "chan int")

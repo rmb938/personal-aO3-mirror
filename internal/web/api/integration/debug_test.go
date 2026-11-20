@@ -12,10 +12,11 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 func TestDebugJob(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Admin()
 
 	d := getJSON[dto.JobDebug](t, h, "/api/v1/debug/jobs/4")
@@ -51,7 +52,7 @@ func TestDebugJob(t *testing.T) {
 	var raw struct {
 		Events []map[string]json.RawMessage `json:"events"`
 	}
-	w := get(t, h, "/api/v1/debug/jobs/4")
+	w := testutil.Get(t, h, "/api/v1/debug/jobs/4")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
 	var fields map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(raw.Events[1]["backfill"], &fields))
@@ -77,15 +78,15 @@ func TestDebugJob(t *testing.T) {
 	d = getJSON[dto.JobDebug](t, h, "/api/v1/debug/jobs/3")
 	assert.Equal(t, []dto.JobEvent{}, d.Events, "no events: [], not null")
 
-	w = get(t, h, "/api/v1/debug/jobs/99")
+	w = testutil.Get(t, h, "/api/v1/debug/jobs/99")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, runtime.DetailNoJob.Message(), decodeProblem(t, w).Detail)
-	requireParamProblem(t, get(t, h, "/api/v1/debug/jobs/0"), dto.ParamID, "id 0")
-	requireParamProblem(t, get(t, h, "/api/v1/debug/jobs/4?verbose=1"), "", "unknown param")
+	assert.Equal(t, runtime.DetailNoJob.Message(), testutil.DecodeProblem(t, w).Detail)
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/debug/jobs/0"), dto.ParamID, "id 0")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/debug/jobs/4?verbose=1"), "", "unknown param")
 }
 
 func TestDebugWork(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Admin()
 
 	d := getJSON[dto.WorkDebug](t, h, "/api/v1/debug/works/7")
@@ -104,18 +105,18 @@ func TestDebugWork(t *testing.T) {
 	assert.Equal(t, dto.RequestKind("work"), d.Requests[0].Kind)
 	assert.True(t, isHash(t, d.Requests[0].Path) && isHash(t, d.Requests[0].Reason), "request text hashed")
 
-	w := get(t, h, "/api/v1/debug/works/8")
+	w := testutil.Get(t, h, "/api/v1/debug/works/8")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, runtime.DetailNoWork.Message(), decodeProblem(t, w).Detail)
-	requireParamProblem(t, get(t, h, "/api/v1/debug/works/x"), dto.ParamID, "bad id")
+	assert.Equal(t, runtime.DetailNoWork.Message(), testutil.DecodeProblem(t, w).Detail)
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/debug/works/x"), dto.ParamID, "bad id")
 }
 
 // The debug routes do not exist on the public listener.
 func TestDebugNotPublic(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	for _, target := range []string{"/api/v1/debug/jobs/4", "/api/v1/debug/works/7"} {
-		w := get(t, a.Public(), target)
+		w := testutil.Get(t, a.Public(), target)
 		require.Equal(t, http.StatusNotFound, w.Code, target)
-		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type, target)
+		assert.Equal(t, dto.TypeNotFound, testutil.DecodeProblem(t, w).Type, target)
 	}
 }

@@ -8,10 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 func TestStatus(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
 	s := getJSON[dto.Status](t, h, "/api/v1/status")
@@ -52,5 +53,5 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, seedFailedAdd, s.FailedJobs[0].ID)
 	assert.True(t, isHash(t, s.FailedJobs[0].LastErrorDetail), "failed job detail hashed")
 
-	requireParamProblem(t, get(t, h, "/api/v1/status?verbose=1"), "", "unknown param")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/status?verbose=1"), "", "unknown param")
 }

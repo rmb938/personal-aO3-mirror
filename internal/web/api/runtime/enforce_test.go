@@ -12,15 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 func TestEnforceHashesStrings(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/item", a.Handle(func(*http.Request) (any, error) {
 		return dto.Health{Status: sentinel + "x"}, nil
 	}))
-	w1 := get(t, a.Router(false), "/item")
-	w2 := get(t, a.Router(false), "/item")
+	w1 := testutil.Get(t, a.Router(false), "/item")
+	w2 := testutil.Get(t, a.Router(false), "/item")
 	require.Equal(t, http.StatusOK, w1.Code)
 	assert.Equal(t, w1.Body.String(), w2.Body.String(), "deterministic within an epoch")
 	assert.Equal(t, w1.Header().Get(HeaderFanworkEpoch), w2.Header().Get(HeaderFanworkEpoch))
@@ -31,39 +32,39 @@ func TestEnforceHashesStrings(t *testing.T) {
 	a.Router(true).Get("/item", a.Handle(func(*http.Request) (any, error) {
 		return dto.Health{Status: sentinel + "x"}, nil
 	}))
-	assert.Equal(t, w1.Body.String(), get(t, a.Router(true), "/item").Body.String())
+	assert.Equal(t, w1.Body.String(), testutil.Get(t, a.Router(true), "/item").Body.String())
 }
 
 func TestEnforceUnknownKey(t *testing.T) {
-	a, logs := newTestAPI(t, nil)
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/bad", a.Handle(func(*http.Request) (any, error) {
 		return map[string]string{sentinel + "key": sentinel + "value"}, nil
 	}))
 	for _, target := range []string{"/bad", "/bad" + revealQuery} {
-		w := get(t, a.Router(false), target)
+		w := testutil.Get(t, a.Router(false), target)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
-		assertNoSentinel(t, w, logs)
+		assert.Equal(t, dto.TypeInternal, testutil.DecodeProblem(t, w).Type)
+		testutil.AssertNoSentinel(t, w, logs, sentinel)
 	}
 	assert.Contains(t, logs.String(), "api response refused by enforcer")
 }
 
 func TestEnforceNonJSON(t *testing.T) {
-	a, logs := newTestAPI(t, nil)
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/text", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Location", "/elsewhere")
 		_, _ = w.Write([]byte(sentinel + "text"))
 	})
-	w := get(t, a.Router(false), "/text")
+	w := testutil.Get(t, a.Router(false), "/text")
 	require.Equal(t, http.StatusForbidden, w.Code)
-	p := decodeProblem(t, w)
+	p := testutil.DecodeProblem(t, w)
 	assert.Equal(t, dto.TypeRevealRequired, p.Type)
 	assert.Equal(t, DetailNotJSON.Message(), p.Detail)
 	assert.Empty(t, w.Header().Get("Location"), "a replaced response drops the handler's headers")
-	assertNoSentinel(t, w, logs)
+	testutil.AssertNoSentinel(t, w, logs, sentinel)
 
-	w = get(t, a.Router(false), "/text"+revealQuery)
+	w = testutil.Get(t, a.Router(false), "/text"+revealQuery)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, sentinel+"text", w.Body.String())
 	assert.Equal(t, "text/plain", w.Header().Get("Content-Type"))
@@ -72,38 +73,38 @@ func TestEnforceNonJSON(t *testing.T) {
 }
 
 func TestEnforceMissingContentType(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/raw", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	w := get(t, a.Router(false), "/raw")
+	w := testutil.Get(t, a.Router(false), "/raw")
 	require.Equal(t, http.StatusForbidden, w.Code, "JSON without a JSON content type is not trusted")
-	assert.Equal(t, dto.TypeRevealRequired, decodeProblem(t, w).Type)
+	assert.Equal(t, dto.TypeRevealRequired, testutil.DecodeProblem(t, w).Type)
 }
 
 func TestEnforceInvalidJSON(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/broken", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", ContentTypeJSON)
 		_, _ = w.Write([]byte(`{"status":`))
 	})
-	w := get(t, a.Router(false), "/broken")
+	w := testutil.Get(t, a.Router(false), "/broken")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
+	assert.Equal(t, dto.TypeInternal, testutil.DecodeProblem(t, w).Type)
 }
 
 // JSON written around respond has no Go type to check against: refused even when it would
 // match a DTO.
 func TestEnforceUntypedJSON(t *testing.T) {
-	a, logs := newTestAPI(t, nil)
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/raw", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", ContentTypeJSON)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	for _, target := range []string{"/raw", "/raw" + revealQuery} {
-		w := get(t, a.Router(false), target)
+		w := testutil.Get(t, a.Router(false), target)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
+		assert.Equal(t, dto.TypeInternal, testutil.DecodeProblem(t, w).Type)
 	}
 	assert.Contains(t, logs.String(), "not written by respond")
 }
@@ -113,26 +114,26 @@ func TestEnforceUnregisteredType(t *testing.T) {
 	type other struct {
 		Status string `json:"status"`
 	}
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/other", a.Handle(func(*http.Request) (any, error) { return other{Status: "ok"}, nil }))
-	w := get(t, a.Router(false), "/other")
+	w := testutil.Get(t, a.Router(false), "/other")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
+	assert.Equal(t, dto.TypeInternal, testutil.DecodeProblem(t, w).Type)
 }
 
 func TestEnforceEmptyBody(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Delete("/gone", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	w := do(t, a.Router(false), httptest.NewRequest(http.MethodDelete, "/gone", nil))
+	w := testutil.Do(t, a.Router(false), httptest.NewRequest(http.MethodDelete, "/gone", nil))
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.Empty(t, w.Body.Bytes())
 	assert.Equal(t, "hashed", w.Header().Get(HeaderFanwork))
 }
 
 func TestEnforceResponseTooLarge(t *testing.T) {
-	a, logs := newTestAPI(t, nil)
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/huge", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", ContentTypeJSON)
 		chunk := bytes.Repeat([]byte("a"), 1<<20)
@@ -142,18 +143,18 @@ func TestEnforceResponseTooLarge(t *testing.T) {
 			}
 		}
 	})
-	w := get(t, a.Router(false), "/huge")
+	w := testutil.Get(t, a.Router(false), "/huge")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Equal(t, dto.TypeInternal, decodeProblem(t, w).Type)
+	assert.Equal(t, dto.TypeInternal, testutil.DecodeProblem(t, w).Type)
 	assert.Contains(t, logs.String(), "response too large")
 }
 
 // Every problem the middleware chain produces is valid problem+json with registered values.
 func TestMiddlewareProblemsAreWellFormed(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	for _, target := range []string{"/nope", "/api/v1/healthz?x=1", "/api/v1/healthz?" + strings.Repeat("a", MaxURLBytes)} {
-		w := get(t, a.Public(), target)
-		p := decodeProblem(t, w)
+		w := testutil.Get(t, a.Public(), target)
+		p := testutil.DecodeProblem(t, w)
 		_, known := p.Type.Info()
 		assert.True(t, known, p.Type)
 		assert.True(t, p.Detail != "" || len(p.Errors) > 0, "every middleware problem explains itself")

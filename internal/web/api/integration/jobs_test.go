@@ -9,6 +9,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 func jobIDs(t *testing.T, l dto.List[dto.Job]) []int64 {
@@ -21,7 +22,7 @@ func jobIDs(t *testing.T, l dto.List[dto.Job]) []int64 {
 }
 
 func TestListJobs(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
 	l := getJSON[dto.List[dto.Job]](t, h, "/api/v1/jobs")
@@ -66,24 +67,24 @@ func TestListJobs(t *testing.T) {
 		"/api/v1/jobs?per_page=101": dto.ParamPerPage,
 		"/api/v1/jobs?page=0":       dto.ParamPage,
 	} {
-		requireParamProblem(t, get(t, h, target), field, target)
+		testutil.RequireParamProblem(t, testutil.Get(t, h, target), field, target)
 	}
-	requireParamProblem(t, get(t, h, "/api/v1/jobs?target=1"), "", "unknown param")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/jobs?target=1"), "", "unknown param")
 
 	// Every invalid parameter is listed in one response.
-	w := get(t, h, "/api/v1/jobs?state=x&kind=y&source_id=0&per_page=0&target=1")
+	w := testutil.Get(t, h, "/api/v1/jobs?state=x&kind=y&source_id=0&per_page=0&target=1")
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	var params []dto.ParamName
-	for _, e := range decodeProblem(t, w).Errors {
+	for _, e := range testutil.DecodeProblem(t, w).Errors {
 		params = append(params, e.Parameter)
 	}
 	assert.Equal(t, []dto.ParamName{"", dto.ParamState, dto.ParamKind, dto.ParamSourceID, dto.ParamPerPage}, params)
-	w = get(t, h, "/api/v1/jobs?state=bogus")
-	assert.Equal(t, runtime.DetailJobState.Message(), decodeProblem(t, w).Errors[0].Detail, "the detail lists the values")
+	w = testutil.Get(t, h, "/api/v1/jobs?state=bogus")
+	assert.Equal(t, runtime.DetailJobState.Message(), testutil.DecodeProblem(t, w).Errors[0].Detail, "the detail lists the values")
 }
 
 func TestGetJob(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
 	j := getJSON[dto.Job](t, h, "/api/v1/jobs/3")
@@ -98,13 +99,13 @@ func TestGetJob(t *testing.T) {
 	l := getJSON[dto.List[dto.Job]](t, h, "/api/v1/jobs?kind=work")
 	assert.Equal(t, l.Items[0].Target, j.Target)
 
-	w := get(t, h, "/api/v1/jobs/99")
+	w := testutil.Get(t, h, "/api/v1/jobs/99")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	p := decodeProblem(t, w)
+	p := testutil.DecodeProblem(t, w)
 	assert.Equal(t, dto.TypeNotFound, p.Type)
 	assert.Equal(t, runtime.DetailNoJob.Message(), p.Detail)
 	for _, id := range []string{"0", "abc", "-1", "9007199254740992"} {
-		requireParamProblem(t, get(t, h, "/api/v1/jobs/"+id), dto.ParamID, id)
+		testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/jobs/"+id), dto.ParamID, id)
 	}
-	requireParamProblem(t, get(t, h, "/api/v1/jobs/1?state=done"), dto.ParamState, "declared name, not taken here")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/jobs/1?state=done"), dto.ParamState, "declared name, not taken here")
 }

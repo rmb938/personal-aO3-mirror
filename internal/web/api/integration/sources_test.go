@@ -18,12 +18,13 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 // getJSON GETs target, requires status 200 and decodes the body into a T.
 func getJSON[T any](t *testing.T, h http.Handler, target string) T {
 	t.Helper()
-	w := get(t, h, target)
+	w := testutil.Get(t, h, target)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var v T
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &v))
@@ -36,7 +37,7 @@ func isHash(t *testing.T, s string) bool {
 }
 
 func TestListSources(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
 	l := getJSON[dto.List[dto.Source]](t, h, "/api/v1/sources")
@@ -59,7 +60,7 @@ func TestListSources(t *testing.T) {
 	assert.Equal(t, 40, *tag.TotalWorks)
 	assert.Nil(t, tag.EstRequests)
 	assert.Equal(t, dto.Duration(time.Hour), tag.PollInterval)
-	assert.Contains(t, get(t, h, "/api/v1/sources/1").Body.String(), `"poll_interval":"1h0m0s"`, "a duration string, unhashed")
+	assert.Contains(t, testutil.Get(t, h, "/api/v1/sources/1").Body.String(), `"poll_interval":"1h0m0s"`, "a duration string, unhashed")
 	assert.Equal(t, seedTime, tag.LastPollAt)
 	require.NotNil(t, tag.Backfill)
 	assert.Equal(t, dto.Backfill{NextPage: 3, Order: "kudos_desc", WindowStartOn: "2020-01-01", WindowEndOn: "2020-12-31",
@@ -70,7 +71,7 @@ func TestListSources(t *testing.T) {
 	assert.Equal(t, seedSeriesSource, l.Items[0].ID)
 	assert.Equal(t, 2, l.Total)
 
-	w := get(t, h, "/api/v1/sources?page=3&per_page=1")
+	w := testutil.Get(t, h, "/api/v1/sources?page=3&per_page=1")
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.JSONEq(t, `{"items":[],"page":3,"per_page":1,"total":2}`, w.Body.String(), "past the end: items is []")
 
@@ -80,12 +81,12 @@ func TestListSources(t *testing.T) {
 		"/api/v1/sources?page=0":                 dto.ParamPage,
 		"/api/v1/sources?page=1002&per_page=100": dto.ParamPage,
 	} {
-		requireParamProblem(t, get(t, h, target), field, target)
+		testutil.RequireParamProblem(t, testutil.Get(t, h, target), field, target)
 	}
 }
 
 func TestGetSource(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
 	s := getJSON[dto.Source](t, h, "/api/v1/sources/2")
@@ -102,19 +103,19 @@ func TestGetSource(t *testing.T) {
 	one := getJSON[dto.Source](t, h, "/api/v1/sources/1")
 	assert.Equal(t, l.Items[0].Target, one.Target)
 
-	w := get(t, h, "/api/v1/sources/99")
+	w := testutil.Get(t, h, "/api/v1/sources/99")
 	require.Equal(t, http.StatusNotFound, w.Code)
-	p := decodeProblem(t, w)
+	p := testutil.DecodeProblem(t, w)
 	assert.Equal(t, dto.TypeNotFound, p.Type)
 	assert.Equal(t, runtime.DetailNoSource.Message(), p.Detail)
 	for _, id := range []string{"0", "abc", "-1", "9007199254740992"} {
-		requireParamProblem(t, get(t, h, "/api/v1/sources/"+id), dto.ParamID, id)
+		testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/sources/"+id), dto.ParamID, id)
 	}
-	requireParamProblem(t, get(t, h, "/api/v1/sources/1?page=1"), dto.ParamPage, "declared name, not taken here")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/sources/1?page=1"), dto.ParamPage, "declared name, not taken here")
 }
 
 func TestGetSourceAdd(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
 	done := getJSON[dto.SourceAdd](t, h, "/api/v1/source-adds/1")
@@ -134,11 +135,11 @@ func TestGetSourceAdd(t *testing.T) {
 	assert.Nil(t, failed.Result)
 
 	for _, id := range []string{"3", "99"} { // a work job, and no job
-		w := get(t, h, "/api/v1/source-adds/"+id)
+		w := testutil.Get(t, h, "/api/v1/source-adds/"+id)
 		require.Equal(t, http.StatusNotFound, w.Code, id)
-		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type)
+		assert.Equal(t, dto.TypeNotFound, testutil.DecodeProblem(t, w).Type)
 	}
-	requireParamProblem(t, get(t, h, "/api/v1/source-adds/x"), dto.ParamJobID, "bad job id")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/source-adds/x"), dto.ParamJobID, "bad job id")
 }
 
 // postJSON POSTs body as application/json to target.
@@ -146,11 +147,11 @@ func postJSON(t *testing.T, h http.Handler, target, body string) *httptest.Respo
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", runtime.ContentTypeJSON)
-	return do(t, h, req)
+	return testutil.Do(t, h, req)
 }
 
 func TestAddSource(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 	const tagURL = `{"url":"https://archiveofourown.org/tags/Fixture%20Tag/works","order":"hits_desc","priority":5,"poll_interval":"1h"}`
 
@@ -180,7 +181,7 @@ func TestAddSource(t *testing.T) {
 	// An existing source: 409 with the source's Location.
 	w = postJSON(t, h, "/api/v1/sources", `{"url":"https://archiveofourown.org/series/12345"}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	p := decodeProblem(t, w)
+	p := testutil.DecodeProblem(t, w)
 	assert.Equal(t, dto.TypeAlreadyExists, p.Type)
 	assert.Equal(t, runtime.DetailSourceExists.Message(), p.Detail)
 	assert.Equal(t, "/api/v1/sources/2", w.Header().Get("Location"))
@@ -195,7 +196,7 @@ func TestAddSource(t *testing.T) {
 	} {
 		w := postJSON(t, h, "/api/v1/sources", `{"url":"`+u+`"}`)
 		require.Equal(t, http.StatusUnprocessableEntity, w.Code, u)
-		p := decodeProblem(t, w)
+		p := testutil.DecodeProblem(t, w)
 		assert.Equal(t, dto.TypeValidation, p.Type, u)
 		assert.Equal(t, []dto.ProblemError{{Detail: reason.Hint(), Pointer: "/url"}}, p.Errors, u)
 	}
@@ -203,11 +204,11 @@ func TestAddSource(t *testing.T) {
 
 // A rejected URL's problem and logs never repeat the URL.
 func TestAddSourceRejectedURLIsContentFree(t *testing.T) {
-	a, logs := newTestAPI(t, nil)
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	for _, u := range []string{"/tags/" + sentinel + "%zz/works", "https://" + sentinel + ".example/x", "/tags/" + sentinel + "/bookmarks"} {
 		w := postJSON(t, a.Public(), "/api/v1/sources", `{"url":"`+u+`"}`)
 		require.Equal(t, http.StatusUnprocessableEntity, w.Code, u)
-		assertNoSentinel(t, w, logs)
+		testutil.AssertNoSentinel(t, w, logs, sentinel)
 	}
 }
 
@@ -223,7 +224,7 @@ var testDetailOrder = problem.OneOf(dto.Order(""))
 // The body's own rules are tested in request; this checks the handler wiring: every invalid
 // member (and the listener's confirm rule) comes back at once, by pointer, unhashed.
 func TestAddSourceValidation(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 	got := memberErrors(t, h, `{"url":"/works/search","order":"x","priority":1001,"poll_interval":"1s","confirm":true}`)
 	assert.Equal(t, []string{"/confirm", "/order", "/poll_interval", "/priority", "/url"}, slices.Sorted(maps.Keys(got)))
@@ -237,11 +238,11 @@ func TestAddSourceValidation(t *testing.T) {
 		`{"url":"/tags/a/works","poll_interval":3600}`, `{"url":"/tags/a/works","poll_interval":"soon"}`} {
 		w := postJSON(t, h, "/api/v1/sources", body)
 		require.Equal(t, http.StatusBadRequest, w.Code, body)
-		assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type, body)
+		assert.Equal(t, dto.TypeInvalidBody, testutil.DecodeProblem(t, w).Type, body)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources", strings.NewReader(`{"url":"/tags/a/works"}`))
-	w := do(t, h, req)
+	w := testutil.Do(t, h, req)
 	require.Equal(t, http.StatusUnsupportedMediaType, w.Code, "no content type")
 
 	// Query and body errors are listed together.
@@ -250,7 +251,7 @@ func TestAddSourceValidation(t *testing.T) {
 	assert.Equal(t, []dto.ProblemError{
 		{Detail: runtime.DetailUnknownParam.Message(), Parameter: dto.ParamPage},
 		{Detail: testDetailOrder.Message(), Pointer: "/order"},
-	}, decodeProblem(t, w).Errors)
+	}, testutil.DecodeProblem(t, w).Errors)
 
 	// The admin socket accepts confirm.
 	w = postJSON(t, a.Admin(), "/api/v1/sources", `{"url":"/tags/a/works","confirm":true}`)
@@ -258,14 +259,14 @@ func TestAddSourceValidation(t *testing.T) {
 }
 
 func TestAddSourceRateLimit(t *testing.T) {
-	a, _ := newTestAPI(t, func(o *runtime.Options) { o.SourceAddPerHour = 1 })
+	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SourceAddPerHour = 1 })
 	w := postJSON(t, a.Public(), "/api/v1/sources", `{"url":"/tags/a/works"}`)
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 	w = postJSON(t, a.Public(), "/api/v1/sources", `{"url":"/tags/b/works"}`)
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
-	assert.Equal(t, dto.TypeRateLimited, decodeProblem(t, w).Type)
+	assert.Equal(t, dto.TypeRateLimited, testutil.DecodeProblem(t, w).Type)
 	assert.NotEmpty(t, w.Header().Get("Retry-After"))
-	assert.Equal(t, http.StatusOK, get(t, a.Public(), "/api/v1/sources").Code, "other routes keep the general limit")
+	assert.Equal(t, http.StatusOK, testutil.Get(t, a.Public(), "/api/v1/sources").Code, "other routes keep the general limit")
 
 	// The admin socket has a separate bucket with a 10x limit.
 	for i := range 10 {
@@ -279,7 +280,7 @@ func TestAddSourceRateLimit(t *testing.T) {
 // post sends a bodyless POST to target.
 func post(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	return do(t, h, httptest.NewRequest(http.MethodPost, target, nil))
+	return testutil.Do(t, h, httptest.NewRequest(http.MethodPost, target, nil))
 }
 
 // requireNoContent asserts w is an empty 204 that still went through the enforcer.
@@ -298,7 +299,7 @@ func sourceState(t *testing.T, h http.Handler, id int64) dto.SourceState {
 }
 
 func TestSourceAdminActions(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Admin()
 
 	requireNoContent(t, post(t, h, "/api/v1/sources/2/confirm"), "confirm")
@@ -312,7 +313,7 @@ func TestSourceAdminActions(t *testing.T) {
 	for _, target := range []string{"/api/v1/sources/2/confirm", "/api/v1/sources/1/resume"} {
 		w := post(t, h, target)
 		require.Equal(t, http.StatusConflict, w.Code, target)
-		p := decodeProblem(t, w)
+		p := testutil.DecodeProblem(t, w)
 		assert.Equal(t, dto.TypeStateConflict, p.Type, target)
 		assert.Equal(t, runtime.DetailStateConflict.Message(), p.Detail, target)
 	}
@@ -325,20 +326,20 @@ func TestSourceAdminActions(t *testing.T) {
 	assert.Equal(t, dto.JobState("cancelled"), getJSON[dto.Job](t, h, "/api/v1/jobs/4").State)
 	assert.Equal(t, http.StatusConflict, post(t, h, "/api/v1/sources/1/cancel").Code, "already cancelled")
 
-	requireNoContent(t, do(t, h, httptest.NewRequest(http.MethodDelete, "/api/v1/sources/1", nil)), "delete")
-	assert.Equal(t, http.StatusNotFound, get(t, h, "/api/v1/sources/1").Code)
+	requireNoContent(t, testutil.Do(t, h, httptest.NewRequest(http.MethodDelete, "/api/v1/sources/1", nil)), "delete")
+	assert.Equal(t, http.StatusNotFound, testutil.Get(t, h, "/api/v1/sources/1").Code)
 
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodPost, "/api/v1/sources/99/pause", nil),
 		httptest.NewRequest(http.MethodPost, "/api/v1/sources/99/cancel", nil),
 		httptest.NewRequest(http.MethodDelete, "/api/v1/sources/1", nil),
 	} {
-		w := do(t, h, req)
+		w := testutil.Do(t, h, req)
 		require.Equal(t, http.StatusNotFound, w.Code, req.URL.Path)
-		assert.Equal(t, runtime.DetailNoSource.Message(), decodeProblem(t, w).Detail, req.URL.Path)
+		assert.Equal(t, runtime.DetailNoSource.Message(), testutil.DecodeProblem(t, w).Detail, req.URL.Path)
 	}
-	requireParamProblem(t, post(t, h, "/api/v1/sources/x/pause"), dto.ParamID, "bad id")
-	requireParamProblem(t, post(t, h, "/api/v1/sources/2/pause?page=1"), dto.ParamPage, "no query params")
+	testutil.RequireParamProblem(t, post(t, h, "/api/v1/sources/x/pause"), dto.ParamID, "bad id")
+	testutil.RequireParamProblem(t, post(t, h, "/api/v1/sources/2/pause?page=1"), dto.ParamPage, "no query params")
 	assert.Equal(t, dto.SourceState("active"), sourceState(t, h, seedSeriesSource), "an invalid request changes nothing")
 }
 
@@ -347,14 +348,14 @@ func sendJSON(t *testing.T, h http.Handler, method, target, body string) *httpte
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", runtime.ContentTypeJSON)
-	return do(t, h, req)
+	return testutil.Do(t, h, req)
 }
 
 // problemPointers requires a 422 validation-error and returns its items as pointer → detail.
 func problemPointers(t *testing.T, w *httptest.ResponseRecorder, msg string) map[string]string {
 	t.Helper()
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code, msg+": "+w.Body.String())
-	p := decodeProblem(t, w)
+	p := testutil.DecodeProblem(t, w)
 	assert.Equal(t, dto.TypeValidation, p.Type, msg)
 	out := map[string]string{}
 	for _, e := range p.Errors {
@@ -364,7 +365,7 @@ func problemPointers(t *testing.T, w *httptest.ResponseRecorder, msg string) map
 }
 
 func TestRefreshSource(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Admin()
 
 	w := postJSON(t, h, "/api/v1/sources/1/refresh", `{}`)
@@ -381,25 +382,25 @@ func TestRefreshSource(t *testing.T) {
 	// A pending_confirm source can't be refreshed.
 	w = postJSON(t, h, "/api/v1/sources/2/refresh", `{}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	p := decodeProblem(t, w)
+	p := testutil.DecodeProblem(t, w)
 	assert.Equal(t, dto.TypeStateConflict, p.Type)
 	assert.Equal(t, runtime.DetailStateConflict.Message(), p.Detail)
 
 	w = postJSON(t, h, "/api/v1/sources/99/refresh", `{}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, runtime.DetailNoSource.Message(), decodeProblem(t, w).Detail)
+	assert.Equal(t, runtime.DetailNoSource.Message(), testutil.DecodeProblem(t, w).Detail)
 
-	requireParamProblem(t, postJSON(t, h, "/api/v1/sources/x/refresh", `{}`), dto.ParamID, "bad id")
+	testutil.RequireParamProblem(t, postJSON(t, h, "/api/v1/sources/x/refresh", `{}`), dto.ParamID, "bad id")
 	for _, body := range []string{``, `{"full":1}`, `{"full":true,"extra":1}`} {
 		w := postJSON(t, h, "/api/v1/sources/1/refresh", body)
 		require.Equal(t, http.StatusBadRequest, w.Code, body)
-		assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type, body)
+		assert.Equal(t, dto.TypeInvalidBody, testutil.DecodeProblem(t, w).Type, body)
 	}
 	assert.Equal(t, http.StatusUnsupportedMediaType, post(t, h, "/api/v1/sources/1/refresh").Code, "a body is required")
 }
 
 func TestSetSourceSettings(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Admin()
 	patch := func(target, body string) *httptest.ResponseRecorder {
 		return sendJSON(t, h, http.MethodPatch, target, body)
@@ -436,24 +437,24 @@ func TestSetSourceSettings(t *testing.T) {
 
 	w = patch("/api/v1/sources/99", `{"priority":1}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, runtime.DetailNoSource.Message(), decodeProblem(t, w).Detail)
-	requireParamProblem(t, patch("/api/v1/sources/x", `{}`), dto.ParamID, "bad id")
+	assert.Equal(t, runtime.DetailNoSource.Message(), testutil.DecodeProblem(t, w).Detail)
+	testutil.RequireParamProblem(t, patch("/api/v1/sources/x", `{}`), dto.ParamID, "bad id")
 	for _, body := range []string{``, `{"priority":"1"}`, `{"poll_interval":3600}`, `{"name":"x"}`} {
 		w := patch("/api/v1/sources/1", body)
 		require.Equal(t, http.StatusBadRequest, w.Code, body)
-		assert.Equal(t, dto.TypeInvalidBody, decodeProblem(t, w).Type, body)
+		assert.Equal(t, dto.TypeInvalidBody, testutil.DecodeProblem(t, w).Type, body)
 	}
 }
 
 // The admin source actions do not exist on the public listener: the action paths are 404, and
 // PATCH and DELETE on a source are 405 (the path has GET only there).
 func TestSourceAdminActionsNotPublic(t *testing.T) {
-	a, _ := newTestAPI(t, nil)
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 	for _, action := range []string{"confirm", "pause", "resume", "cancel", "refresh"} {
 		w := postJSON(t, h, "/api/v1/sources/1/"+action, `{}`)
 		require.Equal(t, http.StatusNotFound, w.Code, action)
-		assert.Equal(t, dto.TypeNotFound, decodeProblem(t, w).Type, action)
+		assert.Equal(t, dto.TypeNotFound, testutil.DecodeProblem(t, w).Type, action)
 	}
 	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
 		w := sendJSON(t, h, method, "/api/v1/sources/1", `{"priority":9}`)
@@ -467,10 +468,10 @@ func TestSourceAdminActionsNotPublic(t *testing.T) {
 
 // The access log names the numeric path ID, never the response's content.
 func TestSourceAccessLog(t *testing.T) {
-	a, logs := newTestAPI(t, nil)
-	w := do(t, a.Public(), httptest.NewRequest(http.MethodGet, "/api/v1/source-adds/2", nil))
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	w := testutil.Do(t, a.Public(), httptest.NewRequest(http.MethodGet, "/api/v1/source-adds/2", nil))
 	require.Equal(t, http.StatusOK, w.Code)
-	l := accessLine(t, logs)
+	l := testutil.AccessLine(t, logs)
 	assert.Equal(t, "/api/v1/source-adds/{job_id}", l["route"])
 	assert.InDelta(t, 2, l["path_job_id"], 0)
 }

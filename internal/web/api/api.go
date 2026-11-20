@@ -4,18 +4,18 @@ package api
 import (
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/handlers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
-func New(opts runtime.Options) (*runtime.API, error) {
-	opts.RegisterRoutes = registerRoutes
-	return runtime.New(opts)
+func New(opts runtime.Options, c *controllers.Controllers) (*runtime.API, error) {
+	return runtime.New(opts, c, registerRoutes)
 }
 
-func registerRoutes(a *runtime.API, r *chi.Mux, admin bool) error {
-	h := handlers.New(a.Controllers(), a.Version())
+func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admin bool) error {
+	h := handlers.New(c, a.Version())
 	r.Get(route.Healthz, a.Handle(h.Healthz))
 	r.Get(route.Version, a.Handle(h.Version))
 	r.Get(route.Sources, a.Handle(h.ListSources))
@@ -30,13 +30,13 @@ func registerRoutes(a *runtime.API, r *chi.Mux, admin bool) error {
 	r.Get(route.Job, a.Handle(h.GetJob))
 	r.Get(route.Status, a.Handle(h.Status))
 	if admin {
-		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(a.Controllers().ConfirmSource)))
-		r.Post(route.SourcePause, a.Handle(h.SourceAction(a.Controllers().PauseSource)))
-		r.Post(route.SourceResume, a.Handle(h.SourceAction(a.Controllers().ResumeSource)))
+		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(c.ConfirmSource)))
+		r.Post(route.SourcePause, a.Handle(h.SourceAction(c.PauseSource)))
+		r.Post(route.SourceResume, a.Handle(h.SourceAction(c.ResumeSource)))
 		r.Post(route.SourceCancel, a.Handle(h.CancelSource))
 		r.Post(route.SourceRefresh, a.Handle(h.RefreshSource))
 		r.Patch(route.Source, a.Handle(h.SetSourceSettings))
-		r.Delete(route.Source, a.Handle(h.SourceAction(a.Controllers().RemoveSource)))
+		r.Delete(route.Source, a.Handle(h.SourceAction(c.RemoveSource)))
 		r.Get(route.DebugJob, a.Handle(h.DebugJob))
 		r.Get(route.DebugWork, a.Handle(h.DebugWork))
 	}

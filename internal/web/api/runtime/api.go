@@ -19,10 +19,7 @@ import (
 
 // Options configures the API. `serve` fills it from the `api:` config section.
 type Options struct {
-	RegisterRoutes RouteBuilder
-	Logger         *slog.Logger
-	// Controllers serve every store-backed route. `serve` builds them with no AO3 client.
-	Controllers *controllers.Controllers
+	Logger *slog.Logger
 	// Version is the build version reported by /api/v1/version.
 	Version string
 	// NoReveal makes the server refuse the reveal param (403 reveal_disabled).
@@ -43,7 +40,7 @@ type Options struct {
 	Now func() time.Time
 }
 
-type RouteBuilder func(*API, *chi.Mux, bool) error
+type RouteBuilder func(*API, *controllers.Controllers, *chi.Mux, bool) error
 
 // adminRateFactor scales the public rate limits for the admin socket.
 const adminRateFactor = 10
@@ -60,11 +57,11 @@ type API struct {
 }
 
 // New validates opts and builds both routers.
-func New(opts Options) (*API, error) {
+func New(opts Options, controllers *controllers.Controllers, registerRoutes RouteBuilder) (*API, error) {
 	if opts.Logger == nil {
 		return nil, errors.New("api: nil logger")
 	}
-	if opts.Controllers == nil {
+	if controllers == nil {
 		return nil, errors.New("api: nil controllers")
 	}
 	if opts.Version == "" {
@@ -92,12 +89,12 @@ func New(opts Options) (*API, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &API{opts: opts, log: opts.Logger, ctl: opts.Controllers, enf: enf}
-	a.public, err = a.router(false)
+	a := &API{opts: opts, log: opts.Logger, ctl: controllers, enf: enf}
+	a.public, err = a.router(false, registerRoutes)
 	if err != nil {
 		return nil, err
 	}
-	a.admin, err = a.router(true)
+	a.admin, err = a.router(true, registerRoutes)
 	if err != nil {
 		return nil, err
 	}
@@ -117,14 +114,7 @@ func (a *API) Router(admin bool) *chi.Mux {
 	return a.public
 }
 
-// Controllers returns the API's controller instance for handlers to use.
-func (a *API) Controllers() *controllers.Controllers { return a.ctl }
-
 func (a *API) Version() string { return a.opts.Version }
-
-func (a *API) Throttle(inFlight, backlog int, wait time.Duration) func(http.Handler) http.Handler {
-	return a.throttle(inFlight, backlog, wait)
-}
 
 func (a *API) SourceAddRateLimit(listener string, admin bool) func(http.Handler) http.Handler {
 	n := a.opts.SourceAddPerHour
@@ -136,7 +126,7 @@ func (a *API) SourceAddRateLimit(listener string, admin bool) func(http.Handler)
 
 // router builds one listener's router with the full middleware chain (docs/part2-api.md, "HTTP
 // hardening"; the order matters).
-func (a *API) router(admin bool) (*chi.Mux, error) {
+func (a *API) router(admin bool, registerRoutes RouteBuilder) (*chi.Mux, error) {
 	listener, rate := "public", a.opts.GeneralPerMin
 	if admin {
 		listener, rate = "admin", rate*adminRateFactor
@@ -162,8 +152,8 @@ func (a *API) router(admin bool) (*chi.Mux, error) {
 	r.NotFound(a.Handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, DetailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
 
-	if a.opts.RegisterRoutes != nil {
-		if err := a.opts.RegisterRoutes(a, r, admin); err != nil {
+	if registerRoutes != nil {
+		if err := registerRoutes(a, a.ctl, r, admin); err != nil {
 			return nil, err
 		}
 	}
