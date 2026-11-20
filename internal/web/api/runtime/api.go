@@ -19,7 +19,6 @@ import (
 
 // Options configures the API. `serve` fills it from the `api:` config section.
 type Options struct {
-	Logger *slog.Logger
 	// Version is the build version reported by /api/v1/version.
 	Version string
 	// NoReveal makes the server refuse the reveal param (403 reveal_disabled).
@@ -57,8 +56,8 @@ type API struct {
 }
 
 // New validates opts and builds both routers.
-func New(opts Options, controllers *controllers.Controllers, registerRoutes RouteBuilder) (*API, error) {
-	if opts.Logger == nil {
+func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, registerRoutes RouteBuilder) (*API, error) {
+	if log == nil {
 		return nil, errors.New("api: nil logger")
 	}
 	if controllers == nil {
@@ -89,7 +88,7 @@ func New(opts Options, controllers *controllers.Controllers, registerRoutes Rout
 	if err != nil {
 		return nil, err
 	}
-	a := &API{opts: opts, log: opts.Logger, ctl: controllers, enf: enf}
+	a := &API{opts: opts, log: log, ctl: controllers, enf: enf}
 	a.public, err = a.router(false, registerRoutes)
 	if err != nil {
 		return nil, err

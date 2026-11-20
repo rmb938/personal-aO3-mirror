@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
 	"testing"
@@ -22,27 +21,25 @@ const (
 	revealQuery = "?" + RevealParam + "=1"
 )
 
-func testOptions(t *testing.T, logs io.Writer) Options {
+func testOptions(t *testing.T) Options {
 	t.Helper()
-	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return Options{
-		Logger:  log,
 		Version: "test", TrustedProxies: []string{"127.0.0.1/32", "::1/128"},
 		RequestTimeout: 10 * time.Second, GeneralPerMin: 1000, SourceAddPerHour: 1000,
 	}
 }
 
-func testNew(t *testing.T, opts Options) (*API, error) {
+func testNew(t *testing.T, opts Options, log *slog.Logger) (*API, error) {
 	t.Helper()
 
 	cfg := config.Default()
-	st, err := store.Open(t.Context(), t.TempDir(), store.Options{Logger: opts.Logger})
+	st, err := store.Open(t.Context(), t.TempDir(), store.Options{Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	ctrls := controllers.New(controllers.Options{Store: st, Logger: opts.Logger,
+	ctrls := controllers.New(controllers.Options{Store: st, Logger: log,
 		Sources: cfg.Sources, Interval: cfg.Rate.Interval})
 
-	return New(opts, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) error {
+	return New(opts, log, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) error {
 		r.Get(route.Healthz, a.Handle(func(req *http.Request) (any, error) {
 			q, err := ParseParams(req)
 			if err != nil {

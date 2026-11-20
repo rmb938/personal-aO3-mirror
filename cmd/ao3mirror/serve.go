@@ -89,7 +89,6 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		}
 	}()
 	a, err := api.New(runtime.Options{
-		Logger:           log,
 		Version:          version,
 		NoReveal:         noReveal,
 		TrustedProxies:   cfg.API.TrustedProxies,
@@ -97,7 +96,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		HashKeyRotation:  cfg.API.HashKeyRotation,
 		GeneralPerMin:    cfg.API.Rate.GeneralPerMin,
 		SourceAddPerHour: cfg.API.Rate.SourceAddPerHour,
-	}, newControllers(cfg, log, st, nil))
+	}, log, newControllers(cfg, log, st, nil))
 	if err != nil {
 		return nil, err
 	}

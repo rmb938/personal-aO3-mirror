@@ -2,7 +2,6 @@ package integration
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -26,13 +25,9 @@ import (
 
 const testVersion = "1.2.3-test"
 
-// testOptions are valid options logging JSON to logs, with controllers over a seeded temp
-// store (seed_test.go).
-func testOptions(t *testing.T, logs io.Writer) runtime.Options {
+func testOptions(t *testing.T) runtime.Options {
 	t.Helper()
-	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return runtime.Options{
-		Logger:           log,
 		Version:          testVersion,
 		TrustedProxies:   []string{"127.0.0.1/32", "::1/128"},
 		RequestTimeout:   10 * time.Second,
@@ -41,9 +36,9 @@ func testOptions(t *testing.T, logs io.Writer) runtime.Options {
 	}
 }
 
-func testNew(t *testing.T, opts runtime.Options) (*runtime.API, error) {
+func testNew(t *testing.T, opts runtime.Options, log *slog.Logger) (*runtime.API, error) {
 	t.Helper()
-	return api.New(opts, newTestControllers(t, opts.Logger))
+	return api.New(opts, log, newTestControllers(t, log))
 }
 
 // revealQuery is the query string that asks for revealed content.
@@ -51,7 +46,6 @@ const revealQuery = "?" + runtime.RevealParam + "=1"
 
 func TestNewValidatesOptions(t *testing.T) {
 	cases := map[string]func(*runtime.Options){
-		"nil logger":    func(o *runtime.Options) { o.Logger = nil },
 		"no version":    func(o *runtime.Options) { o.Version = "" },
 		"no proxies":    func(o *runtime.Options) { o.TrustedProxies = nil },
 		"bad proxy":     func(o *runtime.Options) { o.TrustedProxies = []string{"127.0.0.1"} },
@@ -63,12 +57,18 @@ func TestNewValidatesOptions(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			opts := testOptions(t, io.Discard)
+			opts := testOptions(t)
 			mutate(&opts)
-			_, err := api.New(opts, newTestControllers(t, opts.Logger))
+			log := slog.New(slog.DiscardHandler)
+			_, err := api.New(opts, log, newTestControllers(t, log))
 			assert.Error(t, err)
 		})
 	}
+	t.Run("nil logger", func(t *testing.T) {
+		log := slog.New(slog.DiscardHandler)
+		_, err := api.New(testOptions(t), nil, newTestControllers(t, log))
+		assert.EqualError(t, err, "api: nil logger")
+	})
 }
 
 func TestHealthzAndVersion(t *testing.T) {
@@ -201,8 +201,9 @@ func TestAllRoutesLeak(t *testing.T) {
 					if !s.fresh {
 						return r
 					}
-					opts := testOptions(t, logs)
-					b, err := api.New(opts, newTestControllers(t, opts.Logger))
+					opts := testOptions(t)
+					log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+					b, err := api.New(opts, log, newTestControllers(t, log))
 					require.NoError(t, err)
 					h := b.Router(false)
 					if name == "admin" {

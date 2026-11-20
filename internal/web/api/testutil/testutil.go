@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,14 +17,15 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 )
 
-func NewAPI[O, A any](t *testing.T, options func(*testing.T, io.Writer) O, newAPI func(*testing.T, O) (*A, error), mutate func(*O)) (*A, *bytes.Buffer) {
+func NewAPI[O, A any](t *testing.T, options func(*testing.T) O, newAPI func(*testing.T, O, *slog.Logger) (*A, error), mutate func(*O)) (*A, *bytes.Buffer) {
 	t.Helper()
 	logs := &bytes.Buffer{}
-	opts := options(t, logs)
+	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts := options(t)
 	if mutate != nil {
 		mutate(&opts)
 	}
-	a, err := newAPI(t, opts)
+	a, err := newAPI(t, opts, log)
 	require.NoError(t, err)
 	return a, logs
 }

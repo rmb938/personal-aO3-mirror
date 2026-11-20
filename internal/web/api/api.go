@@ -2,6 +2,8 @@
 package api
 
 import (
+	"log/slog"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
@@ -10,8 +12,8 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
-func New(opts runtime.Options, c *controllers.Controllers) (*runtime.API, error) {
-	return runtime.New(opts, c, registerRoutes)
+func New(opts runtime.Options, log *slog.Logger, c *controllers.Controllers) (*runtime.API, error) {
+	return runtime.New(opts, log, c, registerRoutes)
 }
 
 func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admin bool) error {

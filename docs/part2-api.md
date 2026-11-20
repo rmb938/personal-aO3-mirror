@@ -332,7 +332,7 @@ Status: tick when the PR merges.
       - `newEnforcer` builds the redact registry from `responseTypes` and the enums.
     - [x] **2b. Router + middleware**: chi router, the full middleware chain, healthz/version,
       the all-routes leak test and the OpenAPI route-coverage test. As built:
-      - `api.New(Options)` builds one hasher/enforcer shared by two chi routers: `Public()` and
+      - `api.New(Options, logger, controllers)` builds one hasher/enforcer shared by two chi routers: `Public()` and
         `Admin()` (public routes + an empty admin-only group). Options carry only what 2b needs
         (`Version`, `NoReveal`, `TrustedProxies`, `RequestTimeout`, `HashKeyRotation`,
         `GeneralPerMin`); the search and source-add limits arrive with their routes. The admin
