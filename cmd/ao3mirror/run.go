@@ -14,7 +14,10 @@ import (
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
+	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
+	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
 var errDaemonLocked = errors.New("another ao3mirror run is already using this data dir")
@@ -96,7 +99,47 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "run: releasing lock: %v\n", err)
 		}
 	}()
-	s := a.scheduler()
+
+	st, err := store.Open(ctx, a.cfg.DataDir, store.Options{Logger: a.log})
+	if err != nil {
+		fmt.Fprintf(errOut, "run: %v\n", err)
+		return 1
+	}
+	defer st.Close()
+
+	base, err := baseURL()
+	if err != nil {
+		fmt.Fprintf(errOut, "run: %v\n", err)
+		return 1
+	}
+	client, err := httpx.New(httpx.Options{
+		BaseURL:     base,
+		UserAgent:   a.cfg.UserAgent(version),
+		Interval:    a.cfg.Rate.Interval,
+		Jitter:      a.cfg.Rate.Jitter,
+		DailyBudget: a.cfg.Rate.DailyBudget,
+		Logger:      a.log,
+		OnRequest: func(r httpx.RequestRecord) {
+			// Content-free request log for `status` and debugging (its own one-row transaction).
+			row := store.RequestRow{
+				Time: r.Time, ReqID: r.ReqID, Kind: string(r.Kind), Path: r.SafePath, Status: r.Status,
+				Class: string(r.Class), Reason: r.Reason, Bytes: r.Bytes, Duration: r.Duration, Waited: r.Waited, Hop: r.Hop, JobID: r.JobID,
+			}
+			if err := st.InTx(context.Background(), func(ctx context.Context, tx *store.Tx) error {
+				return tx.InsertRequest(ctx, row)
+			}); err != nil {
+				a.log.Warn("request log insert failed", "err", err.Error())
+			}
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(errOut, "run: %v\n", err)
+		return 1
+	}
+
+	ctl := newControllers(a.cfg, a.log, st, client)
+
+	s := scheduler.New(scheduler.Options{Store: st, Controllers: ctl, Pacer: client, Logger: a.log})
 	a.log.Info("daemon starting", "interval", a.cfg.Rate.Interval.String(), "daily_budget", a.cfg.Rate.DailyBudget,
 		"user_agent_contact_set", a.cfg.Contact.Discord != "", "images", a.cfg.Images.Enabled,
 		"tag_info_types", len(a.cfg.Tags.InfoTypes))
@@ -106,7 +149,7 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 	var wg sync.WaitGroup
 	if a.cfg.Images.Enabled {
 		w, err := imagefetch.New(imagefetch.Options{
-			Store: a.store, UserAgent: a.client.UserAgent(), Dir: a.cfg.Path("images"),
+			Store: st, UserAgent: client.UserAgent(), Dir: a.cfg.Path("images"),
 			PerHostInterval: a.cfg.Images.PerHostInterval, MaxBytes: a.cfg.Images.MaxBytes, Logger: a.log,
 		})
 		if err != nil {

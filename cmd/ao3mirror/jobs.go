@@ -8,12 +8,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
-	"github.com/rmb938/personal-aO3-mirror/internal/model"
+	"github.com/rmb938/personal-aO3-mirror/internal/apiclient"
 )
 
 // runJobs lists jobs. Content-free: targets are numeric work/tag/series ids or page numbers.
-func runJobs(ctx context.Context, ctl *controllers.Controllers, args []string, out, errOut io.Writer) int {
+func runJobs(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("jobs", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	state := fs.String("state", "", "queued|running|done|failed|cancelled (default: all)")
@@ -30,37 +29,54 @@ func runJobs(ctx context.Context, ctl *controllers.Controllers, args []string, o
 	if *limit <= 0 {
 		*limit = 50
 	}
-	order := model.JobsNewest
-	if *state == model.JobQueued {
-		order = model.JobsOldest
+
+	listJobParams := apiclient.ListJobsParams{}
+
+	if len(*state) > 0 {
+		listJobParams.State = apiclient.NewOptJobState(apiclient.JobState(*state))
 	}
-	js, err := ctl.FindJobs(ctx, model.JobFilter{State: *state, Kind: *kind, SourceID: *source, Limit: *limit, Order: order})
+
+	if len(*kind) > 0 {
+		listJobParams.Kind = apiclient.NewOptJobKind(apiclient.JobKind(*kind))
+	}
+
+	if *source != 0 {
+		listJobParams.SourceID = apiclient.NewOptID(apiclient.ID(*source))
+	}
+
+	// TODO: do offset as well
+	if *limit != 0 {
+		listJobParams.PerPage = apiclient.NewOptInt(*limit)
+	}
+
+	jobsList, err := a.apiClient.ListJobs(ctx, listJobParams)
 	if err != nil {
 		fmt.Fprintf(errOut, "jobs: %v\n", err)
 		return 1
 	}
-	if len(js) == 0 {
+
+	if len(jobsList.Items) == 0 {
 		fmt.Fprintln(out, "no jobs")
 		return 0
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tKIND\tTARGET\tSOURCE\tCLASS\tSTATE\tATTEMPTS\tNOT BEFORE\tLAST ACTIVITY\tERROR")
-	for _, j := range js {
+	for _, j := range jobsList.Items {
 		src := "-"
-		if j.SourceID > 0 {
-			src = fmt.Sprint(j.SourceID)
+		if j.SourceID.Set {
+			src = fmt.Sprint(j.SourceID.Value)
 		}
-		last := j.CreatedAt
-		for _, t := range []time.Time{j.StartedAt, j.FinishedAt} {
+		last := time.Time(j.CreatedAt.Value)
+		for _, t := range []time.Time{time.Time(j.StartedAt.Value), time.Time(j.FinishedAt.Value)} {
 			if t.After(last) {
 				last = t
 			}
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%s\t%d/%d\t%s\t%s\t%s\n", j.ID, j.Kind, j.Target, src, j.Priority, j.State,
-			j.Attempts, j.MaxAttempts, when(j.NotBefore), when(last), dash(j.LastError))
+			j.Attempts, j.MaxAttempts, when(time.Time(j.NotBeforeAt.Value)), when(last), dash(j.LastErrorDetail.Value))
 	}
 	tw.Flush()
-	if len(js) == *limit {
+	if len(jobsList.Items) == *limit {
 		fmt.Fprintf(out, "(first %d; use --limit for more)\n", *limit)
 	}
 	return 0

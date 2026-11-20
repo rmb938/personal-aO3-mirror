@@ -812,9 +812,9 @@ Status: tick when the PR merges.
       `existingSourceID` (a malformed stored id is an error, not 0); `convert.SourceAdd`
       copies it and `source add --wait` uses it instead of cutting the error string itself.
     - [X] **6a-3. `internal/apiclient` + `source *` commands.**
-  - 6b: `status`, `jobs`, `debug`.
-  - CLI `--names` maps to the reveal param. It is still user-only (the guard already blocks it).
-  - Update `cmd/ao3mirror/main_test.go` end-to-end tests to start an in-process `serve`.
+    - [x] 6b: `status`, `jobs`, `debug`.
+      - CLI `--names` maps to the reveal param. It is still user-only (the guard already blocks it).
+    - [ ] 6c Update `cmd/ao3mirror/main_test.go` end-to-end tests to start an in-process `serve`.
 - [ ] **7. Store + controller: work detail**
   - Loaders for a work's creators, tags (with type), series parts (+ partial-series flag per
     `docs/plan.md`), collections, and chapter metadata (meta `chapters`).

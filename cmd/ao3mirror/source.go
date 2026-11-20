@@ -7,11 +7,9 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"text/tabwriter"
 	"time"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/apiclient"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
@@ -236,25 +234,52 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			fmt.Fprintf(errOut, "bad id %q\n", idStr)
 			return 2
 		}
-		r, err := a.ctl.GetSource(ctx, id)
+
+		resp, err := a.apiClient.GetSource(ctx, apiclient.GetSourceParams{ID: apiclient.ID(int(id))}, apiclient.WithEditRequest(func(req *http.Request) error {
+			q := req.URL.Query()
+
+			if *names {
+				q.Add(runtime.RevealParam, "1")
+			}
+
+			req.URL.RawQuery = q.Encode()
+			return nil
+		}))
 		if err != nil {
 			fmt.Fprintf(errOut, "show: %v\n", err)
 			return 1
 		}
-		path := r.Path
+		path := resp.Path
 		if !*names {
-			u, _ := a.client.Resolve(r.Path)
+			base, err := baseURL()
+			if err != nil {
+				fmt.Fprintf(errOut, "show: %v\n", err)
+				return 1
+			}
+			client, err := httpx.New(httpx.Options{
+				BaseURL:     base,
+				UserAgent:   a.cfg.UserAgent(version),
+				Interval:    a.cfg.Rate.Interval,
+				Jitter:      a.cfg.Rate.Jitter,
+				DailyBudget: -1,
+			})
+			if err != nil {
+				fmt.Fprintf(errOut, "show: %v\n", err)
+				return 1
+			}
+
+			u, _ := client.Resolve(resp.Path)
 			path = httpx.SafePath(u)
 		}
 		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 		for _, kv := range [][2]string{
-			{"id", strconv.FormatInt(r.ID, 10)}, {"kind", r.Kind}, {"target", target(r, *names)},
-			{"filters", filtersSummary(r, *names)}, {"path", path}, {"state", string(r.State)},
-			{"order", r.BackfillOrder}, {"priority", strconv.Itoa(r.Priority)}, {"poll interval", r.PollInterval.String()},
-			{"works seen", comma(r.MemberWorks)}, {"works fetched", comma(r.FetchedWorks)}, {"total (AO3)", total(r.TotalWorks)},
-			{"est requests", total(r.EstRequests)}, {"backfill cursor", r.BackfillCursor},
-			{"created", when(r.CreatedAt)}, {"last poll", when(r.LastPollAt)}, {"next poll", when(r.NextPollAt)},
-			{"last full scan", when(r.LastFullScanAt)}, {"backfill done", when(r.BackfillDoneAt)}, {"last error", dash(r.LastError)},
+			{"id", strconv.Itoa(int(resp.ID))}, {"kind", string(resp.Kind)}, {"target", resp.Target},
+			{"filters", fmt.Sprintf("%s", resp.Filters)}, {"path", path}, {"state", string(resp.State)},
+			{"order", string(resp.Order.Value)}, {"priority", strconv.Itoa(resp.Priority)}, {"poll interval", time.Duration(resp.PollInterval).String()},
+			{"works seen", comma(resp.MemberWorks)}, {"works fetched", comma(resp.FetchedWorks)}, {"total (AO3)", total(resp.TotalWorks.Value)},
+			{"est requests", total(resp.EstRequests.Value)}, {"backfill cursor", fmt.Sprintf("%#v", resp.Backfill.Value)},
+			{"created", when(time.Time(resp.CreatedAt.Value))}, {"last poll", when(time.Time(resp.LastPollAt.Value))}, {"next poll", when(time.Time(resp.NextPollAt.Value))},
+			{"last full scan", when(time.Time(resp.LastFullScanAt.Value))}, {"backfill done", when(time.Time(resp.BackfillDoneAt.Value))}, {"last error", dash(resp.LastError.Value)},
 		} {
 			fmt.Fprintf(tw, "%s:\t%s\n", kv[0], kv[1])
 		}
@@ -398,23 +423,6 @@ func parseWithPositional(fs *flag.FlagSet, args []string) (string, bool) {
 		}
 	}
 	return pos, true
-}
-
-func target(r model.Source, names bool) string {
-	if names || r.Kind == string(ao3url.KindWork) || r.Kind == string(ao3url.KindSeries) {
-		return r.Target // ids are not names
-	}
-	return httpx.Hash(r.Target)
-}
-
-func filtersSummary(r model.Source, names bool) string {
-	if r.FiltersJSON == "{}" || r.FiltersJSON == "" {
-		return "-"
-	}
-	if names {
-		return r.FiltersJSON
-	}
-	return fmt.Sprintf("%d (hidden)", strings.Count(r.FiltersJSON, `":[`))
 }
 
 func total(n int) string {

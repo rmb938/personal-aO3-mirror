@@ -5,67 +5,41 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strconv"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
-	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
-	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
-// runFetchWork queues one work at the highest priority, or fetches it right away with --now.
-func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fetch-work", flag.ContinueOnError)
-	fs.SetOutput(errOut)
-	now := fs.Bool("now", false, "fetch immediately in this process (only when no daemon is running)")
-	arg, ok := parseWithPositional(fs, args)
-	if !ok {
-		fmt.Fprint(errOut, "usage: ao3mirror fetch-work [--now] <work id | AO3 work URL>\n")
-		return 2
-	}
-	id, err := strconv.ParseInt(arg, 10, 64)
-	if err != nil {
-		src, perr := ao3url.Parse(arg)
-		if perr != nil || src.Kind != ao3url.KindWork {
-			fmt.Fprintf(errOut, "fetch-work: need a work id or /works/<id> URL\n")
-			return 2
-		}
-		id, _ = strconv.ParseInt(src.Target, 10, 64)
-	}
-	jobID, created, err := a.ctl.EnqueueWorkFetch(ctx, id, 0, jobs.ClassOnDemand)
-	if err != nil {
-		fmt.Fprintf(errOut, "fetch-work: %v\n", err)
-		return 1
-	}
-	if !*now {
-		verb := "queued"
-		if !created {
-			verb = "already queued (raised to on-demand priority)"
-		}
-		fmt.Fprintf(out, "work %d %s as job %d; the running daemon picks it up next (see: ao3mirror debug job %d)\n", id, verb, jobID, jobID)
-		return 0
-	}
-	unlock, err := lockDaemon(a.cfg.DataDir)
-	if err != nil {
-		fmt.Fprintf(errOut, "fetch-work --now: %v; job %d stays queued for the daemon\n", err, jobID)
-		return 1
-	}
-	defer func() {
-		if err := unlock(); err != nil {
-			fmt.Fprintf(errOut, "fetch-work --now: releasing lock: %v\n", err)
-		}
-	}()
-	j, err := a.scheduler().RunJob(ctx, jobID)
-	if err != nil {
-		fmt.Fprintf(errOut, "fetch-work --now: %v\n", err)
-		return 1
-	}
-	fmt.Fprintf(out, "work %d: job %d %s %s\n", id, jobID, j.State, dash(j.LastError))
-	if j.State != model.JobDone {
-		return 1
-	}
-	return 0
-}
+// runFetchWork queues one work at the highest priority
+// func runFetchWork(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
+// 	fs := flag.NewFlagSet("fetch-work", flag.ContinueOnError)
+// 	fs.SetOutput(errOut)
+// 	arg, ok := parseWithPositional(fs, args)
+// 	if !ok {
+// 		fmt.Fprint(errOut, "usage: ao3mirror fetch-work [--now] <work id | AO3 work URL>\n")
+// 		return 2
+// 	}
+// 	id, err := strconv.ParseInt(arg, 10, 64)
+// 	if err != nil {
+// 		src, perr := ao3url.Parse(arg)
+// 		if perr != nil || src.Kind != ao3url.KindWork {
+// 			fmt.Fprintf(errOut, "fetch-work: need a work id or /works/<id> URL\n")
+// 			return 2
+// 		}
+// 		id, _ = strconv.ParseInt(src.Target, 10, 64)
+// 	}
+
+// 	jobID, created, err := a.ctl.EnqueueWorkFetch(ctx, id, 0, jobs.ClassOnDemand)
+// 	if err != nil {
+// 		fmt.Fprintf(errOut, "fetch-work: %v\n", err)
+// 		return 1
+// 	}
+// 	verb := "queued"
+// 	if !created {
+// 		verb = "already queued (raised to on-demand priority)"
+// 	}
+// 	fmt.Fprintf(out, "work %d %s as job %d; the running daemon picks it up next (see: ao3mirror debug job %d)\n", id, verb, jobID, jobID)
+// 	return 0
+// }
 
 // runReparse rebuilds parsed data from stored raw pages. It makes no network requests: ctl is
 // built without an AO3 client.
