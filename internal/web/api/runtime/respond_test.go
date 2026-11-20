@@ -101,7 +101,7 @@ func TestHandleCapsBody(t *testing.T) {
 		return nil, err
 	}
 	w := httptest.NewRecorder()
-	Handle(discardLogger(t), h)(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(strings.Repeat("a", 2*maxBodyBytes))))
-	assert.Equal(t, int64(maxBodyBytes), n)
+	Handle(discardLogger(t), h)(w, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(strings.Repeat("a", 2*MaxBodyBytes))))
+	assert.Equal(t, int64(MaxBodyBytes), n)
 	require.Equal(t, http.StatusInternalServerError, w.Code) // a raw read error is unexpected
 }

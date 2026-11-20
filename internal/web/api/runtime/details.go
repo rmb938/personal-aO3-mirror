@@ -31,7 +31,7 @@ var (
 	DetailMalformedQuery   = problem.NewDetail("the query string is malformed")
 	DetailTooManyParams    = problem.NewDetail("at most " + itoa(MaxQueryParams) + " query parameters are allowed")
 	DetailInvalidBody      = problem.NewDetail("the body must be one JSON object with only the documented members, of the documented types")
-	DetailBodyTooLarge     = problem.NewDetail("the body must be at most " + itoa(maxBodyBytes) + " bytes")
+	DetailBodyTooLarge     = problem.NewDetail("the body must be at most " + itoa(MaxBodyBytes) + " bytes")
 	DetailMediaType        = problem.NewDetail("Content-Type must be " + ContentTypeJSON)
 	DetailNotJSON          = problem.NewDetail("this response is not JSON; it is served only with the " + RevealParam + " parameter")
 	DetailRevealDisabled   = problem.NewDetail("this server was started with --no-reveal and never returns real content")

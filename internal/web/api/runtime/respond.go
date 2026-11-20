@@ -17,8 +17,6 @@ import (
 const (
 	ContentTypeJSON    = "application/json"
 	ContentTypeProblem = "application/problem+json"
-	// maxBodyBytes caps request bodies (http.MaxBytesReader).
-	maxBodyBytes = MaxBodyBytes
 )
 
 // HandlerFunc is the shape of a handler: it gets the request and returns a value or an error.
@@ -40,7 +38,7 @@ func NoContent() *Response { return &Response{Status: http.StatusNoContent} }
 func Handle(log *slog.Logger, h HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 		}
 		v, err := h(r)
 		if err != nil {

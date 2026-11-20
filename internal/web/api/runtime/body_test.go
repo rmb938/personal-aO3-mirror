@@ -104,12 +104,12 @@ func TestDecodeJSONContentType(t *testing.T) {
 }
 
 func TestDecodeJSONTooLarge(t *testing.T) {
-	pad := strings.Repeat(" ", maxBodyBytes)
+	pad := strings.Repeat(" ", MaxBodyBytes)
 	_, err := decodeTest(t, "application/json", `{"url":"u"}`+pad)
 	requireAPIError(t, err, dto.TypeBodyTooLarge)
 
 	// Exactly at the cap is fine.
 	body := `{"url":"u"}`
-	_, err = decodeTest(t, "application/json", body+strings.Repeat(" ", maxBodyBytes-len(body)))
+	_, err = decodeTest(t, "application/json", body+strings.Repeat(" ", MaxBodyBytes-len(body)))
 	require.NoError(t, err)
 }
