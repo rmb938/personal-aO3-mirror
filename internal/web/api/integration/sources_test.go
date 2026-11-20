@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
-	api "github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
@@ -259,7 +258,7 @@ func TestAddSourceValidation(t *testing.T) {
 }
 
 func TestAddSourceRateLimit(t *testing.T) {
-	a, _ := newTestAPI(t, func(o *api.Options) { o.SourceAddPerHour = 1 })
+	a, _ := newTestAPI(t, func(o *runtime.Options) { o.SourceAddPerHour = 1 })
 	w := postJSON(t, a.Public(), "/api/v1/sources", `{"url":"/tags/a/works"}`)
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 	w = postJSON(t, a.Public(), "/api/v1/sources", `{"url":"/tags/b/works"}`)

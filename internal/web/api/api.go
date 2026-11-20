@@ -9,12 +9,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
-type API = runtime.API
-type Options = runtime.Options
-
-const RevealParam = runtime.RevealParam
-
-func New(opts Options) (*API, error) {
+func New(opts runtime.Options) (*runtime.API, error) {
 	opts.RegisterRoutes = registerRoutes
 	return runtime.New(opts)
 }

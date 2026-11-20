@@ -19,7 +19,8 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
-	api "github.com/rmb938/personal-aO3-mirror/internal/web"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
 // HTTP server limits (docs/part2-api.md, "HTTP hardening").
@@ -87,7 +88,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 			err = errors.Join(err, st.Close())
 		}
 	}()
-	a, err := api.New(api.Options{
+	a, err := api.New(runtime.Options{
 		Logger:           log,
 		Controllers:      newControllers(cfg, log, st, nil),
 		Version:          version,

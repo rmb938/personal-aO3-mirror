@@ -53,10 +53,10 @@ func accessLine(t *testing.T, logs *bytes.Buffer) map[string]any {
 
 // testOptions are valid options logging JSON to logs, with controllers over a seeded temp
 // store (seed_test.go).
-func testOptions(t *testing.T, logs io.Writer) api.Options {
+func testOptions(t *testing.T, logs io.Writer) runtime.Options {
 	t.Helper()
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	return api.Options{
+	return runtime.Options{
 		Logger:           log,
 		Controllers:      newTestControllers(t, log),
 		Version:          testVersion,
@@ -68,7 +68,7 @@ func testOptions(t *testing.T, logs io.Writer) api.Options {
 }
 
 // newTestAPI builds an API logging JSON to the returned buffer. mutate may change the options.
-func newTestAPI(t *testing.T, mutate func(*api.Options)) (*api.API, *bytes.Buffer) {
+func newTestAPI(t *testing.T, mutate func(*runtime.Options)) (*runtime.API, *bytes.Buffer) {
 	t.Helper()
 	logs := &bytes.Buffer{}
 	opts := testOptions(t, logs)
@@ -115,20 +115,20 @@ func requireParamProblem(t *testing.T, w *httptest.ResponseRecorder, param dto.P
 }
 
 // revealQuery is the query string that asks for revealed content.
-const revealQuery = "?" + api.RevealParam + "=1"
+const revealQuery = "?" + runtime.RevealParam + "=1"
 
 func TestNewValidatesOptions(t *testing.T) {
-	cases := map[string]func(*api.Options){
-		"nil logger":    func(o *api.Options) { o.Logger = nil },
-		"nil ctl":       func(o *api.Options) { o.Controllers = nil },
-		"no version":    func(o *api.Options) { o.Version = "" },
-		"no proxies":    func(o *api.Options) { o.TrustedProxies = nil },
-		"bad proxy":     func(o *api.Options) { o.TrustedProxies = []string{"127.0.0.1"} },
-		"no timeout":    func(o *api.Options) { o.RequestTimeout = 0 },
-		"no rate":       func(o *api.Options) { o.GeneralPerMin = 0 },
-		"short rotate":  func(o *api.Options) { o.HashKeyRotation = time.Minute },
-		"negative rate": func(o *api.Options) { o.GeneralPerMin = -1 },
-		"no add rate":   func(o *api.Options) { o.SourceAddPerHour = 0 },
+	cases := map[string]func(*runtime.Options){
+		"nil logger":    func(o *runtime.Options) { o.Logger = nil },
+		"nil ctl":       func(o *runtime.Options) { o.Controllers = nil },
+		"no version":    func(o *runtime.Options) { o.Version = "" },
+		"no proxies":    func(o *runtime.Options) { o.TrustedProxies = nil },
+		"bad proxy":     func(o *runtime.Options) { o.TrustedProxies = []string{"127.0.0.1"} },
+		"no timeout":    func(o *runtime.Options) { o.RequestTimeout = 0 },
+		"no rate":       func(o *runtime.Options) { o.GeneralPerMin = 0 },
+		"short rotate":  func(o *runtime.Options) { o.HashKeyRotation = time.Minute },
+		"negative rate": func(o *runtime.Options) { o.GeneralPerMin = -1 },
+		"no add rate":   func(o *runtime.Options) { o.SourceAddPerHour = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -321,7 +321,7 @@ func TestAllRoutesLeak(t *testing.T) {
 				assertNoSentinel(t, w, logs)
 
 				if s.content {
-					w = do(t, to(), s.request(method, sep+api.RevealParam+"=1"))
+					w = do(t, to(), s.request(method, sep+runtime.RevealParam+"=1"))
 					assert.Equal(t, s.status, w.Code)
 					assert.Equal(t, "revealed", w.Header().Get(runtime.HeaderFanwork))
 					assert.Contains(t, w.Body.String(), sentinel, "revealed response holds the seeded content")
