@@ -1,6 +1,6 @@
 # Hand-written API description for `ao3mirror serve` (docs/part2-api.md).
 #
-# internal/api's route-coverage test checks that the operations here match the routers exactly:
+# internal/web/api's route-coverage test checks that the operations here match the routers exactly:
 # every operation without `x-admin-only: true` is on the public listener, and every operation is
 # on the admin socket. OpenAPI 3.2 is used for its native `query` operation (RFC 10008).
 openapi: 3.2.0

@@ -1,0 +1,50 @@
+package runtime
+
+import (
+	"strconv"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+)
+
+// The api package's part of the problem detail catalogue (problem.NewDetail: package-level
+// vars only, never built from input or content). Details shared with request types
+// (problem.DetailInvalidRequest, problem.DetailText, problem.URLDetail) live in problem.
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+var (
+	// Validation errors (dto.TypeValidation).
+	DetailUnknownParam = problem.NewDetail("this route does not take this parameter")
+	DetailDuplicate    = problem.NewDetail("must be given at most once")
+	DetailID           = problem.NewDetail("must be an integer from 1 to " + itoa(MaxID))
+	DetailPerPage      = problem.NewDetail("must be an integer from 1 to " + itoa(MaxPerPage))
+	DetailPage         = problem.NewDetail("must be an integer from 1, with (page-1)*per_page at most " + itoa(MaxOffset))
+	DetailRevealValue  = problem.NewDetail("must be 1")
+	DetailJobState     = problem.OneOf(dto.JobState(""))
+	DetailJobKind      = problem.OneOf(dto.JobKind(""))
+
+	// Source add body (POST /api/v1/sources); the body's own details are in request.
+	DetailConfirmAdminOnly = problem.NewDetail("only the admin socket accepts confirm; a large source added here waits for `source confirm`")
+
+	// Other problem types.
+	DetailMalformedQuery   = problem.NewDetail("the query string is malformed")
+	DetailTooManyParams    = problem.NewDetail("at most " + itoa(MaxQueryParams) + " query parameters are allowed")
+	DetailInvalidBody      = problem.NewDetail("the body must be one JSON object with only the documented members, of the documented types")
+	DetailBodyTooLarge     = problem.NewDetail("the body must be at most " + itoa(maxBodyBytes) + " bytes")
+	DetailMediaType        = problem.NewDetail("Content-Type must be " + ContentTypeJSON)
+	DetailNotJSON          = problem.NewDetail("this response is not JSON; it is served only with the " + RevealParam + " parameter")
+	DetailRevealDisabled   = problem.NewDetail("this server was started with --no-reveal and never returns real content")
+	DetailCrossOrigin      = problem.NewDetail("cross-origin requests with unsafe methods are refused")
+	DetailNoRoute          = problem.NewDetail("no route matches this path")
+	DetailNoSource         = problem.NewDetail("no source has this id")
+	DetailNoJob            = problem.NewDetail("no job of this kind has this id")
+	DetailNoWork           = problem.NewDetail("no work has this id")
+	DetailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
+	DetailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")
+	DetailSourceExists     = problem.NewDetail("this source is already added")
+	DetailURITooLong       = problem.NewDetail("the path and query must be at most " + itoa(MaxURLBytes) + " bytes")
+	DetailRateLimited      = problem.NewDetail("too many requests; retry after the Retry-After delay")
+	DetailBusy             = problem.NewDetail("the server is busy; retry after the Retry-After delay")
+	DetailTimeout          = problem.NewDetail("the request did not finish in time; retry later")
+)

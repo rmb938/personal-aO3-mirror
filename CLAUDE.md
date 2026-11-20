@@ -59,15 +59,15 @@ Claude must NOT:
   server refuse reveal, so any server Claude runs is hashed-only.
 - Probe the real data with guessed free text (search terms, tag/creator names). Hashed mode
   rejects free text anyway; test search with synthetic fixtures in Go tests.
-- Weaken the response enforcer (`internal/api/redact`), bypass it, or add a route outside it.
+- Weaken the response enforcer (`internal/web/api/redact`), bypass it, or add a route outside it.
   Every route needs a sample request in the all-routes leak test.
 
 Design rules for API code:
-- Handlers call controllers (see Layering) and return values; only `api.respond` writes JSON.
-- `internal/api/dto` imports only the standard library. It never uses, imports or embeds
-  `controllers`, `store` or `model` types; `internal/api/convert` maps controller results into
+- Handlers call controllers (see Layering) and return values; only `runtime.Respond` writes JSON.
+- `internal/web/api/dto` imports only the standard library. It never uses, imports or embeds
+  `controllers`, `store` or `model` types; `internal/web/api/convert` maps controller results into
   DTOs field by field.
-- Conversion lives in `internal/api/convert`, not handlers: one exported function per model or
+- Conversion lives in `internal/web/api/convert`, not handlers: one exported function per model or
   controller result, named after it (`convert.Source`), every helper unexported and tested
   beside it. Each model gets its own file (`source.go`, `source_add.go`, with matching
   `_test.go`); `convert.go` holds only helpers shared across models. Handlers parse input, call a controller and return `convert.X(result)`.
@@ -75,14 +75,14 @@ Design rules for API code:
   `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
   `string` field is free text and always hashed.
 - Errors are RFC 9457 problems (`docs/api/problems.md`). A problem `detail` is only ever a
-  catalogue message from `problem.NewDetail` (`internal/api/problem`; package-level vars only,
-  e.g. `internal/api/details.go`), never built from input or content; a new problem type gets
+  catalogue message from `problem.NewDetail` (`internal/web/api/problem`; package-level vars only,
+  e.g. `internal/web/api/details.go`), never built from input or content; a new problem type gets
   a `## <slug>` section there.
 - Validation reports every invalid part at once: handlers read all params through
-  `parseParams` and return `q.Err()`. Request bodies are types in `internal/api/request`
+  `runtime.ParseParams` and return `q.Err()`. Request bodies are types in `internal/web/api/request`
   (same import rule as `dto`), each with a `Validate(*problem.Validation)` method recording
-  every invalid member and listed in `request.Types()`; `decodeJSON` takes a `request.Request`
-  and validates it. Route patterns are constants in `internal/api/route` (stdlib
+  every invalid member and listed in `request.Types()`; `runtime.DecodeJSON` takes a `request.Request`
+  and validates it. Route patterns are constants in `internal/web/api/route` (stdlib
   only, shared with `internal/apiclient`); `Location` and client paths come from
   `route.Path(pattern, ids...)`.
 - Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,

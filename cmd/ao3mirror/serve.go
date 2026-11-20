@@ -17,9 +17,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
+	api "github.com/rmb938/personal-aO3-mirror/internal/web"
 )
 
 // HTTP server limits (docs/part2-api.md, "HTTP hardening").

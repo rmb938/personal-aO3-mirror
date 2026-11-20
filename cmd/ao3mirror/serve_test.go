@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/api"
-	"github.com/rmb938/personal-aO3-mirror/internal/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	api "github.com/rmb938/personal-aO3-mirror/internal/web"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 )
 
 func serveConfig(t *testing.T) config.Config {

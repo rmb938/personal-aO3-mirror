@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
-	"github.com/rmb938/personal-aO3-mirror/internal/api/redact"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/redact"
 )
 
 // MinInterval is the hard floor between AO3 requests. Config cannot go below it.

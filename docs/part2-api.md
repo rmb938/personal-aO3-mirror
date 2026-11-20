@@ -40,20 +40,23 @@ with a keyed hash by a mandatory response enforcer, so a handler bug cannot leak
 ### Layout
 ```
 cmd/ao3mirror/serve.go       serve command: flags, listeners, graceful shutdown
-internal/api/                server, router, middleware, handlers (calls controllers only)
-internal/api/redact/         hasher + response enforcer (no HTTP deps; fuzzed)
-internal/api/dto/            response types, registered with the enforcer
-internal/api/request/        request body types with their Validate methods (from stage 4)
-internal/api/convert/        model/controller results -> DTOs, requests -> options (3a-4)
-internal/api/problem/        problem Error, detail catalogue, Validation collector (from 3g)
-internal/api/route/          route patterns + route.Path, shared by api and apiclient (6a-1)
+internal/web/api.go            API facade; UI belongs in internal/web/ui/
+internal/web/api/               route assembly and API-specific packages
+internal/web/api/runtime/       HTTP runtime, middleware, response enforcement
+internal/web/api/handlers/      endpoint implementations (calls controllers only)
+internal/web/api/redact/         hasher + response enforcer (no HTTP deps; fuzzed)
+internal/web/api/dto/            response types, registered with the enforcer
+internal/web/api/request/        request body types with their Validate methods (from stage 4)
+internal/web/api/convert/        model/controller results -> DTOs, requests -> options (3a-4)
+internal/web/api/problem/        problem Error, detail catalogue, Validation collector (from 3g)
+internal/web/api/route/          route patterns + route.Path, shared by api and apiclient (6a-1)
 internal/apiclient/          typed client over the admin socket, used by the CLI
 docs/api/openapi.yaml        hand-written OpenAPI 3.1; a test checks that it matches the route table
 ```
 Handlers call `internal/controllers`, never `store`, following the CLAUDE.md layering rules. New
 read models go in `controllers` with one `InReadTx` each. New SQL goes in `store`.
 
-**DTO rule (by design, no lint):** `internal/api/dto` imports only the standard library. It
+**DTO rule (by design, no lint):** `internal/web/api/dto` imports only the standard library. It
 never uses or imports `controllers`, `store` or `model` types, and never embeds them. Handlers
 map controller results into DTOs field by field. The API contract then changes only when a DTO
 is edited on purpose, and the enforcer's schemas are exactly the DTO types. Reviewers check
@@ -74,7 +77,7 @@ separate sets). A plain `string` field is free text and is always hashed. The on
 `dto.Version.Version`, whose single value is known at runtime (`RegisterFieldEnum`).
 
 **Conversion rule (from stage 3a-4):** the field-by-field mapping lives in
-`internal/api/convert`, not in handlers. It exports one function per model or controller
+`internal/web/api/convert`, not in handlers. It exports one function per model or controller
 result, named after it (`convert.Source(model.Source) dto.Source`, `convert.Job(...)`), and
 keeps every helper (filter/cursor mapping, last_error split, null-for-unknown) unexported, with
 its tests beside it. Each model or result has its own file (`source.go`, `source_add.go`, each
@@ -277,7 +280,7 @@ Status: tick when the PR merges.
   - `settings.json`: extend the hook matcher with `mcp__.*`.
   - Add `guard_test.py` cases for each rule, both blocked and allowed (e.g. `grep -r
     reveal_fanwork internal/` is allowed, and `serve --no-reveal` is allowed).
-- [x] **1. `internal/api/redact`.** No HTTP server yet.
+- [x] **1. `internal/web/api/redact`.** No HTTP server yet.
   - Hasher: an in-memory `crypto/rand` key with an epoch ID, and rotation driven by an
     injectable clock. `Hash(s)` under one epoch snapshot per response.
   - Registry: `RegisterTypes(...)` collects keys, `RegisterEnum(key, values...)`.
@@ -309,7 +312,7 @@ Status: tick when the PR merges.
   - Admin socket listener: same router plus an admin sub-router (empty for now). Its file mode is
     asserted in tests.
   - Split into three PRs (the box is ticked by the last one):
-    - [x] **2a. API core** (`internal/api`, no server yet). As built:
+    - [x] **2a. API core** (`internal/web/api`, no server yet). As built:
       - `dto.Problem{code, title, status, field}`. `api.Error{Code, Field, Status}` is the error
         handlers return. `problemFor` (`errors.go`) is the single error → problem mapping: the
         store `ErrNo*` sentinels → 404, `ErrStateConflict` → 409 `conflict`, `ErrSourceExists`
@@ -323,7 +326,7 @@ Status: tick when the PR merges.
       - `parseQuery(r, allowed...)` (≤ 32 values, no repeats, allowlist; `RevealParam` always
         allowed and stripped), `parseInt`/`parseID` (digits only, ranges), `query.page()`,
         `checkText`.
-      - `decodeJSON` uses `encoding/json/v2` (GA in Go 1.27): it rejects duplicate keys,
+      - `runtime.DecodeJSON` uses `encoding/json/v2` (GA in Go 1.27): it rejects duplicate keys,
         trailing data and invalid UTF-8 by default, plus `RejectUnknownMembers`; matching is
         case-sensitive. Errors never quote the body.
       - `newEnforcer` builds the redact registry from `responseTypes` and the enums.
@@ -445,7 +448,7 @@ Status: tick when the PR merges.
           is `string(dto.ParamReveal)`. `api.Error.Code` is a `dto.ProblemCode`; `Field`
           stays a string (it can hold a client-chosen name, dropped unless `Known`).
     - [x] **3a-4. Sources routes**: `GET /sources` (page, per_page), `/sources/{id}`,
-      `/source-adds/{job_id}`, with mapping in `internal/api/convert`. Design (from a first
+      `/source-adds/{job_id}`, with mapping in `internal/web/api/convert`. Design (from a first
       attempt, reworked into 3a-1..4):
       - `serve` opens the store and builds controllers with no AO3 client
         (`newControllers(cfg, log, st, nil)`); `api.Options.Controllers` is required. The
@@ -641,7 +644,7 @@ Status: tick when the PR merges.
   nested keys and array items need no list. `ao3url` returns typed reasons, each with its own
   catalogue message (the CLI's URL hints). As built:
   - `api.validation` collects `ErrorItem{Param | Pointer, Detail}`; `err()` is nil or one
-    422. `params` (from `parseParams`, replacing `parseQuery`) embeds it: unknown and repeated
+    422. `params` (from `runtime.ParseParams`, replacing `parseQuery`) embeds it: unknown and repeated
     names are recorded in name order, and the getters (`int`, `enum`, `page`, `pathID`)
     record and return zero values. Handlers read every parameter, then return `q.err()`;
     routes without parameters call `noParams(r)`. `page` skips the offset-cap check when
@@ -669,7 +672,7 @@ Status: tick when the PR merges.
   - Renamed (API change): `Source.poll_interval_s` → `poll_interval`, `Estimate.duration_s` →
     `duration`, status `pacer.interval_ms` → `interval`, `request_errors[].duration_ms` /
     `waited_ms` → `duration` / `waited`. OpenAPI has a shared `Duration` schema.
-- [x] **3g. Refactor: shared `internal/api/problem` package** for the detail catalogue and the
+- [x] **3g. Refactor: shared `internal/web/api/problem` package** for the detail catalogue and the
   validation collector, so request types can live in their own package (stage 4). As built:
   - `problem` imports only `dto`, `ao3url` and the standard library. It holds `Detail`
     (`Message()`), `NewDetail`, `OneOf` and `Catalogue()` (every message from any package,
@@ -691,7 +694,7 @@ Status: tick when the PR merges.
   - URL ≤ 2048 bytes, validated by `ao3url.Parse`.
   - Has its own strict rate limit.
   - As built:
-    - New package `internal/api/request` (imports `dto`, `problem`, `ao3url` and the standard
+    - New package `internal/web/api/request` (imports `dto`, `problem`, `ao3url` and the standard
       library; never `controllers`/`store`/`model`): the `Request` interface
       (`Validate(*problem.Validation)`, pointer receivers) and `Types()`, which
       `api.requestTypes` is, so every listed type's pointers pass the enforcer (a test checks
@@ -797,9 +800,9 @@ Status: tick when the PR merges.
 - [ ] **6. `internal/apiclient` + CLI conversion**
   - 6a: client (unix-socket transport, problem+json errors) and `source *` commands, including
     `add --wait` polling `/source-adds/{job}`. Split into three PRs:
-    - [x] **6a-1. Refactor: route patterns in `internal/api/route`.** As built: the route
+    - [x] **6a-1. Refactor: route patterns in `internal/web/api/route`.** As built: the route
       constants and `pathFor` (now `route.Path(pattern, ids...)`, same panics) move out of
-      `internal/api` into a stdlib-only package, so the client builds its paths from the
+      `internal/web/api` into a stdlib-only package, so the client builds its paths from the
       same patterns the router registers. No API change.
     - [x] **6a-2. `existing_source_id` on a failed source add.** A source add that fails
       because the source exists (`source_exists:<id>`) gives the id as a number on
