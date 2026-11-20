@@ -63,6 +63,9 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 	if controllers == nil {
 		return nil, errors.New("api: nil controllers")
 	}
+	if registerRoutes == nil {
+		return nil, errors.New("api: nil registerRoutes")
+	}
 	if opts.Version == "" {
 		return nil, errors.New("api: empty version")
 	}
@@ -144,10 +147,7 @@ func (a *API) router(admin bool, registerRoutes RouteBuilder) *chi.Mux {
 	)
 	r.NotFound(a.Handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, DetailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
-
-	if registerRoutes != nil {
-		registerRoutes(a, a.ctl, r, admin)
-	}
+	registerRoutes(a, a.ctl, r, admin)
 	return r
 }
 
