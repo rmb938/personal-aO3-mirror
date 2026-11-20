@@ -6,7 +6,6 @@
 
 GO       ?= go
 GOLANGCI_LINT ?= golangci-lint
-GOVULNCHECK_VERSION ?= v1.9.0
 PYTHON   ?= python3
 BIN      ?= ao3mirror
 # Per fuzz target. FUZZFLAGS passes extra flags, e.g. FUZZFLAGS='-parallel 4' to use fewer
@@ -22,7 +21,7 @@ help:
 	@echo "make build       build ./$(BIN)"
 	@echo "make fmt         gofmt + goimports (grouping) on all Go files"
 	@echo "make lint        fmt check + go vet + go mod tidy check + golangci-lint"
-	@echo "make vulncheck   govulncheck $(GOVULNCHECK_VERSION) on the module and Go toolchain"
+	@echo "make vulncheck   govulncheck on the module and Go toolchain"
 	@echo "make deadcode    unreachable funcs (not part of check; run now and then, e.g. after refactors)"
 	@echo "make test        go test -race ./..."
 	@echo "make test-short  go test -short ./... (skips tests that use real pacing)"
@@ -51,9 +50,12 @@ tidy-check:
 lint: fmt-check vet tidy-check
 	$(GOLANGCI_LINT) run ./...
 
+generate:
+	$(GO) generate ./...
+
 # Pinned version run via `go run`, so it needs no install and stays out of go.mod.
 vulncheck:
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	$(GO) tool govulncheck ./...
 
 # golangci-lint's `unused` only sees unexported code; deadcode also finds exported funcs nothing
 # calls. First list: unreachable from the binaries (test-only helpers and reads kept for Part 2
