@@ -4,11 +4,12 @@ import (
 	"net/http"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
 // status is GET /api/v1/status: the daemon, queue and progress overview.
 func (a *Handlers) Status(r *http.Request) (any, error) {
-	if err := NoParams(r); err != nil {
+	if err := runtime.NoParams(r); err != nil {
 		return nil, err
 	}
 	rep, err := a.ctl.Status(r.Context())

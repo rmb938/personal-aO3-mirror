@@ -5,10 +5,11 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
 func (a *Handlers) DebugJob(r *http.Request) (any, error) {
-	id, err := OnlyPathID(r, dto.ParamID)
+	id, err := runtime.OnlyPathID(r, dto.ParamID)
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +21,7 @@ func (a *Handlers) DebugJob(r *http.Request) (any, error) {
 }
 
 func (a *Handlers) DebugWork(r *http.Request) (any, error) {
-	id, err := OnlyPathID(r, dto.ParamID)
+	id, err := runtime.OnlyPathID(r, dto.ParamID)
 	if err != nil {
 		return nil, err
 	}

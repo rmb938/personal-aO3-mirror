@@ -13,7 +13,7 @@ import (
 
 // listSources is GET /api/v1/sources (page, per_page).
 func (a *Handlers) ListSources(r *http.Request) (any, error) {
-	q, err := ParseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
+	q, err := runtime.ParseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func (a *Handlers) ListSources(r *http.Request) (any, error) {
 
 // getSource is GET /api/v1/sources/{id}.
 func (a *Handlers) GetSource(r *http.Request) (any, error) {
-	id, err := OnlyPathID(r, dto.ParamID)
+	id, err := runtime.OnlyPathID(r, dto.ParamID)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func (a *Handlers) GetSource(r *http.Request) (any, error) {
 
 // getSourceAdd is GET /api/v1/source-adds/{job_id}: where a queued source add stands.
 func (a *Handlers) GetSourceAdd(r *http.Request) (any, error) {
-	id, err := OnlyPathID(r, dto.ParamJobID)
+	id, err := runtime.OnlyPathID(r, dto.ParamJobID)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func (a *Handlers) GetSourceAdd(r *http.Request) (any, error) {
 // accepted only on the admin socket: a large source added publicly waits for `source confirm`.
 func (a *Handlers) AddSource(admin bool) runtime.HandlerFunc {
 	return func(r *http.Request) (any, error) {
-		q, err := ParseParams(r)
+		q, err := runtime.ParseParams(r)
 		if err != nil {
 			return nil, err
 		}
@@ -68,7 +68,7 @@ func (a *Handlers) AddSource(admin bool) runtime.HandlerFunc {
 			return nil, err
 		}
 		if req.Confirm && !admin {
-			q.Member(detailConfirmAdminOnly, "confirm")
+			q.Member(runtime.DetailConfirmAdminOnly, "confirm")
 		}
 		if err := q.Err(); err != nil {
 			return nil, err
@@ -78,10 +78,10 @@ func (a *Handlers) AddSource(admin bool) runtime.HandlerFunc {
 			return nil, err
 		}
 		if added.Added != nil {
-			return &Response{Status: http.StatusCreated, Location: route.Path(route.Source, added.Added.Source.ID),
+			return &runtime.Response{Status: http.StatusCreated, Location: route.Path(route.Source, added.Added.Source.ID),
 				Body: convert.AddSourceResult(*added.Added)}, nil
 		}
-		return &Response{Status: http.StatusAccepted, Location: route.Path(route.SourceAdd, added.JobID),
+		return &runtime.Response{Status: http.StatusAccepted, Location: route.Path(route.SourceAdd, added.JobID),
 			Body: convert.QueuedSourceAdd(added)}, nil
 	}
 }
@@ -91,7 +91,7 @@ func (a *Handlers) AddSource(admin bool) runtime.HandlerFunc {
 // state the change allows is 409 state-conflict.
 func (a *Handlers) SourceAction(op func(ctx context.Context, id int64) error) runtime.HandlerFunc {
 	return func(r *http.Request) (any, error) {
-		id, err := OnlyPathID(r, dto.ParamID)
+		id, err := runtime.OnlyPathID(r, dto.ParamID)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +105,7 @@ func (a *Handlers) SourceAction(op func(ctx context.Context, id int64) error) ru
 // cancelSource is POST /api/v1/sources/{id}/cancel (admin socket): the source stops for good
 // and its queued jobs are dropped; mirrored works are kept.
 func (a *Handlers) CancelSource(r *http.Request) (any, error) {
-	id, err := OnlyPathID(r, dto.ParamID)
+	id, err := runtime.OnlyPathID(r, dto.ParamID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (a *Handlers) CancelSource(r *http.Request) (any, error) {
 // source's next poll is due now and its failed work fetches are queued again; full also
 // re-walks the listing. Only active and done_backfill sources can be refreshed (else 409).
 func (a *Handlers) RefreshSource(r *http.Request) (any, error) {
-	q, err := ParseParams(r)
+	q, err := runtime.ParseParams(r)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (a *Handlers) RefreshSource(r *http.Request) (any, error) {
 // priority?}: an absent member keeps its value. 204; a client that wants the new settings
 // GETs the source.
 func (a *Handlers) SetSourceSettings(r *http.Request) (any, error) {
-	q, err := ParseParams(r)
+	q, err := runtime.ParseParams(r)
 	if err != nil {
 		return nil, err
 	}
