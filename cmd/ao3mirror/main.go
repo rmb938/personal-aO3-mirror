@@ -111,7 +111,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "serve":
 		return runServe(ctx, cfg, logger, rest[1:], stderr)
-	case "reparse", "jobs":
+	case "jobs":
+		a, err := openApp(cfg, logger)
+		if err != nil {
+			fmt.Fprintf(stderr, "open: %v\n", err)
+			return 1
+		}
+
+		return runJobs(ctx, a, rest[1:], stdout, stderr)
+	case "reparse":
+
 		// Offline: opens the store only; no HTTP client is built.
 		st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: logger})
 		if err != nil {
@@ -120,17 +129,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		defer st.Close()
 		ctl := newControllers(cfg, logger, st, nil)
-		if rest[0] == "jobs" {
-			return runJobs(ctx, ctl, rest[1:], stdout, stderr)
-		}
+
 		return runReparse(ctx, ctl, rest[1:], stdout, stderr)
 	case "source", "run", "status", "debug", "fetch-work":
-		a, err := openApp(ctx, cfg, logger)
+		a, err := openApp(cfg, logger)
 		if err != nil {
 			fmt.Fprintf(stderr, "open: %v\n", err)
 			return 1
 		}
-		defer a.Close()
 		switch rest[0] {
 		case "source":
 			return runSource(ctx, a, rest[1:], stdout, stderr)
@@ -138,8 +144,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runDaemon(ctx, a, stderr)
 		case "status":
 			return runStatus(ctx, a, stdout, stderr)
-		case "fetch-work":
-			return runFetchWork(ctx, a, rest[1:], stdout, stderr)
+			// TODO: make a API for fetch work
+		// case "fetch-work":
+		// 	return runFetchWork(ctx, a, rest[1:], stdout, stderr)
 		default:
 			return runDebug(ctx, a, rest[1:], stdout, stderr)
 		}
