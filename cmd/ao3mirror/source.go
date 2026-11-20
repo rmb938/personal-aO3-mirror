@@ -82,7 +82,7 @@ func waitSourceAdd(ctx context.Context, apiClient *apiclient.Client, cfg config.
 				fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", id, id)
 				return 1
 			}
-			fmt.Fprintf(errOut, "add failed: %s: %s\n", dash(string(sourceAdd.LastErrorCode.Value)), dash(string(sourceAdd.LastErrorDetail.Value)))
+			fmt.Fprintf(errOut, "add failed: %s: %s\n", dash(string(sourceAdd.LastErrorCode.Value)), dash(sourceAdd.LastErrorDetail.Value))
 			return 1
 		}
 		if time.Now().After(deadline) {
@@ -347,7 +347,7 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 			return 1
 		}
 
-		fmt.Fprintf(out, "source %d: poll every %s, priority %d, next poll %s\n", id, resp.PollInterval, resp.Priority, when(time.Time(resp.NextPollAt.Value)))
+		fmt.Fprintf(out, "source %d: poll every %s, priority %d, next poll %s\n", id, time.Duration(resp.PollInterval), resp.Priority, when(time.Time(resp.NextPollAt.Value)))
 		return 0
 	case "confirm", "pause", "resume", "cancel", "remove":
 		if len(rest) != 1 {
