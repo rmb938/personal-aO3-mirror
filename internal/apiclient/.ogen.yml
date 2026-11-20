@@ -2,6 +2,7 @@
 generator:
   features:
     enable:
+      - "client/request/options"
       - ogen/unimplemented
       - paths/client
     disable_all: true

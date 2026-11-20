@@ -542,7 +542,7 @@ func (s *DaemonPhase) UnmarshalText(data []byte) error {
 	}
 }
 
-type Duration string
+type Duration time.Duration
 
 // Ref: #/components/schemas/Estimate
 type Estimate struct {

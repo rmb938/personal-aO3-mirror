@@ -1017,9 +1017,9 @@ func (s *DaemonPhase) UnmarshalJSON(data []byte) error {
 
 // Encode encodes Duration as json.
 func (s Duration) Encode(e *jx.Encoder) {
-	unwrapped := string(s)
+	unwrapped := time.Duration(s)
 
-	e.Str(unwrapped)
+	json.EncodeDuration(e, unwrapped)
 }
 
 // Decode decodes Duration from json.
@@ -1027,10 +1027,10 @@ func (s *Duration) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode Duration to nil")
 	}
-	var unwrapped string
+	var unwrapped time.Duration
 	if err := func() error {
-		v, err := d.Str()
-		unwrapped = string(v)
+		v, err := json.DecodeDuration(d)
+		unwrapped = v
 		if err != nil {
 			return err
 		}

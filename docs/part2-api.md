@@ -811,7 +811,7 @@ Status: tick when the PR merges.
       owns the format, so `controllers.SourceAddOutcome` gains `ExistingSourceID`, parsed by
       `existingSourceID` (a malformed stored id is an error, not 0); `convert.SourceAdd`
       copies it and `source add --wait` uses it instead of cutting the error string itself.
-    - [ ] **6a-3. `internal/apiclient` + `source *` commands.**
+    - [X] **6a-3. `internal/apiclient` + `source *` commands.**
   - 6b: `status`, `jobs`, `debug`.
   - CLI `--names` maps to the reveal param. It is still user-only (the guard already blocks it).
   - Update `cmd/ao3mirror/main_test.go` end-to-end tests to start an in-process `serve`.

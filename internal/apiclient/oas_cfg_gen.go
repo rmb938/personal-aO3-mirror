@@ -6,12 +6,7 @@ import (
 	"net/http"
 
 	ht "github.com/ogen-go/ogen/http"
-	"github.com/ogen-go/ogen/ogenregex"
 )
-
-var regexMap = map[string]ogenregex.Regexp{
-	"^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$": ogenregex.MustCompile("^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"),
-}
 
 type (
 	optionFunc[C any] func(*C)

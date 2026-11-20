@@ -105,17 +105,6 @@ func (s *DaemonPacer) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
-		if err := s.Interval.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "interval",
-			Error: err,
-		})
-	}
-	if err := func() error {
 		if err := (validate.Float{}).Validate(float64(s.SlowFactor)); err != nil {
 			return errors.Wrap(err, "float")
 		}
@@ -145,49 +134,6 @@ func (s DaemonPhase) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
-}
-
-func (s Duration) Validate() error {
-	alias := (string)(s)
-	if err := (validate.String{
-		MinLength:     0,
-		MinLengthSet:  false,
-		MaxLength:     0,
-		MaxLengthSet:  false,
-		Email:         false,
-		Hostname:      false,
-		Regex:         regexMap["^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"],
-		MinNumeric:    0,
-		MinNumericSet: false,
-		MaxNumeric:    0,
-		MaxNumericSet: false,
-	}).Validate(string(alias)); err != nil {
-		return errors.Wrap(err, "string")
-	}
-	return nil
-}
-
-func (s *Estimate) Validate() error {
-	if s == nil {
-		return validate.ErrNilPointer
-	}
-
-	var failures []validate.FieldError
-	if err := func() error {
-		if err := s.Duration.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "duration",
-			Error: err,
-		})
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
-	}
-	return nil
 }
 
 func (s *Health) Validate() error {
@@ -646,24 +592,6 @@ func (s *JobOutcome) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
-		if value, ok := s.Duration.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "duration",
-			Error: err,
-		})
-	}
-	if err := func() error {
 		if value, ok := s.ErrorCode.Get(); ok {
 			if err := func() error {
 				if err := value.Validate(); err != nil {
@@ -808,28 +736,6 @@ func (s *Request) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "class",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.Duration.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "duration",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.Waited.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "waited",
 			Error: err,
 		})
 	}
@@ -1015,17 +921,6 @@ func (s *Source) Validate() error {
 		})
 	}
 	if err := func() error {
-		if err := s.PollInterval.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "poll_interval",
-			Error: err,
-		})
-	}
-	if err := func() error {
 		if value, ok := s.Backfill.Get(); ok {
 			if err := func() error {
 				if err := value.Validate(); err != nil {
@@ -1161,24 +1056,6 @@ func (s *SourceAddDetail) Validate() error {
 			Error: err,
 		})
 	}
-	if err := func() error {
-		if value, ok := s.Estimate.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "estimate",
-			Error: err,
-		})
-	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -1306,24 +1183,6 @@ func (s *SourceAddRequest) Validate() error {
 			Error: err,
 		})
 	}
-	if err := func() error {
-		if value, ok := s.PollInterval.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "poll_interval",
-			Error: err,
-		})
-	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -1344,17 +1203,6 @@ func (s *SourceAddResult) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "source",
-			Error: err,
-		})
-	}
-	if err := func() error {
-		if err := s.Estimate.Validate(); err != nil {
-			return err
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "estimate",
 			Error: err,
 		})
 	}
@@ -1543,24 +1391,6 @@ func (s *SourceSettingsRequest) Validate() error {
 	}
 
 	var failures []validate.FieldError
-	if err := func() error {
-		if value, ok := s.PollInterval.Get(); ok {
-			if err := func() error {
-				if err := value.Validate(); err != nil {
-					return err
-				}
-				return nil
-			}(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		failures = append(failures, validate.FieldError{
-			Name:  "poll_interval",
-			Error: err,
-		})
-	}
 	if err := func() error {
 		if value, ok := s.Priority.Get(); ok {
 			if err := func() error {
