@@ -39,7 +39,7 @@ func testNew(t *testing.T, opts Options, log *slog.Logger) (*API, error) {
 	ctrls := controllers.New(controllers.Options{Store: st, Logger: log,
 		Sources: cfg.Sources, Interval: cfg.Rate.Interval})
 
-	return New(opts, log, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) error {
+	return New(opts, log, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) {
 		r.Get(route.Healthz, a.Handle(func(req *http.Request) (any, error) {
 			q, err := ParseParams(req)
 			if err != nil {
@@ -50,6 +50,5 @@ func testNew(t *testing.T, opts Options, log *slog.Logger) (*API, error) {
 			}
 			return dto.Health{Status: dto.HealthOK}, nil
 		}))
-		return nil
 	})
 }

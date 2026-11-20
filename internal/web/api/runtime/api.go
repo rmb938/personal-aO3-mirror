@@ -39,7 +39,7 @@ type Options struct {
 	Now func() time.Time
 }
 
-type RouteBuilder func(*API, *controllers.Controllers, *chi.Mux, bool) error
+type RouteBuilder func(*API, *controllers.Controllers, *chi.Mux, bool)
 
 // adminRateFactor scales the public rate limits for the admin socket.
 const adminRateFactor = 10
@@ -89,14 +89,8 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 		return nil, err
 	}
 	a := &API{opts: opts, log: log, ctl: controllers, enf: enf}
-	a.public, err = a.router(false, registerRoutes)
-	if err != nil {
-		return nil, err
-	}
-	a.admin, err = a.router(true, registerRoutes)
-	if err != nil {
-		return nil, err
-	}
+	a.public = a.router(false, registerRoutes)
+	a.admin = a.router(true, registerRoutes)
 	return a, nil
 }
 
@@ -125,7 +119,7 @@ func (a *API) SourceAddRateLimit(listener string, admin bool) func(http.Handler)
 
 // router builds one listener's router with the full middleware chain (docs/part2-api.md, "HTTP
 // hardening"; the order matters).
-func (a *API) router(admin bool, registerRoutes RouteBuilder) (*chi.Mux, error) {
+func (a *API) router(admin bool, registerRoutes RouteBuilder) *chi.Mux {
 	listener, rate := "public", a.opts.GeneralPerMin
 	if admin {
 		listener, rate = "admin", rate*adminRateFactor
@@ -152,11 +146,9 @@ func (a *API) router(admin bool, registerRoutes RouteBuilder) (*chi.Mux, error) 
 	r.MethodNotAllowed(a.methodNotAllowed)
 
 	if registerRoutes != nil {
-		if err := registerRoutes(a, a.ctl, r, admin); err != nil {
-			return nil, err
-		}
+		registerRoutes(a, a.ctl, r, admin)
 	}
-	return r, nil
+	return r
 }
 
 // Handle wraps a HandlerFunc to adapt it to http.HandlerFunc, capping the request body and

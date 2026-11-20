@@ -16,7 +16,7 @@ func New(opts runtime.Options, log *slog.Logger, c *controllers.Controllers) (*r
 	return runtime.New(opts, log, c, registerRoutes)
 }
 
-func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admin bool) error {
+func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admin bool) {
 	h := handlers.New(c, a.Version())
 	r.Get(route.Healthz, a.Handle(h.Healthz))
 	r.Get(route.Version, a.Handle(h.Version))
@@ -42,5 +42,4 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 		r.Get(route.DebugJob, a.Handle(h.DebugJob))
 		r.Get(route.DebugWork, a.Handle(h.DebugWork))
 	}
-	return nil
 }
