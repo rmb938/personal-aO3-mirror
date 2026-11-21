@@ -880,7 +880,7 @@ Status: tick when the PR merges.
   - `GET /works/{id}/skin`.
   - Every content string is in JSON, so it is hashed by default.
   - In three PRs:
-  - [ ] **8a. Refactor: no HTML escaping in the enforcer.** `respond` marshals with
+  - [x] **8a. Refactor: no HTML escaping in the enforcer.** `respond` marshals with
     `encoding/json/v2`, which leaves `<`, `>` and `&` alone, but the enforcer re-quoted every
     string it kept with v1 `json.Marshal`, which escapes them as `<` (six bytes for one), so
     a revealed HTML chapter grew. It now quotes with `jsontext.AppendQuote` (minimal escaping,
