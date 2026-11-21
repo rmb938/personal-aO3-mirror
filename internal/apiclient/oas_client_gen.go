@@ -135,6 +135,14 @@ type Invoker interface {
 	//
 	// GET /api/v1/jobs/{id}
 	GetJob(ctx context.Context, params GetJobParams, options ...RequestOption) (*Job, error)
+	// GetSeries invokes getSeries operation.
+	//
+	// Content strings are hashed unless revealed; HTML is untrusted. A series named by a work page whose
+	// series page was never fetched has only its id and title (`works_total` null, no `last_fetched_at`).
+	// 404 `not-found` for an unknown series.
+	//
+	// GET /api/v1/series/{id}
+	GetSeries(ctx context.Context, params GetSeriesParams, options ...RequestOption) (*Series, error)
 	// GetSource invokes getSource operation.
 	//
 	// One source.
@@ -221,6 +229,15 @@ type Invoker interface {
 	//
 	// GET /api/v1/media/{id}/fandoms
 	ListMediumFandoms(ctx context.Context, params ListMediumFandomsParams, options ...RequestOption) (*TagList, error)
+	// ListSeriesWorks invokes listSeriesWorks operation.
+	//
+	// The series' stored works (fetched, or known from listing blurbs only) by part number, unknown parts
+	// last, then by work id. Members the mirror does not hold are not listed (see the series'
+	// `missing_work_ids`). `total` equals the series' `works_stored`. 404 `not-found` for an unknown
+	// series.
+	//
+	// GET /api/v1/series/{id}/works
+	ListSeriesWorks(ctx context.Context, params ListSeriesWorksParams, options ...RequestOption) (*WorkList, error)
 	// ListSources invokes listSources operation.
 	//
 	// One page of sources, ordered by id.
@@ -968,6 +985,90 @@ func (c *Client) sendGetJob(ctx context.Context, params GetJobParams, requestOpt
 	}
 
 	result, err := decodeGetJobResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetSeries invokes getSeries operation.
+//
+// Content strings are hashed unless revealed; HTML is untrusted. A series named by a work page whose
+// series page was never fetched has only its id and title (`works_total` null, no `last_fetched_at`).
+// 404 `not-found` for an unknown series.
+//
+// GET /api/v1/series/{id}
+func (c *Client) GetSeries(ctx context.Context, params GetSeriesParams, options ...RequestOption) (*Series, error) {
+	res, err := c.sendGetSeries(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetSeries(ctx context.Context, params GetSeriesParams, requestOptions ...RequestOption) (res *Series, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/series/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetSeriesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -2081,6 +2182,129 @@ func (c *Client) sendListMediumFandoms(ctx context.Context, params ListMediumFan
 	}
 
 	result, err := decodeListMediumFandomsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListSeriesWorks invokes listSeriesWorks operation.
+//
+// The series' stored works (fetched, or known from listing blurbs only) by part number, unknown parts
+// last, then by work id. Members the mirror does not hold are not listed (see the series'
+// `missing_work_ids`). `total` equals the series' `works_stored`. 404 `not-found` for an unknown
+// series.
+//
+// GET /api/v1/series/{id}/works
+func (c *Client) ListSeriesWorks(ctx context.Context, params ListSeriesWorksParams, options ...RequestOption) (*WorkList, error) {
+	res, err := c.sendListSeriesWorks(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendListSeriesWorks(ctx context.Context, params ListSeriesWorksParams, requestOptions ...RequestOption) (res *WorkList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/series/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/works"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListSeriesWorksResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

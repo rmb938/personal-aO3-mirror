@@ -4602,6 +4602,224 @@ func (s *RequestKind) UnmarshalText(data []byte) error {
 // ResumeSourceNoContent is response for ResumeSource operation.
 type ResumeSourceNoContent struct{}
 
+// A stored series. Strings other than the `_on`/`_at` dates are content (or a URL), hashed unless
+// revealed. Lists are `[]` when empty; optional fields are omitted when unset. `complete_locally`
+// through `missing_work_ids` are as in `WorkSeries`.
+// Ref: #/components/schemas/Series
+type Series struct {
+	ID    ID     `json:"id"`
+	Title string `json:"title"`
+	// By creator id (AO3's byline order is not stored).
+	Creators []WorkCreator `json:"creators"`
+	// AO3's Description.
+	SummaryHTML OptString `json:"summary_html"`
+	NotesHTML   OptString `json:"notes_html"`
+	BegunOn     OptDate   `json:"begun_on"`
+	UpdatedOn   OptDate   `json:"updated_on"`
+	// AO3's count; 0 until fetched.
+	Words int `json:"words"`
+	// AO3's count; 0 until fetched.
+	Bookmarks       int  `json:"bookmarks"`
+	Complete        bool `json:"complete"`
+	CompleteLocally bool `json:"complete_locally"`
+	// AO3's count.
+	WorksTotal NilInt `json:"works_total"`
+	// Fetched member works.
+	WorksMirrored int `json:"works_mirrored"`
+	// Part numbers none of our works has.
+	MissingPositions []int `json:"missing_positions"`
+	// Known member works we have not fetched.
+	MissingWorkIds []ID `json:"missing_work_ids"`
+	// Stored member works, fetched or known from listing blurbs only: the `total` of
+	// `GET /api/v1/series/{id}/works`.
+	WorksStored int `json:"works_stored"`
+	// The AO3 series URL to pass to `POST /api/v1/sources` to mirror the whole series (hashed unless
+	// revealed). Always set: adding a series that already is a source fails with `already-exists`.
+	MirrorSourceURL string `json:"mirror_source_url"`
+	// The last series page fetch; omitted if never fetched.
+	LastFetchedAt OptTimestamp `json:"last_fetched_at"`
+}
+
+// GetID returns the value of ID.
+func (s *Series) GetID() ID {
+	return s.ID
+}
+
+// GetTitle returns the value of Title.
+func (s *Series) GetTitle() string {
+	return s.Title
+}
+
+// GetCreators returns the value of Creators.
+func (s *Series) GetCreators() []WorkCreator {
+	return s.Creators
+}
+
+// GetSummaryHTML returns the value of SummaryHTML.
+func (s *Series) GetSummaryHTML() OptString {
+	return s.SummaryHTML
+}
+
+// GetNotesHTML returns the value of NotesHTML.
+func (s *Series) GetNotesHTML() OptString {
+	return s.NotesHTML
+}
+
+// GetBegunOn returns the value of BegunOn.
+func (s *Series) GetBegunOn() OptDate {
+	return s.BegunOn
+}
+
+// GetUpdatedOn returns the value of UpdatedOn.
+func (s *Series) GetUpdatedOn() OptDate {
+	return s.UpdatedOn
+}
+
+// GetWords returns the value of Words.
+func (s *Series) GetWords() int {
+	return s.Words
+}
+
+// GetBookmarks returns the value of Bookmarks.
+func (s *Series) GetBookmarks() int {
+	return s.Bookmarks
+}
+
+// GetComplete returns the value of Complete.
+func (s *Series) GetComplete() bool {
+	return s.Complete
+}
+
+// GetCompleteLocally returns the value of CompleteLocally.
+func (s *Series) GetCompleteLocally() bool {
+	return s.CompleteLocally
+}
+
+// GetWorksTotal returns the value of WorksTotal.
+func (s *Series) GetWorksTotal() NilInt {
+	return s.WorksTotal
+}
+
+// GetWorksMirrored returns the value of WorksMirrored.
+func (s *Series) GetWorksMirrored() int {
+	return s.WorksMirrored
+}
+
+// GetMissingPositions returns the value of MissingPositions.
+func (s *Series) GetMissingPositions() []int {
+	return s.MissingPositions
+}
+
+// GetMissingWorkIds returns the value of MissingWorkIds.
+func (s *Series) GetMissingWorkIds() []ID {
+	return s.MissingWorkIds
+}
+
+// GetWorksStored returns the value of WorksStored.
+func (s *Series) GetWorksStored() int {
+	return s.WorksStored
+}
+
+// GetMirrorSourceURL returns the value of MirrorSourceURL.
+func (s *Series) GetMirrorSourceURL() string {
+	return s.MirrorSourceURL
+}
+
+// GetLastFetchedAt returns the value of LastFetchedAt.
+func (s *Series) GetLastFetchedAt() OptTimestamp {
+	return s.LastFetchedAt
+}
+
+// SetID sets the value of ID.
+func (s *Series) SetID(val ID) {
+	s.ID = val
+}
+
+// SetTitle sets the value of Title.
+func (s *Series) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCreators sets the value of Creators.
+func (s *Series) SetCreators(val []WorkCreator) {
+	s.Creators = val
+}
+
+// SetSummaryHTML sets the value of SummaryHTML.
+func (s *Series) SetSummaryHTML(val OptString) {
+	s.SummaryHTML = val
+}
+
+// SetNotesHTML sets the value of NotesHTML.
+func (s *Series) SetNotesHTML(val OptString) {
+	s.NotesHTML = val
+}
+
+// SetBegunOn sets the value of BegunOn.
+func (s *Series) SetBegunOn(val OptDate) {
+	s.BegunOn = val
+}
+
+// SetUpdatedOn sets the value of UpdatedOn.
+func (s *Series) SetUpdatedOn(val OptDate) {
+	s.UpdatedOn = val
+}
+
+// SetWords sets the value of Words.
+func (s *Series) SetWords(val int) {
+	s.Words = val
+}
+
+// SetBookmarks sets the value of Bookmarks.
+func (s *Series) SetBookmarks(val int) {
+	s.Bookmarks = val
+}
+
+// SetComplete sets the value of Complete.
+func (s *Series) SetComplete(val bool) {
+	s.Complete = val
+}
+
+// SetCompleteLocally sets the value of CompleteLocally.
+func (s *Series) SetCompleteLocally(val bool) {
+	s.CompleteLocally = val
+}
+
+// SetWorksTotal sets the value of WorksTotal.
+func (s *Series) SetWorksTotal(val NilInt) {
+	s.WorksTotal = val
+}
+
+// SetWorksMirrored sets the value of WorksMirrored.
+func (s *Series) SetWorksMirrored(val int) {
+	s.WorksMirrored = val
+}
+
+// SetMissingPositions sets the value of MissingPositions.
+func (s *Series) SetMissingPositions(val []int) {
+	s.MissingPositions = val
+}
+
+// SetMissingWorkIds sets the value of MissingWorkIds.
+func (s *Series) SetMissingWorkIds(val []ID) {
+	s.MissingWorkIds = val
+}
+
+// SetWorksStored sets the value of WorksStored.
+func (s *Series) SetWorksStored(val int) {
+	s.WorksStored = val
+}
+
+// SetMirrorSourceURL sets the value of MirrorSourceURL.
+func (s *Series) SetMirrorSourceURL(val string) {
+	s.MirrorSourceURL = val
+}
+
+// SetLastFetchedAt sets the value of LastFetchedAt.
+func (s *Series) SetLastFetchedAt(val OptTimestamp) {
+	s.LastFetchedAt = val
+}
+
 // Ref: #/components/schemas/SeriesInfoDetail
 type SeriesInfoDetail struct {
 	SeriesID NilInt          `json:"series_id"`

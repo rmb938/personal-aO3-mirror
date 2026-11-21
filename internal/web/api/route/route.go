@@ -33,6 +33,8 @@ const (
 	TagByName     = "/api/v1/tags/by-name/{name}"
 	Media         = "/api/v1/media"
 	MediumFandoms = "/api/v1/media/{id}/fandoms"
+	Series        = "/api/v1/series/{id}"
+	SeriesWorks   = "/api/v1/series/{id}/works"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

@@ -567,6 +567,43 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TagList" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/series/{id}:
+    get:
+      operationId: getSeries
+      summary: One stored series with what its AO3 series page shows and how much is mirrored.
+      description: |
+        Content strings are hashed unless revealed; HTML is untrusted. A series named by a work
+        page whose series page was never fetched has only its id and title (`works_total` null,
+        no `last_fetched_at`). 404 `not-found` for an unknown series.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The series.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Series" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/series/{id}/works:
+    get:
+      operationId: listSeriesWorks
+      summary: One page of a stored series' works in part order, as AO3's series page.
+      description: |
+        The series' stored works (fetched, or known from listing blurbs only) by part number,
+        unknown parts last, then by work id. Members the mirror does not hold are not listed
+        (see the series' `missing_work_ids`). `total` equals the series' `works_stored`. 404
+        `not-found` for an unknown series.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the series' works.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -2245,6 +2282,74 @@ components:
             type: array,
             items: { $ref: "#/components/schemas/ID" },
             description: "Known member works we have not fetched.",
+          }
+    Series:
+      type: object
+      description: |
+        A stored series. Strings other than the `_on`/`_at` dates are content (or a URL), hashed
+        unless revealed. Lists are `[]` when empty; optional fields are omitted when unset.
+        `complete_locally` through `missing_work_ids` are as in `WorkSeries`.
+      required:
+        [
+          id,
+          title,
+          creators,
+          words,
+          bookmarks,
+          complete,
+          complete_locally,
+          works_total,
+          works_mirrored,
+          missing_positions,
+          missing_work_ids,
+          works_stored,
+          mirror_source_url,
+        ]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        title: { type: string }
+        creators:
+          type: array
+          description: By creator id (AO3's byline order is not stored).
+          items: { $ref: "#/components/schemas/WorkCreator" }
+        summary_html: { type: string, description: "AO3's Description." }
+        notes_html: { type: string }
+        begun_on: { type: string, format: date }
+        updated_on: { type: string, format: date }
+        words: { type: integer, description: "AO3's count; 0 until fetched." }
+        bookmarks: { type: integer, description: "AO3's count; 0 until fetched." }
+        complete: { type: boolean }
+        complete_locally: { type: boolean }
+        works_total: { type: [integer, "null"], description: "AO3's count." }
+        works_mirrored: { type: integer, description: "Fetched member works." }
+        missing_positions:
+          {
+            type: array,
+            items: { type: integer },
+            description: "Part numbers none of our works has.",
+          }
+        missing_work_ids:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/ID" },
+            description: "Known member works we have not fetched.",
+          }
+        works_stored:
+          type: integer
+          description: |
+            Stored member works, fetched or known from listing blurbs only: the `total` of
+            `GET /api/v1/series/{id}/works`.
+        mirror_source_url:
+          type: string
+          description: |
+            The AO3 series URL to pass to `POST /api/v1/sources` to mirror the whole series
+            (hashed unless revealed). Always set: adding a series that already is a source
+            fails with `already-exists`.
+        last_fetched_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "The last series page fetch; omitted if never fetched.",
           }
     ChapterRef:
       type: object

@@ -34,6 +34,11 @@ type GetJobParams struct {
 	ID ID
 }
 
+// GetSeriesParams is parameters of getSeries operation.
+type GetSeriesParams struct {
+	ID ID
+}
+
 // GetSourceParams is parameters of getSource operation.
 type GetSourceParams struct {
 	ID ID
@@ -94,6 +99,14 @@ type ListMediumFandomsParams struct {
 	Sort OptTagSort `json:",omitempty,omitzero"`
 	// Omitted, ascending for `name` and descending for `uses`.
 	Direction OptSortDirection `json:",omitempty,omitzero"`
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
+// ListSeriesWorksParams is parameters of listSeriesWorks operation.
+type ListSeriesWorksParams struct {
+	ID ID
 	// 1-based page number; (page-1)*per_page is at most 100000.
 	Page    OptInt `json:",omitempty,omitzero"`
 	PerPage OptInt `json:",omitempty,omitzero"`

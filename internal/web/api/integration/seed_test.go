@@ -97,7 +97,10 @@ func seedFetched(ctx context.Context, tx *store.Tx) error {
 	if medium.ID != seedMedium || medium.Type != model.TagMedia {
 		return fmt.Errorf("seed: parent tag id %d type %s, want seedMedium %d, Media", medium.ID, medium.Type, seedMedium)
 	}
-	if err := tx.UpsertSeries(ctx, model.Series{ID: seedSeries, Title: sentinel + "series", WorksCount: 3}); err != nil {
+	if err := tx.UpsertSeries(ctx, model.Series{ID: seedSeries, Title: sentinel + "series", WorksCount: 3,
+		Creators:    []model.Creator{{User: sentinel + "user", Pseud: sentinel + "pseud"}},
+		SummaryHTML: sentinel + "seriessummary", NotesHTML: sentinel + "seriesnotes", Begun: "2025-01-02",
+		Updated: "2025-03-04", Words: 3000, Bookmarks: 2}); err != nil {
 		return err
 	}
 	return tx.SetSeriesMembers(ctx, seedSeries, []store.SeriesMember{{WorkID: seedFetchedWork, Position: 2},
