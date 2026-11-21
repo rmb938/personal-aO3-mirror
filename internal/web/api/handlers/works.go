@@ -23,6 +23,9 @@ func (a *Handlers) ListWorks(r *http.Request) (any, error) {
 		Sort:      model.WorkSort(q.Enum(string(dto.ParamSort), dto.WorkSort(""), runtime.DetailWorkSort)),
 		Direction: model.SortDirection(q.Enum(string(dto.ParamDirection), dto.SortDirection(""), runtime.DetailDirection)),
 	}
+	if f.Sort == model.WorkSort(dto.WorkSortBestMatch) {
+		q.Param(string(dto.ParamSort), request.DetailBestMatch) // GET has no q; QUERY does
+	}
 	p := q.Page()
 	if err := q.Err(); err != nil {
 		return nil, err

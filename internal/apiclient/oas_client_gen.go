@@ -211,10 +211,10 @@ type Invoker interface {
 	PauseSource(ctx context.Context, params PauseSourceParams, options ...RequestOption) error
 	// QueryWorks invokes queryWorks operation.
 	//
-	// The body holds the filters, sort and direction (absent members match everything, so `{}` is the
-	// `GET` listing); paging stays in the query string. `language` is free text, so in hashed mode it is
-	// refused with `reveal-required`. Every QUERY search route shares the per-client search rate limit
-	// (`api.rate.search_per_min`) on top of the general one.
+	// The body holds the search query, filters, sort and direction (absent members match everything, so
+	// `{}` is the `GET` listing); paging stays in the query string. `q` and `language` are free text, so
+	// in hashed mode they are refused with `reveal-required`. Every QUERY search route shares the
+	// per-client search rate limit (`api.rate.search_per_min`) on top of the general one.
 	//
 	// QUERY /api/v1/works
 	QueryWorks(ctx context.Context, request *WorkQueryRequest, params QueryWorksParams, options ...RequestOption) (*WorkListHeaders, error)
@@ -1926,10 +1926,10 @@ func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams, 
 
 // QueryWorks invokes queryWorks operation.
 //
-// The body holds the filters, sort and direction (absent members match everything, so `{}` is the
-// `GET` listing); paging stays in the query string. `language` is free text, so in hashed mode it is
-// refused with `reveal-required`. Every QUERY search route shares the per-client search rate limit
-// (`api.rate.search_per_min`) on top of the general one.
+// The body holds the search query, filters, sort and direction (absent members match everything, so
+// `{}` is the `GET` listing); paging stays in the query string. `q` and `language` are free text, so
+// in hashed mode they are refused with `reveal-required`. Every QUERY search route shares the
+// per-client search rate limit (`api.rate.search_per_min`) on top of the general one.
 //
 // QUERY /api/v1/works
 func (c *Client) QueryWorks(ctx context.Context, request *WorkQueryRequest, params QueryWorksParams, options ...RequestOption) (*WorkListHeaders, error) {

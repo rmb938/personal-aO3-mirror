@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/searchquery"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 )
@@ -21,7 +22,13 @@ const (
 	MaxCount = 1<<31 - 1
 	// DateLayout is a range bound's format (YYYY-MM-DD).
 	DateLayout = time.DateOnly
+	// MaxQueryRunes caps q.
+	MaxQueryRunes = 256
 )
+
+// DetailBestMatch is for the best_match sort without a search query, in a body or (where there
+// is no q at all) a query parameter.
+var DetailBestMatch = problem.NewDetail("best_match ranks by the search query, so it needs q")
 
 var (
 	detailTagIDs   = problem.NewDetail("must be at most " + strconv.Itoa(MaxWorkQueryTags) + " distinct ids")
@@ -33,14 +40,22 @@ var (
 	detailIntRange = problem.NewDetail("min must not be above max")
 	detailDate     = problem.NewDetail("must be a date, YYYY-MM-DD")
 	detailDates    = problem.NewDetail("from must not be after to")
-	detailSort     = problem.OneOf(dto.WorkSort(""))
-	detailDir      = problem.OneOf(dto.SortDirection(""))
+	detailQuery    = problem.NewDetail("must be 1 to " + strconv.Itoa(MaxQueryRunes) + " characters, with no control characters")
+	detailTerms    = problem.NewDetail("must have at most " + strconv.Itoa(searchquery.MaxTerms) +
+		" words or quoted phrases, at least one of them not excluded with a leading -")
+	detailSort = problem.OneOf(dto.WorkSort(""))
+	detailDir  = problem.OneOf(dto.SortDirection(""))
 )
 
-// WorkQuery is the body of QUERY /api/v1/works: AO3 work_search filters, a sort and a
-// direction. Absent members match everything, so `{}` lists every work like GET. Paging stays
-// in the page and per_page query parameters.
+// WorkQuery is the body of QUERY /api/v1/works: a search query, AO3 work_search filters, a
+// sort and a direction. Absent members match everything, so `{}` lists every work like GET.
+// Paging stays in the page and per_page query parameters.
 type WorkQuery struct {
+	// Q is search text (AO3 query: words, "quoted phrases" and a leading - to exclude one; see
+	// searchquery.Terms) matched against titles, summaries, creators, tags and series titles.
+	// It is free text, so it needs the reveal parameter (NeedsReveal). With q, the default sort
+	// is best_match.
+	Q string `json:"q,omitzero"`
 	// TagIDs must all match, ExcludeTagIDs none (AO3 filter_ids / excluded_tag_ids). A tag id
 	// matches works tagged with it, a synonym of it or any of its sub tags.
 	TagIDs        []int64 `json:"tag_ids,omitzero"`
@@ -82,10 +97,11 @@ type DateRange struct {
 
 // NeedsReveal reports whether the query has a free-text member, which hashed mode refuses
 // (reveal-required): matching it would tell a client whether hidden text equals a guess.
-func (w *WorkQuery) NeedsReveal() bool { return w.Language != "" }
+func (w *WorkQuery) NeedsReveal() bool { return w.Q != "" || w.Language != "" }
 
 // Validate records every invalid member.
 func (w *WorkQuery) Validate(v *problem.Validation) {
+	w.validateQuery(v)
 	validateTagIDs(v, w.TagIDs, "tag_ids")
 	validateTagIDs(v, w.ExcludeTagIDs, "exclude_tag_ids")
 	if w.Language != "" && !problem.ValidText(w.Language, MaxLanguageRunes) {
@@ -99,11 +115,30 @@ func (w *WorkQuery) Validate(v *problem.Validation) {
 	w.Bookmarks.validate(v, "bookmarks")
 	w.Revised.validate(v, "revised")
 	w.Published.validate(v, "published")
-	if w.Sort != "" && !slices.Contains(w.Sort.EnumValues(), string(w.Sort)) {
+	switch {
+	case w.Sort != "" && !slices.Contains(w.Sort.EnumValues(), string(w.Sort)):
 		v.Member(detailSort, "sort")
+	case w.Sort == dto.WorkSortBestMatch && w.Q == "":
+		v.Member(DetailBestMatch, "sort")
 	}
 	if w.Direction != "" && !slices.Contains(w.Direction.EnumValues(), string(w.Direction)) {
 		v.Member(detailDir, "direction")
+	}
+}
+
+// validateQuery records a q that is too long or not text, or whose terms the store would refuse:
+// over searchquery.MaxTerms, or none to include (only excluded terms, or no letters or digits).
+func (w *WorkQuery) validateQuery(v *problem.Validation) {
+	if w.Q == "" {
+		return
+	}
+	if !problem.ValidText(w.Q, MaxQueryRunes) {
+		v.Member(detailQuery, "q")
+		return
+	}
+	terms := searchquery.Terms(w.Q)
+	if len(terms) > searchquery.MaxTerms || !slices.ContainsFunc(terms, func(t searchquery.Term) bool { return !t.Exclude }) {
+		v.Member(detailTerms, "q")
 	}
 }
 

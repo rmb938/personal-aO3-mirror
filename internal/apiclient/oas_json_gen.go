@@ -12812,6 +12812,12 @@ func (s *WorkQueryRequest) Encode(e *jx.Encoder) {
 // encodeFields encodes fields.
 func (s *WorkQueryRequest) encodeFields(e *jx.Encoder) {
 	{
+		if s.Q.Set {
+			e.FieldStart("q")
+			s.Q.Encode(e)
+		}
+	}
+	{
 		if s.TagIds != nil {
 			e.FieldStart("tag_ids")
 			e.ArrStart()
@@ -12927,24 +12933,25 @@ func (s *WorkQueryRequest) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfWorkQueryRequest = [17]string{
-	0:  "tag_ids",
-	1:  "exclude_tag_ids",
-	2:  "complete",
-	3:  "crossover",
-	4:  "single_chapter",
-	5:  "language",
-	6:  "statuses",
-	7:  "fetched",
-	8:  "words",
-	9:  "kudos",
-	10: "hits",
-	11: "comments",
-	12: "bookmarks",
-	13: "revised",
-	14: "published",
-	15: "sort",
-	16: "direction",
+var jsonFieldsNameOfWorkQueryRequest = [18]string{
+	0:  "q",
+	1:  "tag_ids",
+	2:  "exclude_tag_ids",
+	3:  "complete",
+	4:  "crossover",
+	5:  "single_chapter",
+	6:  "language",
+	7:  "statuses",
+	8:  "fetched",
+	9:  "words",
+	10: "kudos",
+	11: "hits",
+	12: "comments",
+	13: "bookmarks",
+	14: "revised",
+	15: "published",
+	16: "sort",
+	17: "direction",
 }
 
 // Decode decodes WorkQueryRequest from json.
@@ -12955,6 +12962,16 @@ func (s *WorkQueryRequest) Decode(d *jx.Decoder) error {
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
+		case "q":
+			if err := func() error {
+				s.Q.Reset()
+				if err := s.Q.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"q\"")
+			}
 		case "tag_ids":
 			if err := func() error {
 				s.TagIds = make([]ID, 0)
@@ -13674,6 +13691,8 @@ func (s *WorkSort) Decode(d *jx.Decoder) error {
 		*s = WorkSortTitle
 	case WorkSortCreator:
 		*s = WorkSortCreator
+	case WorkSortBestMatch:
+		*s = WorkSortBestMatch
 	default:
 		*s = WorkSort(v)
 	}

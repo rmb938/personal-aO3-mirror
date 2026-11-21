@@ -100,7 +100,10 @@ func TestQueryWorks(t *testing.T) {
 		target, body string
 		typ          dto.ProblemType
 	}{
-		"unknown member":  {"/api/v1/works", `{"q":"x"}`, dto.TypeInvalidBody},
+		"unknown member":  {"/api/v1/works", `{"query":"x"}`, dto.TypeInvalidBody},
+		"q hashed":        {"/api/v1/works", `{"q":"title"}`, dto.TypeRevealRequired},
+		"q invalid":       {"/api/v1/works" + revealQuery, `{"q":"-title"}`, dto.TypeValidation},
+		"best match no q": {"/api/v1/works" + revealQuery, `{"sort":"best_match"}`, dto.TypeValidation},
 		"wrong kind":      {"/api/v1/works", `{"tag_ids":"1"}`, dto.TypeInvalidBody},
 		"trailing data":   {"/api/v1/works", `{}{}`, dto.TypeInvalidBody},
 		"sort in query":   {"/api/v1/works?sort=title", `{}`, dto.TypeValidation},
@@ -124,6 +127,28 @@ func TestQueryWorks(t *testing.T) {
 	assert.Equal(t, sentinel+"title", l.Items[0].Title)
 	l = queryWorks(t, h, "/api/v1/works"+revealQuery, `{"language":"Fixture Language"}`)
 	assert.Empty(t, l.Items)
+}
+
+// TestQueryWorksSearch runs q (revealed) over the seeded works: both titles are
+// SENTINEL-title, only seedFetchedWork is in a series and only seedWork has a freeform tag.
+func TestQueryWorksSearch(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Public()
+	for body, want := range map[string][]int64{
+		`{"q":"series"}`:                                   {seedFetchedWork},
+		`{"q":"tag"}`:                                      {seedWork},
+		`{"q":"title -fandom"}`:                            {seedWork},
+		`{"q":"\"sentinel title\""}`:                       {seedWork, seedFetchedWork}, // best_match: fewer other words rank higher
+		`{"q":"title","sort":"kudos","direction":"asc"}`:   {seedWork, seedFetchedWork},
+		`{"q":"title","sort":"best_match","fetched":true}`: {seedFetchedWork},
+		`{"q":"nomatch"}`:                                  {},
+	} {
+		l := queryWorks(t, h, "/api/v1/works"+revealQuery, body)
+		assert.Equal(t, want, workIDs(t, l), body)
+		assert.Equal(t, len(want), l.Total, body)
+	}
+	queryWorks(t, h, "/api/v1/works"+revealQuery, `{"q":"`+sentinel+`query"}`)
+	assert.NotContains(t, logs.String(), sentinel, "q is never logged")
 }
 
 func TestQueryWorksRateLimit(t *testing.T) {

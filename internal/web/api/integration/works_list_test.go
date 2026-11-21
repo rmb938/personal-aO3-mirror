@@ -10,6 +10,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
@@ -101,6 +102,9 @@ func TestListWorks(t *testing.T) {
 		testutil.RequireParamProblem(t, testutil.Get(t, h, target), field, target)
 	}
 	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/works?language=x"), "", "unknown param")
+	bm := testutil.Get(t, h, "/api/v1/works?sort=best_match")
+	testutil.RequireParamProblem(t, bm, dto.ParamSort, "best_match needs q, which GET lacks")
+	assert.Equal(t, request.DetailBestMatch.Message(), testutil.DecodeProblem(t, bm).Errors[0].Detail)
 
 	// Every invalid parameter is listed in one response.
 	bad := testutil.Get(t, h, "/api/v1/works?sort=x&direction=y&per_page=0")

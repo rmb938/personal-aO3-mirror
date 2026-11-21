@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/searchquery"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 )
 
@@ -25,6 +26,9 @@ func TestWorkQueryValid(t *testing.T) {
 		{Words: IntRange{Min: &zero, Max: &hi}, Kudos: IntRange{Min: &hi}, Hits: IntRange{Max: &zero},
 			Comments: IntRange{Min: &zero, Max: &zero}},
 		{Revised: DateRange{From: "2025-01-02", To: "2025-01-02"}, Published: DateRange{To: "1999-12-31"}},
+		{Q: `lorem -ipsum "dolor sit"`, Sort: "best_match"},
+		{Q: strings.Repeat("lorem ", searchquery.MaxTerms), Sort: "kudos"},
+		{Q: strings.Repeat("é", MaxQueryRunes)},
 	} {
 		assert.Empty(t, errorsOf(t, &q), "%+v", q)
 	}
@@ -59,6 +63,14 @@ func TestWorkQueryInvalid(t *testing.T) {
 			map[string]string{"/published": detailDates.Message()}},
 		"sort and direction": {WorkQuery{Sort: "Words", Direction: "up"},
 			map[string]string{"/sort": detailSort.Message(), "/direction": detailDir.Message()}},
+		"best match without q": {WorkQuery{Sort: "best_match"}, map[string]string{"/sort": DetailBestMatch.Message()}},
+		"q long":               {WorkQuery{Q: strings.Repeat("x", MaxQueryRunes+1)}, map[string]string{"/q": detailQuery.Message()}},
+		"q control":            {WorkQuery{Q: "lorem\tipsum"}, map[string]string{"/q": detailQuery.Message()}},
+		"q too many terms": {WorkQuery{Q: strings.Repeat("lorem ", searchquery.MaxTerms+1)},
+			map[string]string{"/q": detailTerms.Message()}},
+		"q only excluded":    {WorkQuery{Q: `-lorem -"ipsum"`}, map[string]string{"/q": detailTerms.Message()}},
+		"q no words":         {WorkQuery{Q: `!!! "" -`}, map[string]string{"/q": detailTerms.Message()}},
+		"q invalid and sort": {WorkQuery{Q: " ", Sort: "best_match"}, map[string]string{"/q": detailTerms.Message()}},
 	} {
 		assert.Equal(t, tc.want, errorsOf(t, &tc.in), name)
 	}
@@ -67,6 +79,7 @@ func TestWorkQueryInvalid(t *testing.T) {
 func TestWorkQueryNeedsReveal(t *testing.T) {
 	assert.False(t, (&WorkQuery{Sort: "title", TagIDs: []int64{1}}).NeedsReveal(), "structured members only")
 	assert.True(t, (&WorkQuery{Language: "x"}).NeedsReveal(), "language is free text")
+	assert.True(t, (&WorkQuery{Q: "x"}).NeedsReveal(), "q is free text")
 }
 
 func TestParseDate(t *testing.T) {

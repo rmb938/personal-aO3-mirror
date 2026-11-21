@@ -56,9 +56,10 @@ func TestWorkBlurbList(t *testing.T) {
 // match.
 func TestWorkSortEnums(t *testing.T) {
 	var sorts []string
-	for _, s := range model.WorkSorts() {
+	for _, s := range append(model.WorkSorts(), model.WorkSortBestMatch) {
 		sorts = append(sorts, string(s))
 	}
+	assert.Equal(t, string(model.WorkSortBestMatch), string(dto.WorkSortBestMatch))
 	assert.ElementsMatch(t, sorts, dto.WorkSort("").EnumValues())
 	assert.ElementsMatch(t, []string{string(model.SortAsc), string(model.SortDesc)}, dto.SortDirection("").EnumValues())
 }

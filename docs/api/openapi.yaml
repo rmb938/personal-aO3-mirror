@@ -289,6 +289,7 @@ paths:
       parameters:
         - name: sort
           in: query
+          description: "`best_match` needs a search query, which only `QUERY` takes: 422 here."
           schema: { $ref: "#/components/schemas/WorkSort" }
         - name: direction
           in: query
@@ -307,11 +308,12 @@ paths:
         default: { $ref: "#/components/responses/Problem" }
     query:
       operationId: queryWorks
-      summary: One page of the stored works matching AO3-style filters.
+      summary: One page of the stored works matching an AO3-style search and filters.
       description: |
-        The body holds the filters, sort and direction (absent members match everything, so
-        `{}` is the `GET` listing); paging stays in the query string. `language` is free text, so
-        in hashed mode it is refused with `reveal-required`. Every QUERY search route shares the
+        The body holds the search query, filters, sort and direction (absent members match
+        everything, so `{}` is the `GET` listing); paging stays in the query string. `q` and
+        `language` are free text, so in hashed mode they are refused with `reveal-required`.
+        Every QUERY search route shares the
         per-client search rate limit (`api.rate.search_per_min`) on top of the general one.
       parameters:
         - $ref: "#/components/parameters/Page"
@@ -1662,10 +1664,11 @@ components:
     WorkSort:
       type: string
       description: |
-        Work listing sort column, after AO3's `sort_column`: `revised` (the default; Date
-        Updated), `published` (Date Posted), `words`, `hits`, `kudos`, `comments`, `bookmarks`,
-        `title`, `creator`.
-      enum: [revised, published, words, hits, kudos, comments, bookmarks, title, creator]
+        Work listing sort column, after AO3's `sort_column`: `revised` (the default without a
+        search query; Date Updated), `published` (Date Posted), `words`, `hits`, `kudos`,
+        `comments`, `bookmarks`, `title`, `creator`, and `best_match` (AO3 Best Match: search
+        rank, best first by default; the default with a query, and only valid with one).
+      enum: [revised, published, words, hits, kudos, comments, bookmarks, title, creator, best_match]
     SortDirection:
       type: string
       enum: [asc, desc]
@@ -1676,6 +1679,16 @@ components:
         AO3 work_search filters. Every member is optional; absent members match everything.
         Invalid members are all listed in one `validation-error` (by JSON Pointer).
       properties:
+        q:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: >-
+            Search text (AO3 `query`) matched against titles, summaries, creators, tags and
+            series titles: words and `"quoted phrases"` must all match, and a leading `-`
+            excludes a word or phrase; nothing else is syntax. At most 16 terms, at least one
+            not excluded, and no control characters. Free text: refused with
+            `reveal-required` unless the request is revealed.
         tag_ids:
           type: array
           maxItems: 20
