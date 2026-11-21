@@ -156,6 +156,8 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/works/{id}/chapters": {target: "/api/v1/works/9/chapters", status: http.StatusOK, content: true},
 	"GET /api/v1/works/{id}/chapters/{position}": {target: "/api/v1/works/9/chapters/2", status: http.StatusOK,
 		content: true},
+	"QUERY /api/v1/tags": {target: "/api/v1/tags?per_page=5", status: http.StatusOK, content: true,
+		body: `{"types":["Fandom"],"sort":"uses"}`},
 	"GET /api/v1/tags/{id}":       {target: "/api/v1/tags/3", status: http.StatusOK, content: true},
 	"GET /api/v1/tags/{id}/works": {target: "/api/v1/tags/3/works?sort=title", status: http.StatusOK, content: true},
 	"QUERY /api/v1/tags/{id}/works": {target: "/api/v1/tags/3/works?per_page=5", status: http.StatusOK, content: true,

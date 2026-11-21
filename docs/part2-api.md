@@ -1174,7 +1174,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - The `/works` handlers' bodies became `listWorks` / `queryWorks` (shared with the tag
       routes); a bad path id is reported with the other invalid params. Same `WorkList`
       response, `Accept-Query`, and the QUERY route shares the search rate limit.
-  - [ ] **12d. Store + `QUERY /tags`**: `store.FindTags` (type, canonical and parent filters,
+  - [x] **12d. Store + `QUERY /tags`**: `store.FindTags` (type, canonical and parent filters,
     paging, name or use-count sort); `name` is reveal-only. In two PRs:
     - [x] **12d1. Store + controller: tag listing**, after AO3's tag search (`TagQuery`). As
       built:
@@ -1192,8 +1192,18 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       - `controllers.ListTags` returns the page and total from one read transaction.
       - `BenchmarkTags` (seedWorks' ~2k tags on ~1M taggings plus 50k unused): a page by name
         under 5 ms, by uses ~20–35 ms (every match's uses is counted), counts under 3 ms.
-    - [ ] **12d2. `QUERY /tags`**: `request.TagQuery`, `dto.TagList`, convert, leak samples,
-      OpenAPI and the client; the route shares the search rate limit.
+    - [x] **12d2. `QUERY /tags`**: `request.TagQuery`, `dto.TagList`, convert, leak samples,
+      OpenAPI and the client; the route shares the search rate limit. As built:
+      - `request.TagQuery`: `name` (1 to 256 runes, 1 to 16 words, no control characters;
+        free text, so `reveal-required` hashed), `types` (distinct `TagType`s), `canonical`,
+        `parent_ids` (at most 20 distinct ids), `sort` (`dto.TagSort`: `name`, `uses`) and
+        `direction`. Its caps equal the store's (`TestTagQueryBoundsMatchModel`), so a valid
+        body never makes `FindTags` fail. `validateIDs` is shared with the work query's id lists.
+      - Response `dto.List[dto.TagListItem]` (OpenAPI `TagList`): `id`, `name`, `type`,
+        `canonical` (null until recorded), `merger_id` (null for none), `uses` and
+        `info_fetched_at`. `convert.TagFilter` and `convert.TagList` map it.
+      - QUERY only (no `GET /tags`): `Accept-Query`, the search rate limit, paging in the query
+        string. The leak sample filters by type and sorts by uses.
   - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d.
 - [ ] **13. Series, creators, collections**
   - `GET /series/{id}` (with `complete_locally`, `works_total`, `works_mirrored`,

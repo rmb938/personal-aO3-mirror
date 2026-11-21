@@ -25,6 +25,7 @@ const (
 	WorkSkin  = "/api/v1/works/{id}/skin"
 	Chapters  = "/api/v1/works/{id}/chapters"
 	Chapter   = "/api/v1/works/{id}/chapters/{position}"
+	Tags      = "/api/v1/tags"
 	Tag       = "/api/v1/tags/{id}"
 	TagWorks  = "/api/v1/tags/{id}/works"
 	// TagByName's {name} is a free-text tag name (AO3's /tags/ path form), not an id, so Path

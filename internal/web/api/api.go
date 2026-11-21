@@ -38,6 +38,7 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.Get(route.WorkSkin, a.Handle(h.GetWorkSkin))
 	r.Get(route.Chapters, a.Handle(h.GetWorkChapters))
 	r.Get(route.Chapter, a.Handle(h.GetChapter))
+	r.With(runtime.AcceptQuery, search).Query(route.Tags, a.Handle(h.QueryTags))
 	r.Get(route.Tag, a.Handle(h.GetTag))
 	r.With(runtime.AcceptQuery).Get(route.TagWorks, a.Handle(h.ListTagWorks))
 	r.With(runtime.AcceptQuery, search).Query(route.TagWorks, a.Handle(h.QueryTagWorks))
