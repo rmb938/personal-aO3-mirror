@@ -873,7 +873,7 @@ Status: tick when the PR merges.
       position (including blurb-only works) → `store.ErrNoChapter`. Bodies are merged with the
       chapter list by position, keeping every position in either (content.db commits first, so
       they can differ after a failed commit). The whole-work size cap is left to stage 8.
-- [ ] **8. Works read API**
+- [x] **8. Works read API**
   - `GET /works/{id}` (metadata, relations, chapter list).
   - `GET /works/{id}/chapters/{position}` (body, notes, end notes).
   - `GET /works/{id}/chapters` (entire work, size-capped).
@@ -902,9 +902,22 @@ Status: tick when the PR merges.
     - Unknown work → 404 `not-found` (`DetailNoWork`). The leak-test seed adds a fetched work
       (9) with chapters, a skin and a partial series (77), so `/status` now lists one partial
       series.
-  - [ ] **8c. Chapter routes**: `GET /works/{id}/chapters/{position}` and `/works/{id}/chapters`.
+  - [x] **8c. Chapter routes**: `GET /works/{id}/chapters/{position}` and `/works/{id}/chapters`.
     The whole-work route adds up the raw content bytes first; over 16 MiB (a constant) is a new
-    `work-too-large` problem (422) whose detail points to the per-chapter route.
+    `work-too-large` problem (422) whose detail points to the per-chapter route. As built:
+    - `GET /works/{id}/chapters/{position}` → `dto.Chapter` (`convert.Chapter`): `id`,
+      `position`, `title`, `published_on`, the chapter's own `summary_html`, `notes_html`,
+      `end_notes_html` (omitted when empty) and `body_html`. `position` is 1..`MaxPosition`
+      (100000), read with the new `Params.PathInt` (`PathID` now calls it). No body at the
+      position (including blurb-only works) → 404 `not-found` (`DetailNoChapter`).
+    - `GET /works/{id}/chapters` → `dto.WorkChapters{chapters}` (`[]` for a blurb-only work).
+    - The cap: `store.ChapterContentBytes` sums the uncompressed sizes recorded in the zstd
+      frame headers (`substr(…, 1, 18)` of each blob, nothing decompressed). The encoder
+      records the size for every frame of 256+ bytes; a frame without it counts as 255 (a
+      test checks the bound against the real encoder). `GetWorkChapters` checks it in its read
+      transaction before loading bodies: over `controllers.MaxWorkChaptersBytes` (16 MiB) is
+      `controllers.ErrWorkTooLarge` → 422 `work-too-large` (`DetailWorkTooLarge`, naming
+      `route.Chapter`).
 - [ ] **9. Store: work listing + filters**
   - One filter struct and query builder covering AO3 work_search equivalents:
     - include/exclude tag IDs (by type), rating/warning/category tag IDs;

@@ -22,6 +22,13 @@ type DebugWorkParams struct {
 	ID ID
 }
 
+// GetChapterParams is parameters of getChapter operation.
+type GetChapterParams struct {
+	ID ID
+	// The 1-based chapter position.
+	Position int
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	ID ID
@@ -39,6 +46,11 @@ type GetSourceAddParams struct {
 
 // GetWorkParams is parameters of getWork operation.
 type GetWorkParams struct {
+	ID ID
+}
+
+// GetWorkChaptersParams is parameters of getWorkChapters operation.
+type GetWorkChaptersParams struct {
 	ID ID
 }
 

@@ -6,7 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"math"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
@@ -238,6 +242,57 @@ func (s *ReadTx) scanChapterBody(rows *sql.Rows, c *model.Chapter) error {
 		*p.dst = string(b)
 	}
 	return nil
+}
+
+// smallFrameMax bounds a frame whose header records no content size. EncodeAll writes the
+// size for every frame of 256 bytes or more (and for single-segment frames), so a frame
+// without it holds at most 255 bytes (TestChapterContentBytes checks this).
+const smallFrameMax = 255
+
+// ChapterContentBytes returns the uncompressed size of a work's stored chapter bodies, notes,
+// end notes and summaries (0 for none), read from the zstd frame headers without
+// decompressing, so a caller can refuse a huge work before loading it. A frame that records
+// no size counts as smallFrameMax bytes, so the total may be a little over the exact size.
+func (s *ReadTx) ChapterContentBytes(ctx context.Context, workID int64) (int64, error) {
+	// 18 bytes is the longest zstd frame header: magic (4), descriptor (1), window (1),
+	// dictionary id (4) and content size (8).
+	rows, err := queryRows(ctx, s.content, func(rows *sql.Rows, hs *[4][]byte) error {
+		return rows.Scan(&hs[0], &hs[1], &hs[2], &hs[3])
+	}, `SELECT substr(body_zstd, 1, 18), substr(notes_zstd, 1, 18), substr(endnotes_zstd, 1, 18),
+		substr(summary_zstd, 1, 18) FROM chapter_bodies WHERE work_id = ?`, workID)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, hs := range rows {
+		for _, b := range hs {
+			n, err := frameContentSize(b)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		}
+	}
+	return total, nil
+}
+
+// frameContentSize is the uncompressed size a zstd frame header records (0 for no frame,
+// smallFrameMax when the header has no size).
+func frameContentSize(header []byte) (int64, error) {
+	if len(header) == 0 {
+		return 0, nil
+	}
+	var h zstd.Header
+	if err := h.Decode(header); err != nil {
+		return 0, fmt.Errorf("store: chapter frame header: %w", err)
+	}
+	if !h.HasFCS {
+		return smallFrameMax, nil
+	}
+	if h.FrameContentSize > math.MaxInt64 {
+		return 0, errors.New("store: chapter frame size out of range")
+	}
+	return int64(h.FrameContentSize), nil
 }
 
 // WorkSkin returns a work's stored skin CSS, "" if it has none (never log it).

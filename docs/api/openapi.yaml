@@ -307,6 +307,44 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/WorkSkin" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/works/{id}/chapters:
+    get:
+      operationId: getWorkChapters
+      summary: Every chapter of a stored work, with bodies, in order.
+      description: |
+        Content strings are hashed unless revealed; HTML is untrusted. A work whose chapters
+        are over 16 MiB together (bodies, notes, end notes, summaries) is refused with 422
+        `work-too-large`: read it one chapter at a time instead.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The chapters (`[]` for a work known only from listing blurbs).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkChapters" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/works/{id}/chapters/{position}:
+    get:
+      operationId: getChapter
+      summary: One chapter of a stored work, with its body, notes and end notes.
+      description: |
+        Content strings are hashed unless revealed; HTML is untrusted. 404 `not-found` when no
+        chapter is stored at the position (a work known only from listing blurbs has none).
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: position
+          in: path
+          required: true
+          description: The 1-based chapter position.
+          schema: { type: integer, minimum: 1, maximum: 100000 }
+      responses:
+        "200":
+          description: The chapter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Chapter" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -1640,6 +1678,35 @@ components:
         position: { type: integer, minimum: 1 }
         title: { type: string }
         published_on: { type: string, format: date }
+    Chapter:
+      type: object
+      description: |
+        One chapter with its content. Strings other than `published_on` are content, hashed
+        unless revealed. Optional fields are omitted when unset.
+      required: [position, body_html]
+      additionalProperties: false
+      properties:
+        id:
+          {
+            $ref: "#/components/schemas/ID",
+            description: "AO3 chapter id; omitted when unknown.",
+          }
+        position: { type: integer, minimum: 1 }
+        title: { type: string }
+        published_on: { type: string, format: date }
+        summary_html: { type: string, description: "The chapter's own summary." }
+        notes_html: { type: string }
+        end_notes_html: { type: string }
+        body_html: { type: string }
+    WorkChapters:
+      type: object
+      required: [chapters]
+      additionalProperties: false
+      properties:
+        chapters:
+          type: array
+          description: In order.
+          items: { $ref: "#/components/schemas/Chapter" }
     WorkSkin:
       type: object
       additionalProperties: false
