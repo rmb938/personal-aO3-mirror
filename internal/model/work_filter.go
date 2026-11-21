@@ -45,9 +45,19 @@ type DateRange struct {
 // MaxWorkStatuses bounds WorkFilter.Statuses (one of each status).
 var MaxWorkStatuses = len(WorkStatuses())
 
+// MaxWorkFilterTags bounds WorkFilter.Tags and WorkFilter.ExcludeTags (each).
+const MaxWorkFilterTags = 20
+
 // WorkFilter selects and orders works, after AO3's work_search filters; zero fields match
 // everything. Offset and Limit only apply to store.FindWorks (CountWorks ignores them).
+//
+// A tag id matches like AO3's filter_ids: works tagged with the tag, with a synonym of it
+// (merger), or with any of its sub tags (transitively) or their synonyms. AO3 folds its per-type
+// id lists (rating_ids, fandom_ids, …) into one filter_ids list, so the type grouping belongs to
+// the API, not here.
 type WorkFilter struct {
+	Tags          []int64      // every one must match (AO3 filter_ids; at most MaxWorkFilterTags)
+	ExcludeTags   []int64      // none may match (AO3 excluded_tag_ids; at most MaxWorkFilterTags)
 	Complete      *bool        // AO3 complete
 	SingleChapter bool         // AO3 single_chapter: one chapter expected
 	Language      string       // exact match on the stored language

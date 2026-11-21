@@ -122,6 +122,86 @@ func TestFindWorks(t *testing.T) {
 	}
 }
 
+// TestFindWorksTags checks AO3 filter_ids matching over a synthetic tag graph:
+//
+//	Fixture Top ← meta of Fixture Mid ← meta of Fixture Leaf
+//	Fixture Top Syn → synonym of Top; Fixture Leaf Syn → synonym of Leaf
+//	Fixture Cyc A ↔ Fixture Cyc B (each a meta tag of the other)
+//
+//	work  tags
+//	1     Top
+//	2     Mid
+//	3     Leaf Syn
+//	4     Other
+//	5     Top Syn
+//	6     Leaf, Other
+//	7     Cyc B
+func TestFindWorksTags(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	for id, names := range map[int64][]string{
+		1: {"Fixture Top"}, 2: {"Fixture Mid"}, 3: {"Fixture Leaf Syn"}, 4: {"Fixture Other"},
+		5: {"Fixture Top Syn"}, 6: {"Fixture Leaf", "Fixture Other"}, 7: {"Fixture Cyc B"},
+	} {
+		w := fixtureWork(id)
+		w.Series, w.Tags = nil, nil
+		for _, n := range names {
+			w.Tags = append(w.Tags, model.Tag{Type: model.TagFreeform, Name: n})
+		}
+		w.Revised = fmt.Sprintf("2025-01-%02d", id) // newest first = highest id first
+		_, err := s.UpsertWork(ctx, w, model.FromPage, 1)
+		require.NoError(t, err)
+	}
+	tag := func(name string) int64 {
+		t.Helper()
+		r, err := s.TagByName(ctx, name)
+		require.NoError(t, err)
+		return r.ID
+	}
+	// In order: Cyc B's update creates Cyc A (no work uses it) before Cyc A's own update.
+	for _, u := range []struct {
+		name string
+		u    TagInfoUpdate
+	}{
+		{"Fixture Leaf", TagInfoUpdate{MetaTags: []string{"Fixture Mid"}, Synonyms: []string{"Fixture Leaf Syn"}}},
+		{"Fixture Mid", TagInfoUpdate{MetaTags: []string{"Fixture Top"}}},
+		{"Fixture Top", TagInfoUpdate{Synonyms: []string{"Fixture Top Syn"}}},
+		{"Fixture Cyc B", TagInfoUpdate{MetaTags: []string{"Fixture Cyc A"}}},
+		{"Fixture Cyc A", TagInfoUpdate{MetaTags: []string{"Fixture Cyc B"}}},
+	} {
+		u.u.Type, u.u.Canonical = model.TagFreeform, true
+		require.NoError(t, s.UpdateTagInfo(ctx, tag(u.name), u.u))
+	}
+	top, mid, leaf, leafSyn, other := tag("Fixture Top"), tag("Fixture Mid"), tag("Fixture Leaf"),
+		tag("Fixture Leaf Syn"), tag("Fixture Other")
+	for _, tc := range []struct {
+		name          string
+		tags, exclude []int64
+		want          []int64
+	}{
+		{"meta tag: itself, subs (transitive) and synonyms of each", []int64{top}, nil, []int64{6, 5, 3, 2, 1}},
+		{"mid tag", []int64{mid}, nil, []int64{6, 3, 2}},
+		{"leaf tag and its synonym", []int64{leaf}, nil, []int64{6, 3}},
+		{"synonym id: only works tagged with it", []int64{leafSyn}, nil, []int64{3}},
+		{"every included tag must match", []int64{top, other}, nil, []int64{6}},
+		{"cycle terminates", []int64{tag("Fixture Cyc A")}, nil, []int64{7}},
+		{"unknown id", []int64{999_999}, nil, nil},
+		{"exclude", nil, []int64{mid}, []int64{7, 5, 4, 1}},
+		{"exclude any of", nil, []int64{leaf, other}, []int64{7, 5, 2, 1}},
+		{"include and exclude", []int64{top}, []int64{other}, []int64{5, 3, 2, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := model.WorkFilter{Tags: tc.tags, ExcludeTags: tc.exclude, Limit: 10}
+			page, err := s.FindWorks(ctx, f)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, workIDs(page))
+			total, err := s.CountWorks(ctx, f)
+			require.NoError(t, err)
+			require.Equal(t, len(tc.want), total)
+		})
+	}
+}
+
 func workIDs(rows []WorkRow) []int64 {
 	var ids []int64
 	for _, r := range rows {
@@ -167,8 +247,10 @@ func TestFindWorksRejectsBadFilters(t *testing.T) {
 	}
 	// Bad filters fail the count too.
 	for name, f := range map[string]model.WorkFilter{
-		"status":   {Statuses: []model.WorkStatus{"gone"}, Limit: 1},
-		"too many": {Statuses: append(model.WorkStatuses(), model.StatusOK), Limit: 1},
+		"status":                 {Statuses: []model.WorkStatus{"gone"}, Limit: 1},
+		"too many":               {Statuses: append(model.WorkStatuses(), model.StatusOK), Limit: 1},
+		"too many tags":          {Tags: make([]int64, model.MaxWorkFilterTags+1), Limit: 1},
+		"too many excluded tags": {ExcludeTags: make([]int64, model.MaxWorkFilterTags+1), Limit: 1},
 	} {
 		_, err := s.FindWorks(ctx, f)
 		require.Error(t, err, name)
@@ -184,6 +266,25 @@ var listPlanFilters = []model.WorkFilter{
 	{Statuses: []model.WorkStatus{model.StatusOK}},
 	{Statuses: []model.WorkStatus{model.StatusOK}, Complete: new(true), Language: "English", Fetched: new(true),
 		SingleChapter: true},
+}
+
+// TestWorksTagFilterPlans checks that expanding a tag filter uses the 0005 indexes (no automatic
+// index built per query, no work_tags row reads). An included tag drives the page from its works
+// and sorts them (the cost grows with the matches, not the offset; see BenchmarkWorksPage).
+func TestWorksTagFilterPlans(t *testing.T) {
+	s, _, _ := openTest(t)
+	for _, f := range []model.WorkFilter{{Tags: []int64{1}}, {ExcludeTags: []int64{1, 2}}} {
+		where, args, err := workWhere(f)
+		require.NoError(t, err)
+		order, err := workOrder(f)
+		require.NoError(t, err)
+		plan := explain(t, s, `SELECT id FROM works`+where+order+` LIMIT 1 OFFSET 1`, args...)
+		for _, want := range []string{"COVERING INDEX work_tags_tag_work", "INDEX tag_meta_meta",
+			"COVERING INDEX tags_merger"} {
+			require.Contains(t, plan, want, plan)
+		}
+		require.NotContains(t, plan, "AUTOMATIC", plan)
+	}
 }
 
 func TestWorksPagePlans(t *testing.T) {
@@ -230,6 +331,26 @@ func seedWorks(b *testing.B) *testStore {
 			CASE WHEN (i / 11) % 10 < 3 THEN 0 ELSE i END
 		FROM n`, benchWorks)
 	require.NoError(b, err)
+	// Tags (synthetic names): 1 popular (every 3rd work), 2 rare (every 1000th), 3 a meta tag
+	// over subs 10..109 (sub k on works with i % 1000 = k, ~10% in all), 200..299 synonyms of
+	// those subs, and 1000..1999 filler (four per work).
+	_, err = s.meta.ExecContext(context.Background(), `
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1999)
+		INSERT INTO tags (id, name, type, canonical, merger_id, first_seen)
+		SELECT i, 'Fixture Tag ' || i, 'Freeform', i NOT BETWEEN 200 AND 299,
+			CASE WHEN i BETWEEN 200 AND 299 THEN i - 190 END, 1
+		FROM n WHERE i <= 3 OR i BETWEEN 10 AND 109 OR i BETWEEN 200 AND 299 OR i >= 1000;
+		INSERT INTO tag_meta (sub_id, meta_id) SELECT id, 3 FROM tags WHERE id BETWEEN 10 AND 109;
+		INSERT INTO work_tags (work_id, tag_id, position) SELECT id, 1, 0 FROM works WHERE id % 3 = 0;
+		INSERT INTO work_tags (work_id, tag_id, position) SELECT id, 2, 1 FROM works WHERE id % 1000 = 0;
+		INSERT INTO work_tags (work_id, tag_id, position)
+			SELECT id, id % 1000 + CASE WHEN id % 2 = 0 THEN 0 ELSE 190 END, 2 FROM works
+			WHERE id % 1000 BETWEEN 10 AND 109;
+		INSERT OR IGNORE INTO work_tags (work_id, tag_id, position)
+			SELECT w.id, 1000 + (w.id * k.m) % 1000, 2 + k.p FROM works w,
+			(SELECT 7 AS m, 1 AS p UNION ALL SELECT 13, 2 UNION ALL SELECT 101, 3 UNION ALL SELECT 997, 4) k;
+	`)
+	require.NoError(b, err)
 	return s
 }
 
@@ -238,9 +359,16 @@ var benchWorkFilters = map[string]model.WorkFilter{
 	"ok":   {Statuses: []model.WorkStatus{model.StatusOK}},
 	"ok,complete,english": {Statuses: []model.WorkStatus{model.StatusOK}, Complete: new(true),
 		Language: "English"},
-	"single,fetched": {SingleChapter: true, Fetched: new(true)},
-	"words>=100k":    {Words: model.IntRange{Min: new(100_000)}},
-	"revised 2020":   {Revised: model.DateRange{From: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)}},
+	"single,fetched":    {SingleChapter: true, Fetched: new(true)},
+	"words>=100k":       {Words: model.IntRange{Min: new(100_000)}},
+	"revised 2020":      {Revised: model.DateRange{From: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)}},
+	"tag popular":       {Tags: []int64{1}},
+	"tag rare":          {Tags: []int64{2}},
+	"tag meta":          {Tags: []int64{3}},
+	"tags popular+meta": {Tags: []int64{1, 3}},
+	"exclude popular":   {ExcludeTags: []int64{1}},
+	"exclude meta+rare": {ExcludeTags: []int64{3, 2}},
+	"popular,ok,-rare":  {Tags: []int64{1}, Statuses: []model.WorkStatus{model.StatusOK}, ExcludeTags: []int64{2}},
 }
 
 func BenchmarkWorksPage(b *testing.B) {
