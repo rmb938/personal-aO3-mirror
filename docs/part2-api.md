@@ -1409,10 +1409,52 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       detail says); `ao3url.Parse` took a login holding `/` (`/users/%2F/pseuds/0`), whose
       pseud target does not split back (now `malformed`; the input is a committed seed).
     - `integration`'s seed helpers take `testing.TB`, so a fuzz target seeds once.
-  - [ ] **15b. Load-test the rate limits**: concurrent in-process requests per limit group
+  - [x] **15b. Load-test the rate limits**: concurrent in-process requests per limit group
     (general, search, source add, the admin factor): exactly N pass a window, then 429 with
     `Retry-After`; an untrusted peer's `X-Forwarded-For` does not change its bucket. Plus
-    commands for the user against `serve --no-reveal`.
+    commands for the user against `serve --no-reveal`. As built:
+    - `integration/ratelimit_test.go`. `burst` starts m requests at once behind one start
+      signal. `requireBurst` checks that exactly n pass and the rest are `rate-limited`
+      problems with `Retry-After` set to the window (60 or 3600) and `X-Fanwork: hashed`. The
+      result is exact: httprate v0.16.1 checks and counts under one mutex, and a new
+      limiter's window starts when it is built, so no window boundary falls inside a burst.
+    - `TestRateLimitBurst`: for each group (general GETs, every QUERY search route, `POST
+      /sources` with a new tag each time), a limit of 5 and a burst of 3× on the public
+      listener, then 50 (`runtime.AdminRateFactor`, now exported) on the socket. Each burst
+      rotates through the group's routes, so it also checks they share one budget. Afterwards
+      the client is limited, and for search and source add `healthz` still passes. An admin
+      burst (150) stays under the throttle's 64 + 256, so no request gets a 503.
+    - `TestRateLimitForwardedFor`: an untrusted peer that names a different client in each
+      `X-Forwarded-For` gets one bucket. Behind the trusted proxy each forwarded client has
+      its own full bucket, keyed by the rightmost untrusted entry, so a forged entry to its
+      left is ignored and the clients the untrusted peer named are untouched. Local v4 and v6
+      requests without XFF share one bucket.
+    - Manual check (defaults: `listen` 127.0.0.1:8080, socket `data/api/admin.sock`). Start
+      `./ao3mirror --config ao3mirror.local.yaml serve --no-reveal`, and restart it before each
+      group so every limiter starts empty (a local curl without XFF uses the listener's
+      shared bucket):
+
+      ```sh
+      api=http://127.0.0.1:8080/api/v1
+      codes() { sort | uniq -c; }
+      # xargs -I@, not -I{}: -I{} would replace the '{}' body with the sequence number
+      # general, 120/min: expect 120 × 200, 30 × 429
+      seq 150 | xargs -P 16 -I@ curl -s -o /dev/null -w '%{http_code}\n' $api/healthz | codes
+      # search, 30/min across QUERY routes: expect 30 × 200, 10 × 429
+      seq 40 | xargs -P 16 -I@ curl -s -o /dev/null -w '%{http_code}\n' -X QUERY \
+        -H 'Content-Type: application/json' -d '{}' $api/works | codes
+      # source add, 10/hour. The body is invalid, so nothing is queued: expect 10 × 422, 5 × 429
+      seq 15 | xargs -P 8 -I@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+        -H 'Content-Type: application/json' -d '{}' $api/sources | codes
+      curl -si -X POST -H 'Content-Type: application/json' -d '{}' $api/sources | grep -i '^retry-after'  # 3600
+      # trusted proxy: a forwarded client has its own bucket. Expect 120 × 200, 10 × 429, then 200
+      seq 130 | xargs -P 16 -I@ curl -s -o /dev/null -w '%{http_code}\n' \
+        -H 'X-Forwarded-For: 203.0.113.9' $api/healthz | codes
+      curl -s -o /dev/null -w '%{http_code}\n' $api/healthz
+      # admin socket, 10×: expect 1200 × 200, 100 × 429
+      seq 1300 | xargs -P 32 -I@ curl -s -o /dev/null -w '%{http_code}\n' \
+        --unix-socket data/api/admin.sock http://admin/api/v1/healthz | codes
+      ```
   - [ ] **15c. OpenAPI audit**: every route's statuses, problem types, headers (`X-Fanwork`,
     `Retry-After`, `Accept-Query`) and limits in the spec; fix drift; `make generate`.
   - [ ] **15d. Security review**: `/security-review`, `make deadcode` triage, govulncheck, and

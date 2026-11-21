@@ -253,7 +253,7 @@ func TestRateLimit(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, fromIP("127.0.0.1").Code)
 
 	// The admin socket has its own, higher limit.
-	for range 2 * adminRateFactor {
+	for range 2 * AdminRateFactor {
 		require.Equal(t, http.StatusOK, testutil.Get(t, a.Admin(), "/api/v1/healthz").Code)
 	}
 	assert.Equal(t, http.StatusTooManyRequests, testutil.Get(t, a.Admin(), "/api/v1/healthz").Code)
