@@ -72,6 +72,41 @@ func TestEnforceNonJSON(t *testing.T) {
 	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 }
 
+// A Blob is raw bytes with the Blob CSP, served only revealed: the enforcer replaces it hashed
+// even when the handler forgot to check Revealed, and a Blob claiming JSON is refused.
+func TestEnforceBlob(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	var ct string
+	a.Router(false).Get("/blob", a.Handle(func(*http.Request) (any, error) {
+		return &Blob{ContentType: ct, Body: []byte(sentinel + "blob")}, nil
+	}))
+
+	ct = "image/png"
+	w := testutil.Get(t, a.Router(false), "/blob")
+	require.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, dto.TypeRevealRequired, testutil.DecodeProblem(t, w).Type)
+	assert.NotEqual(t, BlobCSP, w.Header().Get("Content-Security-Policy"), "a replaced response drops the handler's headers")
+	testutil.AssertNoSentinel(t, w, logs, sentinel)
+
+	w = testutil.Get(t, a.Router(false), "/blob"+revealQuery)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, sentinel+"blob", w.Body.String())
+	assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
+	assert.Equal(t, strconv.Itoa(len(sentinel+"blob")), w.Header().Get("Content-Length"))
+	assert.Equal(t, BlobCSP, w.Header().Get("Content-Security-Policy"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+
+	ct = ""
+	w = testutil.Get(t, a.Router(false), "/blob"+revealQuery)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"), "never sniffed")
+
+	ct = ContentTypeJSON
+	w = testutil.Get(t, a.Router(false), "/blob"+revealQuery)
+	require.Equal(t, http.StatusInternalServerError, w.Code, "a Blob has no body type, so it never passes as JSON")
+	assert.NotContains(t, w.Body.String(), sentinel)
+}
+
 func TestEnforceMissingContentType(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	a.Router(false).Get("/raw", func(w http.ResponseWriter, _ *http.Request) {

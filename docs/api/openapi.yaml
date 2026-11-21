@@ -768,6 +768,30 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/WorkList" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/images/{sha256}:
+    get:
+      operationId: getImage
+      summary: A downloaded image's bytes, by the `sha256` of a work's `images`.
+      description: |
+        The image as its host served it, with that Content-Type (`image/*`). An image is
+        content and not JSON, so it is served only revealed: in hashed mode the request is
+        refused with 403 `reveal-required` before the image is looked up. The response's
+        Content-Security-Policy is `default-src 'none'; style-src 'unsafe-inline';
+        frame-ancestors 'none'; sandbox`; clients must still treat the bytes (an SVG) as
+        untrusted. 404 `not-found` for a hash no downloaded image has.
+      parameters:
+        - name: sha256
+          in: path
+          required: true
+          description: The image's SHA-256 in lowercase hex, as a work's `images[].sha256` (revealed).
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: The image.
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -2159,6 +2183,7 @@ components:
           series,
           collections,
           chapters,
+          images,
         ]
       additionalProperties: false
       properties:
@@ -2203,6 +2228,10 @@ components:
           type: array
           description: The chapter list in order, without bodies.
           items: { $ref: "#/components/schemas/ChapterRef" }
+        images:
+          type: array
+          description: The images the work embeds, in the order first seen.
+          items: { $ref: "#/components/schemas/WorkImage" }
         last_fetched_at:
           {
             $ref: "#/components/schemas/Timestamp",
@@ -2407,6 +2436,23 @@ components:
         id: { $ref: "#/components/schemas/ID" }
         name: { type: string, description: "URL name (hashed)." }
         title: { type: string }
+    WorkImage:
+      type: object
+      description: An image the work embeds. `src_url` and `sha256` are hashed unless revealed.
+      required: [src_url, status]
+      additionalProperties: false
+      properties:
+        src_url: { type: string, description: "The `<img src>` as stored." }
+        sha256:
+          type: string
+          description: |
+            The downloaded image's hash, for `GET /api/v1/images/{sha256}`; omitted until
+            `status` is `ok`.
+        status:
+          {
+            type: string,
+            enum: [queued, ok, failed, skipped, too_large, disallowed],
+          }
     WorkSeries:
       type: object
       description: |

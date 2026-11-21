@@ -39,6 +39,12 @@ type GetCreatorParams struct {
 	ID ID
 }
 
+// GetImageParams is parameters of getImage operation.
+type GetImageParams struct {
+	// The image's SHA-256 in lowercase hex, as a work's `images[].sha256` (revealed).
+	SHA256 string
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	ID ID

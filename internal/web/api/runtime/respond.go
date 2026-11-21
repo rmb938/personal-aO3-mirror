@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"encoding/json/v2"
 	"errors"
 	"log/slog"
@@ -33,8 +34,31 @@ type Response struct {
 // noContent is a 204 response: no body, so nothing for the enforcer to check.
 func NoContent() *Response { return &Response{Status: http.StatusNoContent} }
 
+// Blob is a 200 response of raw bytes that are not JSON (an image), with their Content-Type.
+// It is fanwork content: the enforcer passes it only revealed and replaces it with 403
+// reveal-required in hashed mode, so a handler checks Revealed before reading it.
+type Blob struct {
+	ContentType string // the stored type (image/*); "" is sent as application/octet-stream
+	Body        []byte
+}
+
+// BlobCSP is a Blob's Content-Security-Policy, in place of the API's default: an image opened
+// directly (an SVG) can style itself but never load, embed or run anything.
+const BlobCSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox"
+
+// writeBlob writes b. It never records a body type: the enforcer refuses a JSON Content-Type
+// without one, so a Blob cannot pass as JSON.
+func writeBlob(w http.ResponseWriter, b *Blob) {
+	h := w.Header()
+	h.Set("Content-Type", cmp.Or(b.ContentType, "application/octet-stream"))
+	h.Set("Content-Length", strconv.Itoa(len(b.Body)))
+	h.Set("Content-Security-Policy", BlobCSP)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b.Body)
+}
+
 // handle adapts h: it caps the request body, calls h and writes its result with respond (or,
-// for a 204, the status alone).
+// for a 204, the status alone; for a Blob, its bytes).
 func Handle(log *slog.Logger, h HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
@@ -43,6 +67,10 @@ func Handle(log *slog.Logger, h HandlerFunc) http.HandlerFunc {
 		v, err := h(r)
 		if err != nil {
 			respondError(w, r, log, err)
+			return
+		}
+		if b, ok := v.(*Blob); ok {
+			writeBlob(w, b)
 			return
 		}
 		status := http.StatusOK

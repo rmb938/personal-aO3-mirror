@@ -33,8 +33,20 @@ type Work struct {
 	Collections []WorkCollection `json:"collections"`
 	// Chapters is the chapter list, in order. It is [] for a work known only from listing
 	// blurbs (LastFetchedAt omitted): such a work has no chapters, notes or published date.
-	Chapters      []ChapterRef `json:"chapters"`
-	LastFetchedAt time.Time    `json:"last_fetched_at,omitzero"`
+	Chapters []ChapterRef `json:"chapters"`
+	// Images are the images the work's chapters, notes and summary embed, in the order they
+	// were first seen.
+	Images        []WorkImage `json:"images"`
+	LastFetchedAt time.Time   `json:"last_fetched_at,omitzero"`
+}
+
+// WorkImage is one image a work embeds. SrcURL is the <img src> as stored; SHA256 names the
+// downloaded file for GET /api/v1/images/{sha256} (omitted until Status is ok). Both are
+// hashed unless revealed.
+type WorkImage struct {
+	SrcURL string      `json:"src_url"`
+	SHA256 string      `json:"sha256,omitzero"`
+	Status ImageStatus `json:"status"`
 }
 
 // WorkStats are a work's AO3 counters.

@@ -2,8 +2,12 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,6 +15,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -54,9 +59,55 @@ func newTestControllers(t *testing.T, log *slog.Logger) *controllers.Controllers
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	seed(t, st)
+	imageDir := t.TempDir()
+	seedImages(t, st, imageDir)
 	cfg := config.Default()
 	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime },
-		Sources: cfg.Sources, Interval: cfg.Rate.Interval})
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: imageDir})
+}
+
+// seedImageBody is the downloaded image's bytes, a sentinel (no real image: the API serves the
+// stored bytes as they are). seedImageSHA is its hash.
+var (
+	seedImageBody = []byte(sentinel + "imagebytes")
+	seedImageSHA  = func() string {
+		sum := sha256.Sum256(seedImageBody)
+		return hex.EncodeToString(sum[:])
+	}()
+)
+
+// seedImageType is the downloaded image's stored Content-Type.
+const seedImageType = "image/png"
+
+// seedImages makes seedFetchedWork embed two images with sentinel URLs: the first downloaded
+// (seedImageBody, its file written under dir), the second still queued.
+func seedImages(t *testing.T, st *store.Store, dir string) {
+	t.Helper()
+	ctx := context.Background()
+	p := imagefetch.Path(dir, seedImageSHA, seedImageType)
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+	require.NoError(t, os.WriteFile(p, seedImageBody, 0o600))
+	require.NoError(t, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		n, err := tx.QueueImages(ctx, seedFetchedWork, []string{"https://img.example.test/" + sentinel + "image.png",
+			"https://img.example.test/" + sentinel + "queued.png"})
+		if err != nil {
+			return err
+		}
+		if n != 2 {
+			return fmt.Errorf("seed: queued %d images, want 2", n)
+		}
+		if err := tx.ImageDone(ctx, 1, seedImageSHA, seedImageType, len(seedImageBody)); err != nil {
+			return err
+		}
+		img, err := tx.ImageBySHA(ctx, seedImageSHA)
+		if err != nil {
+			return err
+		}
+		if img.ID != 1 {
+			return fmt.Errorf("seed: downloaded image id %d, want the first queued, 1", img.ID)
+		}
+		return nil
+	}))
 }
 
 // seedFetched stores seedFetchedWork as a fetched page and seedSeries as a fetched, partial

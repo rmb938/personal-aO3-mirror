@@ -143,6 +143,16 @@ type Invoker interface {
 	//
 	// GET /api/v1/healthz
 	GetHealthz(ctx context.Context, options ...RequestOption) (*Health, error)
+	// GetImage invokes getImage operation.
+	//
+	// The image as its host served it, with that Content-Type (`image/*`). An image is content and not
+	// JSON, so it is served only revealed: in hashed mode the request is refused with 403
+	// `reveal-required` before the image is looked up. The response's Content-Security-Policy is
+	// `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox`; clients must still
+	// treat the bytes (an SVG) as untrusted. 404 `not-found` for a hash no downloaded image has.
+	//
+	// GET /api/v1/images/{sha256}
+	GetImage(ctx context.Context, params GetImageParams, options ...RequestOption) (*GetImageOKHeaders, error)
 	// GetJob invokes getJob operation.
 	//
 	// One job.
@@ -1121,6 +1131,89 @@ func (c *Client) sendGetHealthz(ctx context.Context, requestOptions ...RequestOp
 	}
 
 	result, err := decodeGetHealthzResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetImage invokes getImage operation.
+//
+// The image as its host served it, with that Content-Type (`image/*`). An image is content and not
+// JSON, so it is served only revealed: in hashed mode the request is refused with 403
+// `reveal-required` before the image is looked up. The response's Content-Security-Policy is
+// `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox`; clients must still
+// treat the bytes (an SVG) as untrusted. 404 `not-found` for a hash no downloaded image has.
+//
+// GET /api/v1/images/{sha256}
+func (c *Client) GetImage(ctx context.Context, params GetImageParams, options ...RequestOption) (*GetImageOKHeaders, error) {
+	res, err := c.sendGetImage(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetImage(ctx context.Context, params GetImageParams, requestOptions ...RequestOption) (res *GetImageOKHeaders, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/images/"
+	{
+		// Encode "sha256" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "sha256",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.SHA256))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetImageResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

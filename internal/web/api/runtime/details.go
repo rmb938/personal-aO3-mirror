@@ -26,6 +26,7 @@ var (
 	DetailPosition     = problem.NewDetail("must be an integer from 1 to " + itoa(MaxPosition))
 	DetailTagName      = problem.NewDetail("must be a tag name in AO3's /tags/ path form, of 1 to " + itoa(MaxTagNameRunes) +
 		" characters, with no control characters")
+	DetailSHA256      = problem.NewDetail("must be a SHA-256 in hex: 64 characters, 0-9 and a-f")
 	DetailPerPage     = problem.NewDetail("must be an integer from 1 to " + itoa(MaxPerPage))
 	DetailPage        = problem.NewDetail("must be an integer from 1, with (page-1)*per_page at most " + itoa(MaxOffset))
 	DetailRevealValue = problem.NewDetail("must be 1")
@@ -59,6 +60,7 @@ var (
 	DetailNoSeries         = problem.NewDetail("no stored series has this id")
 	DetailNoCreator        = problem.NewDetail("no stored creator has this id")
 	DetailNoCollection     = problem.NewDetail("no stored collection has this id")
+	DetailNoImage          = problem.NewDetail("no downloaded image has this hash")
 	DetailWorkTooLarge     = problem.NewDetail("the work's chapters are over " + workCapMiB + " MiB together; read them one at a time from " + route.Chapter)
 	DetailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
 	DetailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")

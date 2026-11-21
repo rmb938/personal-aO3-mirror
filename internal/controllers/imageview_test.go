@@ -131,8 +131,8 @@ func TestGetWorkImages(t *testing.T) {
 }
 
 func TestValidSHA256(t *testing.T) {
-	assert.True(t, validSHA256(strings.Repeat("0123456789abcdef", 4)))
+	assert.True(t, ValidSHA256(strings.Repeat("0123456789abcdef", 4)))
 	for _, s := range []string{"", strings.Repeat("a", 63), strings.Repeat("a", 65), strings.Repeat("A", 64), strings.Repeat("g", 64)} {
-		assert.False(t, validSHA256(s), "%q", s)
+		assert.False(t, ValidSHA256(s), "%q", s)
 	}
 }

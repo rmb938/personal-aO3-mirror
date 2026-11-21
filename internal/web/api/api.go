@@ -54,6 +54,7 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.Get(route.Collection, a.Handle(h.GetCollection))
 	r.With(runtime.AcceptQuery).Get(route.CollectionWorks, a.Handle(h.ListCollectionWorks))
 	r.With(runtime.AcceptQuery, search).Query(route.CollectionWorks, a.Handle(h.QueryCollectionWorks))
+	r.Get(route.Image, a.Handle(h.GetImage))
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.SourceAction(c.PauseSource)))

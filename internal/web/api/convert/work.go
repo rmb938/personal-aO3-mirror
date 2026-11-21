@@ -32,8 +32,13 @@ func WorkView(v controllers.WorkView) dto.Work {
 		Series:           convSlice(v.Series, workSeries),
 		Collections:      convSlice(v.Collections, workCollection),
 		Chapters:         convSlice(v.Chapters, chapterRef),
+		Images:           convSlice(v.Images, workImage),
 		LastFetchedAt:    utc(v.Work.LastFetched),
 	}
+}
+
+func workImage(i store.WorkImage) dto.WorkImage {
+	return dto.WorkImage{SrcURL: i.URL, SHA256: i.SHA256, Status: dto.ImageStatus(i.Status)}
 }
 
 // WorkSkin maps a work's skin CSS ("" for none).
