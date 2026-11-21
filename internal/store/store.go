@@ -180,8 +180,9 @@ func (c *core) unix() int64 { return c.now().Unix() }
 // migrationSteps are Go steps for migrations whose data change is too costly or too intricate in
 // SQL, keyed "<db>/<file>". A step runs after its file's SQL, in the same transaction.
 var migrationSteps = map[string]func(ctx context.Context, tx querier) error{
-	"meta/0006_work_crossover.sql": backfillCrossover,
-	"meta/0007_work_sort_keys.sql": backfillSortKeys,
+	"meta/0006_work_crossover.sql":   backfillCrossover,
+	"meta/0007_work_sort_keys.sql":   backfillSortKeys,
+	"meta/0008_works_fts_series.sql": backfillFTS,
 }
 
 // migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.

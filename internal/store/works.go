@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"html"
-	"regexp"
 	"strings"
 	"time"
 
@@ -210,11 +208,18 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		if _, err := updateCrossover(ctx, tx, `VALUES (?)`, w.ID); err != nil {
 			return res, fmt.Errorf("update crossover: %w", err)
 		}
-		if err := s.replaceSeries(ctx, tx, w.ID, w.Series); err != nil {
+		renamed, err := s.replaceSeries(ctx, tx, w.ID, w.Series)
+		if err != nil {
 			return res, err
 		}
-		if err := updateFTS(ctx, tx, w); err != nil {
-			return res, err
+		// A renamed series changes the index rows of every work in it.
+		sel, args := `VALUES (?)`, []any{w.ID}
+		if len(renamed) > 0 {
+			sel += ` UNION ` + seriesWorks(`?`+strings.Repeat(`,?`, len(renamed)-1))
+			args = append(args, renamed...)
+		}
+		if err := updateFTS(ctx, tx, sel, args...); err != nil {
+			return res, fmt.Errorf("update fts: %w", err)
 		}
 	}
 	// Blurbs only show a collection count (parseBlurb sets none), so only pages replace them.
@@ -319,25 +324,34 @@ func (s *Tx) replaceTags(ctx context.Context, tx querier, workID int64, tags []m
 	return nil
 }
 
-func (s *Tx) replaceSeries(ctx context.Context, tx querier, workID int64, parts []model.SeriesPart) error {
+// replaceSeries sets the work's series memberships and returns the ids of the series rows it
+// inserted or whose title it changed.
+func (s *Tx) replaceSeries(ctx context.Context, tx querier, workID int64, parts []model.SeriesPart) ([]any, error) {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM series_works WHERE work_id = ?`, workID); err != nil {
-		return err
+		return nil, err
 	}
+	var renamed []any
 	for _, p := range parts {
 		if p.ID <= 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO series (id, title, first_seen) VALUES (?, ?, ?)
-			ON CONFLICT (id) DO UPDATE SET title = CASE WHEN excluded.title != '' THEN excluded.title ELSE series.title END`,
-			p.ID, p.Title, s.unix()); err != nil {
-			return err
+		r, err := tx.ExecContext(ctx, `INSERT INTO series (id, title, first_seen) VALUES (?, ?, ?)
+			ON CONFLICT (id) DO UPDATE SET title = excluded.title
+			WHERE excluded.title != '' AND excluded.title != series.title`, p.ID, p.Title, s.unix())
+		if err != nil {
+			return nil, err
+		}
+		if n, err := r.RowsAffected(); err != nil {
+			return nil, err
+		} else if n > 0 {
+			renamed = append(renamed, p.ID)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO series_works (series_id, work_id, position) VALUES (?,?,?)`,
 			p.ID, workID, p.Position); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return renamed, nil
 }
 
 func replaceCollections(ctx context.Context, tx querier, workID int64, cs []model.Collection) error {
@@ -359,30 +373,6 @@ func replaceCollections(ctx context.Context, tx querier, workID int64, cs []mode
 		}
 	}
 	return nil
-}
-
-var tagRe = regexp.MustCompile(`<[^>]*>`)
-
-// plainText strips HTML for indexing.
-func plainText(h string) string {
-	return strings.Join(strings.Fields(html.UnescapeString(tagRe.ReplaceAllString(h, " "))), " ")
-}
-
-func updateFTS(ctx context.Context, tx querier, w model.Work) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM works_fts WHERE rowid = ?`, w.ID); err != nil {
-		return err
-	}
-	creators := make([]string, 0, len(w.Creators))
-	for _, c := range w.Creators {
-		creators = append(creators, c.User, c.Pseud)
-	}
-	tags := make([]string, 0, len(w.Tags))
-	for _, t := range w.Tags {
-		tags = append(tags, t.Name)
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO works_fts (rowid, title, summary, creators, tags) VALUES (?,?,?,?,?)`,
-		w.ID, w.Title, plainText(w.SummaryHTML), strings.Join(creators, " "), strings.Join(tags, " • "))
-	return err
 }
 
 // SetWorkStatus records a verification result (deleted/hidden/restricted/...). Content is kept.

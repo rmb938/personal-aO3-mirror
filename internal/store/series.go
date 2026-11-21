@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -38,6 +40,10 @@ func (s *Tx) UpsertSeries(ctx context.Context, ser model.Series) error {
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO series_creators (series_id, creator_id) VALUES (?,?)`, ser.ID, id); err != nil {
 			return err
 		}
+	}
+	// The title may have changed; updateFTS writes only the rows that did.
+	if err := updateFTS(ctx, tx, seriesWorks(`?`), ser.ID); err != nil {
+		return fmt.Errorf("update fts: %w", err)
 	}
 	s.log.Debug("series stored", "series_id", ser.ID, "works_count", ser.WorksCount, "words", ser.Words,
 		"complete", ser.Complete, "creators", len(ser.Creators), "summary_len", len(ser.SummaryHTML))
@@ -118,7 +124,14 @@ type SeriesMember struct {
 // longer than one page this covers the first page only.
 func (s *Tx) SetSeriesMembers(ctx context.Context, seriesID int64, members []SeriesMember) error {
 	tx := s.meta
-	// Drop stale unfetched members (a work may have left the series), keep fetched ones.
+	// Drop stale unfetched members (a work may have left the series), keep fetched ones. Their
+	// ids are kept to reindex them: blurb-only works have works rows and index rows too.
+	stale := `SELECT work_id FROM series_works WHERE series_id = ?
+		AND work_id NOT IN (SELECT id FROM works WHERE last_fetched > 0)`
+	dropped, err := queryInt64s(ctx, tx, stale, seriesID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM series_works WHERE series_id = ?
 		AND work_id NOT IN (SELECT id FROM works WHERE last_fetched > 0)`, seriesID); err != nil {
 		return err
@@ -128,6 +141,16 @@ func (s *Tx) SetSeriesMembers(ctx context.Context, seriesID int64, members []Ser
 			seriesID, m.WorkID, m.Position); err != nil {
 			return err
 		}
+	}
+	sel, args := seriesWorks(`?`), []any{seriesID}
+	if len(dropped) > 0 {
+		sel += ` UNION VALUES (?)` + strings.Repeat(`, (?)`, len(dropped)-1)
+		for _, id := range dropped {
+			args = append(args, id)
+		}
+	}
+	if err := updateFTS(ctx, tx, sel, args...); err != nil {
+		return fmt.Errorf("update fts: %w", err)
 	}
 	return nil
 }
