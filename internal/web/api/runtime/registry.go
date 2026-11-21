@@ -35,6 +35,7 @@ var responseTypes = []any{
 	dto.Series{},
 	dto.Creator{},
 	dto.List[dto.Creator]{},
+	dto.Collection{},
 	dto.JobDebug{},
 	dto.WorkDebug{},
 }

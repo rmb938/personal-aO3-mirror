@@ -30,14 +30,16 @@ const (
 	TagWorks  = "/api/v1/tags/{id}/works"
 	// TagByName's {name} is a free-text tag name (AO3's /tags/ path form), not an id, so Path
 	// cannot build it.
-	TagByName     = "/api/v1/tags/by-name/{name}"
-	Media         = "/api/v1/media"
-	MediumFandoms = "/api/v1/media/{id}/fandoms"
-	Series        = "/api/v1/series/{id}"
-	SeriesWorks   = "/api/v1/series/{id}/works"
-	Creators      = "/api/v1/creators"
-	Creator       = "/api/v1/creators/{id}"
-	CreatorWorks  = "/api/v1/creators/{id}/works"
+	TagByName       = "/api/v1/tags/by-name/{name}"
+	Media           = "/api/v1/media"
+	MediumFandoms   = "/api/v1/media/{id}/fandoms"
+	Series          = "/api/v1/series/{id}"
+	SeriesWorks     = "/api/v1/series/{id}/works"
+	Creators        = "/api/v1/creators"
+	Creator         = "/api/v1/creators/{id}"
+	CreatorWorks    = "/api/v1/creators/{id}/works"
+	Collection      = "/api/v1/collections/{id}"
+	CollectionWorks = "/api/v1/collections/{id}/works"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

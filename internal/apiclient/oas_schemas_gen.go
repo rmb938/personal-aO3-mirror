@@ -498,6 +498,74 @@ func (s *ChapterRef) SetPublishedOn(val OptDate) {
 	s.PublishedOn = val
 }
 
+// A stored collection, as the `collections` items of a work. `name`, `title` and `mirror_source_url`
+// are content, hashed unless revealed; hashes match a work's `collections` in the same key epoch.
+// Ref: #/components/schemas/Collection
+type Collection struct {
+	ID ID `json:"id"`
+	// URL name (hashed).
+	Name string `json:"name"`
+	// Display title (hashed).
+	Title string `json:"title"`
+	// Stored works (any status) in the collection: the `total` of `GET /api/v1/collections/{id}/works`. 0
+	// for a collection whose works all left it.
+	Works int `json:"works"`
+	// The AO3 collection works URL to pass to `POST /api/v1/sources` to mirror the collection (hashed
+	// unless revealed). Always set: adding a collection that already is a source fails with
+	// `already-exists`.
+	MirrorSourceURL string `json:"mirror_source_url"`
+}
+
+// GetID returns the value of ID.
+func (s *Collection) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *Collection) GetName() string {
+	return s.Name
+}
+
+// GetTitle returns the value of Title.
+func (s *Collection) GetTitle() string {
+	return s.Title
+}
+
+// GetWorks returns the value of Works.
+func (s *Collection) GetWorks() int {
+	return s.Works
+}
+
+// GetMirrorSourceURL returns the value of MirrorSourceURL.
+func (s *Collection) GetMirrorSourceURL() string {
+	return s.MirrorSourceURL
+}
+
+// SetID sets the value of ID.
+func (s *Collection) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *Collection) SetName(val string) {
+	s.Name = val
+}
+
+// SetTitle sets the value of Title.
+func (s *Collection) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetWorks sets the value of Works.
+func (s *Collection) SetWorks(val int) {
+	s.Works = val
+}
+
+// SetMirrorSourceURL sets the value of MirrorSourceURL.
+func (s *Collection) SetMirrorSourceURL(val string) {
+	s.MirrorSourceURL = val
+}
+
 // ConfirmSourceNoContent is response for ConfirmSource operation.
 type ConfirmSourceNoContent struct{}
 

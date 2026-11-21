@@ -29,6 +29,11 @@ type GetChapterParams struct {
 	Position int
 }
 
+// GetCollectionParams is parameters of getCollection operation.
+type GetCollectionParams struct {
+	ID ID
+}
+
 // GetCreatorParams is parameters of getCreator operation.
 type GetCreatorParams struct {
 	ID ID
@@ -79,6 +84,18 @@ type GetWorkChaptersParams struct {
 // GetWorkSkinParams is parameters of getWorkSkin operation.
 type GetWorkSkinParams struct {
 	ID ID
+}
+
+// ListCollectionWorksParams is parameters of listCollectionWorks operation.
+type ListCollectionWorksParams struct {
+	ID ID
+	// `best_match` needs a search query, which only `QUERY` takes: 422 here.
+	Sort OptWorkSort `json:",omitempty,omitzero"`
+	// Omitted, ascending for `title` and `creator` and descending for the rest.
+	Direction OptSortDirection `json:",omitempty,omitzero"`
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
 // ListCreatorWorksParams is parameters of listCreatorWorks operation.
@@ -162,6 +179,14 @@ type ListWorksParams struct {
 // PauseSourceParams is parameters of pauseSource operation.
 type PauseSourceParams struct {
 	ID ID
+}
+
+// QueryCollectionWorksParams is parameters of queryCollectionWorks operation.
+type QueryCollectionWorksParams struct {
+	ID ID
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
 // QueryCreatorWorksParams is parameters of queryCreatorWorks operation.

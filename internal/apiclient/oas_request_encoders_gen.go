@@ -24,6 +24,20 @@ func encodeAddSourceRequest(
 	return nil
 }
 
+func encodeQueryCollectionWorksRequest(
+	req *WorkQueryRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeQueryCreatorWorksRequest(
 	req *WorkQueryRequest,
 	r *http.Request,

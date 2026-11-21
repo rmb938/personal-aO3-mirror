@@ -700,6 +700,74 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/WorkList" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/collections/{id}:
+    get:
+      operationId: getCollection
+      summary: One stored collection and how many stored works are in it.
+      description: |
+        As AO3's /collections/{name} page. There is no collection listing: AO3's collections
+        index is not mirrored. 404 `not-found` for an unknown collection.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The collection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/collections/{id}/works:
+    get:
+      operationId: listCollectionWorks
+      summary: One page of a collection's stored works, as AO3's collection works page.
+      description: |
+        `GET /api/v1/works` scoped to the works in the collection. `total` equals the
+        collection's `works`. 404 `not-found` for an unknown collection.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: sort
+          in: query
+          description: "`best_match` needs a search query, which only `QUERY` takes: 422 here."
+          schema: { $ref: "#/components/schemas/WorkSort" }
+        - name: direction
+          in: query
+          description: Omitted, ascending for `title` and `creator` and descending for the rest.
+          schema: { $ref: "#/components/schemas/SortDirection" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the collection's works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
+    query:
+      operationId: queryCollectionWorks
+      summary: One page of a collection's stored works matching an AO3-style search and filters.
+      description: |
+        `QUERY /api/v1/works` within the works in the collection. It shares the search rate
+        limit. 404 `not-found` for an unknown collection.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkQueryRequest" }
+      responses:
+        "200":
+          description: A page of the collection's matching works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -2505,6 +2573,29 @@ components:
         page: { type: integer }
         per_page: { type: integer }
         total: { type: integer, description: "Matching creators over all pages." }
+    Collection:
+      type: object
+      description: |
+        A stored collection, as the `collections` items of a work. `name`, `title` and
+        `mirror_source_url` are content, hashed unless revealed; hashes match a work's
+        `collections` in the same key epoch.
+      required: [id, name, title, works, mirror_source_url]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string, description: "URL name (hashed)." }
+        title: { type: string, description: "Display title (hashed)." }
+        works:
+          type: integer
+          description: |
+            Stored works (any status) in the collection: the `total` of
+            `GET /api/v1/collections/{id}/works`. 0 for a collection whose works all left it.
+        mirror_source_url:
+          type: string
+          description: |
+            The AO3 collection works URL to pass to `POST /api/v1/sources` to mirror the
+            collection (hashed unless revealed). Always set: adding a collection that already is
+            a source fails with `already-exists`.
     ChapterRef:
       type: object
       required: [position]

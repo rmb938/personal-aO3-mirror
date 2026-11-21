@@ -1233,7 +1233,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         another type). Plain GETs: no QUERY form, so no `Accept-Query` and no search rate limit.
       - The seed's `seedMedium` (4) is `seedTag`'s parent, checked while seeding; both routes
         have leak samples.
-- [ ] **13. Series, creators, collections**
+- [x] **13. Series, creators, collections**
   - `GET /series/{id}` (with `complete_locally`, `works_total`, `works_mirrored`,
     `missing_positions`, `missing_work_ids`, `mirror_source_url`) and `/series/{id}/works`.
   - `GET /creators/{id}` and `/creators/{id}/works`; `QUERY /creators` (name is reveal-only).
@@ -1323,8 +1323,16 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       transaction. No collection listing: AO3's `/collections` index is not mirrored.
     - `BenchmarkCollectionWorks` (1000 collections on seedWorks' works): a page ~0.5 ms, a count
       ~0.1 ms.
-  - [ ] **13f. Collection routes**: `GET /collections/{id}` and `GET` + `QUERY
-    /collections/{id}/works`.
+  - [x] **13f. Collection routes**: `GET /collections/{id}` and `GET` + `QUERY
+    /collections/{id}/works`. As built:
+    - `GET /collections/{id}` answers `dto.Collection` (`convert.CollectionView`): `id`, `name`,
+      `title` (the work view's hashes), `works` (the works route's total) and
+      `mirror_source_url`, the AO3 collection works URL (`ao3url.KindCollection`) for source
+      add, hashed like the series and creator ones.
+    - `GET` + `QUERY /collections/{id}/works` are the `/works` handlers within
+      `controllers.ListCollectionWorks`. QUERY shares the search rate limit.
+    - `store.ErrNoCollection` is 404 with `DetailNoCollection`. The seed's `seedCollection` (1)
+      holds `seedFetchedWork` only, checked while seeding; every route has a leak sample.
 - [ ] **14. Images (reveal-only)**
   - `GET /images/{sha256}`: the stored Content-Type, `nosniff`, and
     `CSP: default-src 'none'; style-src 'unsafe-inline'` (per `docs/plan.md`).

@@ -38,6 +38,8 @@ const (
 	// seedCreator is the creator of seedWork, seedFetchedWork and seedSeries, login and pseud
 	// sentinels.
 	seedCreator int64 = 1
+	// seedCollection holds seedFetchedWork only, name and title sentinels.
+	seedCollection int64 = 1
 )
 
 // seedTime is the store clock while seeding.
@@ -87,6 +89,13 @@ func seedFetched(ctx context.Context, tx *store.Tx) error {
 	}
 	if len(creators) != 1 || creators[0].ID != seedCreator {
 		return fmt.Errorf("seed: work creators %d, want one, seedCreator %d", len(creators), seedCreator)
+	}
+	collections, err := tx.WorkCollections(ctx, w.ID)
+	if err != nil {
+		return err
+	}
+	if len(collections) != 1 || collections[0].ID != seedCollection {
+		return fmt.Errorf("seed: work collections %d, want one, seedCollection %d", len(collections), seedCollection)
 	}
 	tag, err := tx.TagByName(ctx, sentinel+"fandom")
 	if err != nil {
