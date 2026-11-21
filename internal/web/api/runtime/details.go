@@ -33,6 +33,7 @@ var (
 	DetailJobKind     = problem.OneOf(dto.JobKind(""))
 	DetailWorkSort    = problem.OneOf(dto.WorkSort(""))
 	DetailDirection   = problem.OneOf(dto.SortDirection(""))
+	DetailTagSort     = problem.OneOf(dto.TagSort(""))
 
 	// Source add body (POST /api/v1/sources); the body's own details are in request.
 	DetailConfirmAdminOnly = problem.NewDetail("only the admin socket accepts confirm; a large source added here waits for `source confirm`")
@@ -54,6 +55,7 @@ var (
 	DetailNoWork           = problem.NewDetail("no work has this id")
 	DetailNoChapter        = problem.NewDetail("the work has no stored chapter at this position")
 	DetailNoTag            = problem.NewDetail("no stored tag has this id or name")
+	DetailNoMedium         = problem.NewDetail("no stored media tag has this id")
 	DetailWorkTooLarge     = problem.NewDetail("the work's chapters are over " + workCapMiB + " MiB together; read them one at a time from " + route.Chapter)
 	DetailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
 	DetailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")

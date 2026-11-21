@@ -1777,6 +1777,119 @@ func (s *JobState) UnmarshalText(data []byte) error {
 	}
 }
 
+// A stored media tag on the media page. Names are content, hashed unless revealed.
+// Ref: #/components/schemas/Medium
+type Medium struct {
+	ID   ID     `json:"id"`
+	Name string `json:"name"`
+	// Null until the tag page was read, which the mirror does not do for media.
+	Canonical NilBool `json:"canonical"`
+	// The medium's most used fandoms (a tie by name), as `GET /api/v1/media/{id}/fandoms?sort=uses` lists
+	// them.
+	Fandoms []TagListItem `json:"fandoms"`
+	// Every stored fandom listing the medium as a parent.
+	FandomsTotal int `json:"fandoms_total"`
+}
+
+// GetID returns the value of ID.
+func (s *Medium) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *Medium) GetName() string {
+	return s.Name
+}
+
+// GetCanonical returns the value of Canonical.
+func (s *Medium) GetCanonical() NilBool {
+	return s.Canonical
+}
+
+// GetFandoms returns the value of Fandoms.
+func (s *Medium) GetFandoms() []TagListItem {
+	return s.Fandoms
+}
+
+// GetFandomsTotal returns the value of FandomsTotal.
+func (s *Medium) GetFandomsTotal() int {
+	return s.FandomsTotal
+}
+
+// SetID sets the value of ID.
+func (s *Medium) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *Medium) SetName(val string) {
+	s.Name = val
+}
+
+// SetCanonical sets the value of Canonical.
+func (s *Medium) SetCanonical(val NilBool) {
+	s.Canonical = val
+}
+
+// SetFandoms sets the value of Fandoms.
+func (s *Medium) SetFandoms(val []TagListItem) {
+	s.Fandoms = val
+}
+
+// SetFandomsTotal sets the value of FandomsTotal.
+func (s *Medium) SetFandomsTotal(val int) {
+	s.FandomsTotal = val
+}
+
+// Ref: #/components/schemas/MediumList
+type MediumList struct {
+	Items   []Medium `json:"items"`
+	Page    int      `json:"page"`
+	PerPage int      `json:"per_page"`
+	// Stored media tags over all pages.
+	Total int `json:"total"`
+}
+
+// GetItems returns the value of Items.
+func (s *MediumList) GetItems() []Medium {
+	return s.Items
+}
+
+// GetPage returns the value of Page.
+func (s *MediumList) GetPage() int {
+	return s.Page
+}
+
+// GetPerPage returns the value of PerPage.
+func (s *MediumList) GetPerPage() int {
+	return s.PerPage
+}
+
+// GetTotal returns the value of Total.
+func (s *MediumList) GetTotal() int {
+	return s.Total
+}
+
+// SetItems sets the value of Items.
+func (s *MediumList) SetItems(val []Medium) {
+	s.Items = val
+}
+
+// SetPage sets the value of Page.
+func (s *MediumList) SetPage(val int) {
+	s.Page = val
+}
+
+// SetPerPage sets the value of PerPage.
+func (s *MediumList) SetPerPage(val int) {
+	s.PerPage = val
+}
+
+// SetTotal sets the value of Total.
+func (s *MediumList) SetTotal(val int) {
+	s.Total = val
+}
+
 // NewNilBool returns new NilBool with value set to v.
 func NewNilBool(v bool) NilBool {
 	return NilBool{

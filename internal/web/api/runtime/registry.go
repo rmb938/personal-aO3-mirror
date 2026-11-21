@@ -31,6 +31,7 @@ var responseTypes = []any{
 	dto.WorkChapters{},
 	dto.Tag{},
 	dto.List[dto.TagListItem]{},
+	dto.List[dto.Medium]{},
 	dto.JobDebug{},
 	dto.WorkDebug{},
 }

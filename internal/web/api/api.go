@@ -43,6 +43,8 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.With(runtime.AcceptQuery).Get(route.TagWorks, a.Handle(h.ListTagWorks))
 	r.With(runtime.AcceptQuery, search).Query(route.TagWorks, a.Handle(h.QueryTagWorks))
 	r.Get(route.TagByName, a.Handle(h.GetTagByName))
+	r.Get(route.Media, a.Handle(h.ListMedia))
+	r.Get(route.MediumFandoms, a.Handle(h.ListMediumFandoms))
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.SourceAction(c.PauseSource)))

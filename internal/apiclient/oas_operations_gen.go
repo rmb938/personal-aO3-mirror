@@ -24,6 +24,8 @@ const (
 	GetWorkChaptersOperation   OperationName = "GetWorkChapters"
 	GetWorkSkinOperation       OperationName = "GetWorkSkin"
 	ListJobsOperation          OperationName = "ListJobs"
+	ListMediaOperation         OperationName = "ListMedia"
+	ListMediumFandomsOperation OperationName = "ListMediumFandoms"
 	ListSourcesOperation       OperationName = "ListSources"
 	ListTagWorksOperation      OperationName = "ListTagWorks"
 	ListWorksOperation         OperationName = "ListWorks"

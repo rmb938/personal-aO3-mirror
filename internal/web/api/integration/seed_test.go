@@ -33,6 +33,8 @@ const (
 	// seedTag is seedFetchedWork's fandom tag, read from its tag page: canonical, with a parent,
 	// a meta tag and a synonym, every name a sentinel.
 	seedTag int64 = 3
+	// seedMedium is seedTag's parent, a media tag named on its tag page.
+	seedMedium int64 = 4
 )
 
 // seedTime is the store clock while seeding.
@@ -87,6 +89,13 @@ func seedFetched(ctx context.Context, tx *store.Tx) error {
 		Parents: []string{sentinel + "parent"}, MetaTags: []string{sentinel + "meta"},
 		Synonyms: []string{sentinel + "synonym"}}); err != nil {
 		return err
+	}
+	medium, err := tx.TagByName(ctx, sentinel+"parent")
+	if err != nil {
+		return err
+	}
+	if medium.ID != seedMedium || medium.Type != model.TagMedia {
+		return fmt.Errorf("seed: parent tag id %d type %s, want seedMedium %d, Media", medium.ID, medium.Type, seedMedium)
 	}
 	if err := tx.UpsertSeries(ctx, model.Series{ID: seedSeries, Title: sentinel + "series", WorksCount: 3}); err != nil {
 		return err
