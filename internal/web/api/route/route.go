@@ -40,6 +40,9 @@ const (
 	CreatorWorks    = "/api/v1/creators/{id}/works"
 	Collection      = "/api/v1/collections/{id}"
 	CollectionWorks = "/api/v1/collections/{id}/works"
+	// Image's {sha256} is a downloaded image's hash (a work's images[].sha256), not an id, so
+	// Path cannot build it.
+	Image = "/api/v1/images/{sha256}"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

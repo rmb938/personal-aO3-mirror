@@ -37,7 +37,7 @@ var errImageFile = errors.New("controllers: image file does not match its row")
 // store.ErrNoImage: for a malformed hash, an image never downloaded, or one whose file is gone.
 // The file is read after the transaction ends and checked against its hash.
 func (c *Controllers) GetImage(ctx context.Context, sha string) (Image, error) {
-	if !validSHA256(sha) {
+	if !ValidSHA256(sha) {
 		return Image{}, store.ErrNoImage // also keeps imagefetch.Path to a well-formed name
 	}
 	img, err := store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) (store.StoredImage, error) {
@@ -84,9 +84,9 @@ func readImageFile(path string) (body []byte, err error) {
 	return body, nil
 }
 
-// validSHA256 reports whether s is a hex SHA-256 as imagefetch writes it: 64 lowercase hex
+// ValidSHA256 reports whether s is a hex SHA-256 as imagefetch writes it: 64 lowercase hex
 // characters.
-func validSHA256(s string) bool {
+func ValidSHA256(s string) bool {
 	if len(s) != sha256.Size*2 {
 		return false
 	}

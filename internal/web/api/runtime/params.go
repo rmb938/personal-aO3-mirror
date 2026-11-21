@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 )
@@ -156,6 +157,17 @@ func (p *Params) PathTagName(name dto.ParamName) string {
 	s = ao3url.TagFromParam(s)
 	if s == "" || !problem.ValidText(s, MaxTagNameRunes) {
 		p.Param(string(name), DetailTagName)
+		return ""
+	}
+	return s
+}
+
+// PathSHA256 returns the route's path parameter name when it is a SHA-256 as the image worker
+// names files (64 lowercase hex characters), else "".
+func (p *Params) PathSHA256(name dto.ParamName) string {
+	s := chi.URLParam(p.r, string(name))
+	if !controllers.ValidSHA256(s) {
+		p.Param(string(name), DetailSHA256)
 		return ""
 	}
 	return s

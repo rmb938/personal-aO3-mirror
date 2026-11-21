@@ -181,6 +181,8 @@ var routeSamples = map[string]routeSample{
 		content: true},
 	"QUERY /api/v1/collections/{id}/works": {target: "/api/v1/collections/1/works?per_page=5", status: http.StatusOK,
 		content: true, body: `{"fetched":true}`},
+	"GET /api/v1/images/{sha256}": {target: "/api/v1/images/" + seedImageSHA, status: http.StatusForbidden,
+		content: true, revealStatus: http.StatusOK},
 
 	// Admin socket only.
 	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},
@@ -390,11 +392,11 @@ func TestRoutesMatchOpenAPI(t *testing.T) {
 }
 
 // TestPathParamsDeclared: every route's path parameter is an id the access log records
-// (runtime.PathIDParams) or a free-text name it never logs, so a new parameter needs that
-// decision first.
+// (runtime.PathIDParams) or one it never logs (a free-text name, an image hash), so a new
+// parameter needs that decision first.
 func TestPathParamsDeclared(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	freeText := []dto.ParamName{dto.ParamTagName}
+	freeText := []dto.ParamName{dto.ParamTagName, dto.ParamSHA256}
 	for _, rt := range walkRoutes(t, a.Router(true)) {
 		for seg := range strings.SplitSeq(rt, "/") {
 			name, ok := strings.CutPrefix(seg, "{")
@@ -403,7 +405,7 @@ func TestPathParamsDeclared(t *testing.T) {
 			}
 			p := dto.ParamName(strings.TrimSuffix(name, "}"))
 			assert.True(t, slices.Contains(runtime.PathIDParams, p) || slices.Contains(freeText, p),
-				"%s: path param %q is neither a logged id nor a free-text name", rt, p)
+				"%s: path param %q is neither a logged id nor declared unlogged", rt, p)
 		}
 	}
 }

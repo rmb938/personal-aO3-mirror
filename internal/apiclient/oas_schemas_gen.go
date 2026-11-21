@@ -4,6 +4,7 @@ package apiclient
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"time"
 
@@ -1166,6 +1167,46 @@ func (s *Estimate) SetDiskBytes(val int) {
 // SetWindowed sets the value of Windowed.
 func (s *Estimate) SetWindowed(val bool) {
 	s.Windowed = val
+}
+
+type GetImageOK struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetImageOK) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetImageOKHeaders wraps GetImageOK with response headers.
+type GetImageOKHeaders struct {
+	ContentType string
+	Response    GetImageOK
+}
+
+// GetContentType returns the value of ContentType.
+func (s *GetImageOKHeaders) GetContentType() string {
+	return s.ContentType
+}
+
+// GetResponse returns the value of Response.
+func (s *GetImageOKHeaders) GetResponse() GetImageOK {
+	return s.Response
+}
+
+// SetContentType sets the value of ContentType.
+func (s *GetImageOKHeaders) SetContentType(val string) {
+	s.ContentType = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetImageOKHeaders) SetResponse(val GetImageOK) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/Health
@@ -7637,6 +7678,8 @@ type Work struct {
 	Collections []WorkCollection `json:"collections"`
 	// The chapter list in order, without bodies.
 	Chapters []ChapterRef `json:"chapters"`
+	// The images the work embeds, in the order first seen.
+	Images []WorkImage `json:"images"`
 	// The last full fetch; omitted for a blurb-only work.
 	LastFetchedAt OptTimestamp `json:"last_fetched_at"`
 }
@@ -7744,6 +7787,11 @@ func (s *Work) GetCollections() []WorkCollection {
 // GetChapters returns the value of Chapters.
 func (s *Work) GetChapters() []ChapterRef {
 	return s.Chapters
+}
+
+// GetImages returns the value of Images.
+func (s *Work) GetImages() []WorkImage {
+	return s.Images
 }
 
 // GetLastFetchedAt returns the value of LastFetchedAt.
@@ -7854,6 +7902,11 @@ func (s *Work) SetCollections(val []WorkCollection) {
 // SetChapters sets the value of Chapters.
 func (s *Work) SetChapters(val []ChapterRef) {
 	s.Chapters = val
+}
+
+// SetImages sets the value of Images.
+func (s *Work) SetImages(val []WorkImage) {
+	s.Images = val
 }
 
 // SetLastFetchedAt sets the value of LastFetchedAt.
@@ -8889,6 +8942,115 @@ func (s *WorkDiagStatus) UnmarshalText(data []byte) error {
 		return nil
 	case WorkDiagStatusUnrevealed:
 		*s = WorkDiagStatusUnrevealed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// An image the work embeds. `src_url` and `sha256` are hashed unless revealed.
+// Ref: #/components/schemas/WorkImage
+type WorkImage struct {
+	// The `<img src>` as stored.
+	SrcURL string `json:"src_url"`
+	// The downloaded image's hash, for `GET /api/v1/images/{sha256}`; omitted until `status` is `ok`.
+	SHA256 OptString       `json:"sha256"`
+	Status WorkImageStatus `json:"status"`
+}
+
+// GetSrcURL returns the value of SrcURL.
+func (s *WorkImage) GetSrcURL() string {
+	return s.SrcURL
+}
+
+// GetSHA256 returns the value of SHA256.
+func (s *WorkImage) GetSHA256() OptString {
+	return s.SHA256
+}
+
+// GetStatus returns the value of Status.
+func (s *WorkImage) GetStatus() WorkImageStatus {
+	return s.Status
+}
+
+// SetSrcURL sets the value of SrcURL.
+func (s *WorkImage) SetSrcURL(val string) {
+	s.SrcURL = val
+}
+
+// SetSHA256 sets the value of SHA256.
+func (s *WorkImage) SetSHA256(val OptString) {
+	s.SHA256 = val
+}
+
+// SetStatus sets the value of Status.
+func (s *WorkImage) SetStatus(val WorkImageStatus) {
+	s.Status = val
+}
+
+type WorkImageStatus string
+
+const (
+	WorkImageStatusQueued     WorkImageStatus = "queued"
+	WorkImageStatusOk         WorkImageStatus = "ok"
+	WorkImageStatusFailed     WorkImageStatus = "failed"
+	WorkImageStatusSkipped    WorkImageStatus = "skipped"
+	WorkImageStatusTooLarge   WorkImageStatus = "too_large"
+	WorkImageStatusDisallowed WorkImageStatus = "disallowed"
+)
+
+// AllValues returns all WorkImageStatus values.
+func (WorkImageStatus) AllValues() []WorkImageStatus {
+	return []WorkImageStatus{
+		WorkImageStatusQueued,
+		WorkImageStatusOk,
+		WorkImageStatusFailed,
+		WorkImageStatusSkipped,
+		WorkImageStatusTooLarge,
+		WorkImageStatusDisallowed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WorkImageStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case WorkImageStatusQueued:
+		return []byte(s), nil
+	case WorkImageStatusOk:
+		return []byte(s), nil
+	case WorkImageStatusFailed:
+		return []byte(s), nil
+	case WorkImageStatusSkipped:
+		return []byte(s), nil
+	case WorkImageStatusTooLarge:
+		return []byte(s), nil
+	case WorkImageStatusDisallowed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WorkImageStatus) UnmarshalText(data []byte) error {
+	switch WorkImageStatus(data) {
+	case WorkImageStatusQueued:
+		*s = WorkImageStatusQueued
+		return nil
+	case WorkImageStatusOk:
+		*s = WorkImageStatusOk
+		return nil
+	case WorkImageStatusFailed:
+		*s = WorkImageStatusFailed
+		return nil
+	case WorkImageStatusSkipped:
+		*s = WorkImageStatusSkipped
+		return nil
+	case WorkImageStatusTooLarge:
+		*s = WorkImageStatusTooLarge
+		return nil
+	case WorkImageStatusDisallowed:
+		*s = WorkImageStatusDisallowed
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

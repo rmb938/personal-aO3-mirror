@@ -15,6 +15,7 @@ const (
 	GetCollectionOperation        OperationName = "GetCollection"
 	GetCreatorOperation           OperationName = "GetCreator"
 	GetHealthzOperation           OperationName = "GetHealthz"
+	GetImageOperation             OperationName = "GetImage"
 	GetJobOperation               OperationName = "GetJob"
 	GetSeriesOperation            OperationName = "GetSeries"
 	GetSourceOperation            OperationName = "GetSource"

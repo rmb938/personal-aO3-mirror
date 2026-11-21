@@ -12939,6 +12939,14 @@ func (s *Work) encodeFields(e *jx.Encoder) {
 		e.ArrEnd()
 	}
 	{
+		e.FieldStart("images")
+		e.ArrStart()
+		for _, elem := range s.Images {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
 		if s.LastFetchedAt.Set {
 			e.FieldStart("last_fetched_at")
 			s.LastFetchedAt.Encode(e)
@@ -12946,7 +12954,7 @@ func (s *Work) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfWork = [22]string{
+var jsonFieldsNameOfWork = [23]string{
 	0:  "id",
 	1:  "status",
 	2:  "title",
@@ -12968,7 +12976,8 @@ var jsonFieldsNameOfWork = [22]string{
 	18: "series",
 	19: "collections",
 	20: "chapters",
-	21: "last_fetched_at",
+	21: "images",
+	22: "last_fetched_at",
 }
 
 // Decode decodes Work from json.
@@ -13242,6 +13251,24 @@ func (s *Work) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"chapters\"")
 			}
+		case "images":
+			requiredBitSet[2] |= 1 << 5
+			if err := func() error {
+				s.Images = make([]WorkImage, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem WorkImage
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Images = append(s.Images, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"images\"")
+			}
 		case "last_fetched_at":
 			if err := func() error {
 				s.LastFetchedAt.Reset()
@@ -13264,7 +13291,7 @@ func (s *Work) Decode(d *jx.Decoder) error {
 	for i, mask := range [3]uint8{
 		0b00111111,
 		0b00101100,
-		0b00011111,
+		0b00111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -15302,6 +15329,182 @@ func (s WorkDiagStatus) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *WorkDiagStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *WorkImage) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *WorkImage) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("src_url")
+		e.Str(s.SrcURL)
+	}
+	{
+		if s.SHA256.Set {
+			e.FieldStart("sha256")
+			s.SHA256.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("status")
+		s.Status.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfWorkImage = [3]string{
+	0: "src_url",
+	1: "sha256",
+	2: "status",
+}
+
+// Decode decodes WorkImage from json.
+func (s *WorkImage) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode WorkImage to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "src_url":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.SrcURL = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"src_url\"")
+			}
+		case "sha256":
+			if err := func() error {
+				s.SHA256.Reset()
+				if err := s.SHA256.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"sha256\"")
+			}
+		case "status":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Status.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"status\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode WorkImage")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000101,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfWorkImage) {
+					name = jsonFieldsNameOfWorkImage[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *WorkImage) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *WorkImage) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes WorkImageStatus as json.
+func (s WorkImageStatus) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes WorkImageStatus from json.
+func (s *WorkImageStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode WorkImageStatus to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch WorkImageStatus(v) {
+	case WorkImageStatusQueued:
+		*s = WorkImageStatusQueued
+	case WorkImageStatusOk:
+		*s = WorkImageStatusOk
+	case WorkImageStatusFailed:
+		*s = WorkImageStatusFailed
+	case WorkImageStatusSkipped:
+		*s = WorkImageStatusSkipped
+	case WorkImageStatusTooLarge:
+		*s = WorkImageStatusTooLarge
+	case WorkImageStatusDisallowed:
+		*s = WorkImageStatusDisallowed
+	default:
+		*s = WorkImageStatus(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s WorkImageStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *WorkImageStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

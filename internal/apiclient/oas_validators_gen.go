@@ -3482,6 +3482,34 @@ func (s *Work) Validate() error {
 			Error: err,
 		})
 	}
+	if err := func() error {
+		if s.Images == nil {
+			return errors.New("nil is invalid value")
+		}
+		var failures []validate.FieldError
+		for i, elem := range s.Images {
+			if err := func() error {
+				if err := elem.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				failures = append(failures, validate.FieldError{
+					Name:  fmt.Sprintf("[%d]", i),
+					Error: err,
+				})
+			}
+		}
+		if len(failures) > 0 {
+			return &validate.Error{Fields: failures}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "images",
+			Error: err,
+		})
+	}
 	if len(failures) > 0 {
 		return &validate.Error{Fields: failures}
 	}
@@ -3929,6 +3957,48 @@ func (s WorkDiagStatus) Validate() error {
 	case "restricted":
 		return nil
 	case "unrevealed":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *WorkImage) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.Status.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "status",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s WorkImageStatus) Validate() error {
+	switch s {
+	case "queued":
+		return nil
+	case "ok":
+		return nil
+	case "failed":
+		return nil
+	case "skipped":
+		return nil
+	case "too_large":
+		return nil
+	case "disallowed":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

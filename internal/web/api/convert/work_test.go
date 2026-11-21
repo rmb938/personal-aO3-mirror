@@ -26,6 +26,7 @@ func TestWorkView(t *testing.T) {
 		Series:      []store.WorkSeriesPart{{ID: 77, Title: "Fixture Series", Position: 2}},
 		Collections: []store.CollectionRef{{ID: 8, Name: "fixture_coll", Title: "Fixture Coll"}},
 		Chapters:    []model.Chapter{{ID: 11, Position: 1, Title: "Fixture Chapter", Published: "2026-01-02"}},
+		Images:      []store.WorkImage{{URL: "https://img.example.test/fixture.png", Status: "ok", SHA256: "abc123"}},
 	}
 	got := WorkView(v)
 	assert.Equal(t, dto.Work{
@@ -39,6 +40,7 @@ func TestWorkView(t *testing.T) {
 		Series:        []dto.WorkSeries{{ID: 77, Title: "Fixture Series", Position: 2, CompleteLocally: true}},
 		Collections:   []dto.WorkCollection{{ID: 8, Name: "fixture_coll", Title: "Fixture Coll"}},
 		Chapters:      []dto.ChapterRef{{ID: 11, Position: 1, Title: "Fixture Chapter", PublishedOn: "2026-01-02"}},
+		Images:        []dto.WorkImage{{SrcURL: "https://img.example.test/fixture.png", SHA256: "abc123", Status: "ok"}},
 		LastFetchedAt: fetched.UTC(),
 	}, got)
 	assert.Equal(t, time.UTC, got.LastFetchedAt.Location())
@@ -68,6 +70,13 @@ func TestWorkSeries(t *testing.T) {
 			assert.Equal(t, c.want, workSeries(store.WorkSeriesPart{ID: 7, Title: "Fixture Series", Coverage: c.in}))
 		})
 	}
+}
+
+func TestWorkImage(t *testing.T) {
+	assert.Equal(t, dto.WorkImage{SrcURL: "https://img.example.test/a.png", SHA256: "abc", Status: "ok"},
+		workImage(store.WorkImage{URL: "https://img.example.test/a.png", Status: "ok", SHA256: "abc"}))
+	assert.Equal(t, dto.WorkImage{SrcURL: "https://img.example.test/b.png", Status: "queued"},
+		workImage(store.WorkImage{URL: "https://img.example.test/b.png", Status: "queued"}), "no hash until downloaded")
 }
 
 func TestWorkSkin(t *testing.T) {

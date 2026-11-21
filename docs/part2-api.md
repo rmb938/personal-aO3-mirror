@@ -1333,9 +1333,10 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       `controllers.ListCollectionWorks`. QUERY shares the search rate limit.
     - `store.ErrNoCollection` is 404 with `DetailNoCollection`. The seed's `seedCollection` (1)
       holds `seedFetchedWork` only, checked while seeding; every route has a leak sample.
-- [ ] **14. Images (reveal-only)**
+- [x] **14. Images (reveal-only)**
   - `GET /images/{sha256}`: the stored Content-Type, `nosniff`, and
-    `CSP: default-src 'none'; style-src 'unsafe-inline'` (per `docs/plan.md`).
+    `CSP: default-src 'none'; style-src 'unsafe-inline'` (per `docs/plan.md`; 14b adds
+    `frame-ancestors 'none'; sandbox`).
   - Hashed mode returns 403 by enforcer construction.
   - Add a store read by sha. Work DTOs list image refs as sha256 values, which are hashed in
     hashed mode.
@@ -1355,13 +1356,27 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       missing file is `ErrNoImage` (logged with the image id); an unreadable, oversized or
       mismatched one is an internal error. Bytes are never logged.
     - `controllers.GetWork`'s `WorkView` gains `Images`.
-  - [ ] **14b. Image route and work image refs**: `GET /images/{sha256}` (64 lowercase hex,
-    checked with the other params), refused with `reveal-required` before the file is read in
-    hashed mode (the enforcer's 403 stays the backstop). A `runtime.Blob` response lets `Handle`
-    write raw bytes; `Respond` stays the only JSON writer. The route's CSP is `default-src
-    'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox`. The work DTO gains
-    `images` (`src_url` and `sha256` hashed, `status` a `dto.ImageStatus`); `ErrNoImage` is 404
-    with `DetailNoImage`; the seed gets a sentinel image; leak samples, OpenAPI and the client.
+  - [x] **14b. Image route and work image refs**: `GET /api/v1/images/{sha256}` and the work
+    DTO's `images`. As built:
+    - `{sha256}` (`dto.ParamSHA256`, never logged, like the tag name) is read by
+      `Params.PathSHA256` with the other params, checked by `controllers.ValidSHA256` (now
+      exported): anything but 64 lowercase hex is a `validation-error` (`DetailSHA256`), hashed
+      or not.
+    - In hashed mode the handler refuses with 403 `reveal-required` (`DetailNotJSON`, as the
+      enforcer's replacement) before calling `GetImage`, so an unknown hash is refused the same
+      way. The enforcer's 403 stays the backstop.
+    - A handler returning `*runtime.Blob` (`ContentType`, `Body`) has `Handle` write the bytes
+      with their Content-Type (`application/octet-stream` when empty, never sniffed),
+      Content-Length and `runtime.BlobCSP` (`default-src 'none'; style-src 'unsafe-inline';
+      frame-ancestors 'none'; sandbox`) in place of the API's CSP. It records no body type, so
+      a Blob claiming JSON is a 500; `Respond` stays the only JSON writer.
+    - `store.ErrNoImage` is 404 with `DetailNoImage`.
+    - `dto.Work` gains `images`: `dto.WorkImage` (`src_url`, `sha256` omitted until
+      downloaded, both hashed; `status` a `dto.ImageStatus`), mapped by `convert.workImage`.
+    - The seed makes `seedFetchedWork` embed a downloaded sentinel image (`seedImageSHA`, its
+      file in the controllers' temp `ImageDir`) and a queued one; every route has a leak sample
+      (the image route: 403 hashed, 200 revealed). OpenAPI declares the `image/*` binary
+      response; the client is regenerated.
 - [ ] **15. Hardening pass**
   - Fuzz tests for the param and body parsers.
   - Run the `/security-review` skill and `make deadcode`; govulncheck.
