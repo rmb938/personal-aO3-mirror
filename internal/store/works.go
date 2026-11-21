@@ -431,24 +431,31 @@ type WorkRow struct {
 	LastFetched time.Time // zero: known from listing blurbs only, so no chapters or bodies
 }
 
-// Work returns a work's own row, or ErrNoWork.
-func (s *ReadTx) Work(ctx context.Context, id int64) (WorkRow, error) {
+// workRowCols are the works columns scanWorkRow reads, in order.
+const workRowCols = `id, title, summary_html, notes_html, endnotes_html, language, words, chapters_posted,
+	chapters_expected, complete, published, revised_at, kudos, hits, comments, bookmarks, restricted, anonymous,
+	status, last_fetched`
+
+// scanWorkRow scans one row of workRowCols.
+func scanWorkRow(row interface{ Scan(...any) error }) (WorkRow, error) {
 	var r WorkRow
 	w := &r.Work
-	w.ID = id
 	var complete, restricted, anonymous int
 	var fetched int64
-	err := s.meta.QueryRowContext(ctx, `SELECT title, summary_html, notes_html, endnotes_html, language, words,
-		chapters_posted, chapters_expected, complete, published, revised_at, kudos, hits, comments, bookmarks,
-		restricted, anonymous, status, last_fetched FROM works WHERE id = ?`, id).Scan(&w.Title, &w.SummaryHTML,
-		&w.NotesHTML, &w.EndNotesHTML, &w.Language, &w.Words, &w.ChaptersPosted, &w.ChaptersExpected, &complete,
-		&w.Published, &w.Revised, &w.Stats.Kudos, &w.Stats.Hits, &w.Stats.Comments, &w.Stats.Bookmarks, &restricted,
-		&anonymous, &r.Status, &fetched)
+	err := row.Scan(&w.ID, &w.Title, &w.SummaryHTML, &w.NotesHTML, &w.EndNotesHTML, &w.Language, &w.Words,
+		&w.ChaptersPosted, &w.ChaptersExpected, &complete, &w.Published, &w.Revised, &w.Stats.Kudos, &w.Stats.Hits,
+		&w.Stats.Comments, &w.Stats.Bookmarks, &restricted, &anonymous, &r.Status, &fetched)
+	w.Complete, w.Restricted, w.Anonymous = complete == 1, restricted == 1, anonymous == 1
+	r.LastFetched = unixTime(fetched)
+	return r, err
+}
+
+// Work returns a work's own row, or ErrNoWork.
+func (s *ReadTx) Work(ctx context.Context, id int64) (WorkRow, error) {
+	r, err := scanWorkRow(s.meta.QueryRowContext(ctx, `SELECT `+workRowCols+` FROM works WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNoWork
 	}
-	w.Complete, w.Restricted, w.Anonymous = complete == 1, restricted == 1, anonymous == 1
-	r.LastFetched = unixTime(fetched)
 	return r, err
 }
 

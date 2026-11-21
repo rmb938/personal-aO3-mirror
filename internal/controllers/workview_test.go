@@ -42,6 +42,28 @@ func seedViewWork(t *testing.T, e *env) {
 	}))
 }
 
+func TestListWorks(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	seedViewWork(t, e)
+
+	page, total, err := e.svc.ListWorks(ctx, model.WorkFilter{Offset: 1, Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, page, 1)
+	assert.Equal(t, int64(1), page[0].ID, "same revised date: higher id first")
+	assert.Equal(t, "Fixture Title View", page[0].Title)
+
+	page, total, err = e.svc.ListWorks(ctx, model.WorkFilter{Fetched: new(false), Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, page, 1)
+	assert.Equal(t, int64(2), page[0].ID)
+
+	_, _, err = e.svc.ListWorks(ctx, model.WorkFilter{})
+	require.Error(t, err)
+}
+
 func TestGetWork(t *testing.T) {
 	e := newEnv(t, 0)
 	ctx := context.Background()

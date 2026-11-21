@@ -25,6 +25,21 @@ type WorkView struct {
 	Chapters    []model.Chapter // id, position, title, published date only
 }
 
+// ListWorks returns one page of the works matching f (f.Offset ≥ 0, f.Limit ≥ 1, in f's order)
+// and the number of matching works over all pages, read in one transaction so they agree. The
+// rows' relation slices are left empty.
+func (c *Controllers) ListWorks(ctx context.Context, f model.WorkFilter) (page []store.WorkRow, total int, err error) {
+	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		var err error
+		if page, err = tx.FindWorks(ctx, f); err != nil {
+			return err
+		}
+		total, err = tx.CountWorks(ctx, f)
+		return err
+	})
+	return page, total, err
+}
+
 // GetWork returns one stored work with its creators, tags, series (with coverage),
 // collections and chapter list, or store.ErrNoWork.
 func (c *Controllers) GetWork(ctx context.Context, id int64) (WorkView, error) {
