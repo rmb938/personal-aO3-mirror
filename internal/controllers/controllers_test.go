@@ -12,7 +12,7 @@ import (
 
 // A WaitError (nothing sent, the job is requeued without an attempt) never counts as giving up,
 // even on the last attempt; a permanent error or the last retryable one does.
-func TestGiveUpInfoIgnoresWait(t *testing.T) {
+func TestMarkIfGivingUpIgnoresWait(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range []struct {
 		err   error
@@ -26,7 +26,7 @@ func TestGiveUpInfoIgnoresWait(t *testing.T) {
 		{PermanentError{Code: CodeTooLarge}, false, true},
 	} {
 		marked := false
-		err := giveUpInfo(ctx, c.err, c.final, func() error { marked = true; return nil })
+		err := markIfGivingUp(ctx, c.err, c.final, func() error { marked = true; return nil })
 		require.ErrorIs(t, err, c.err)
 		require.Equal(t, c.mark, marked, "%v final=%t", c.err, c.final)
 	}

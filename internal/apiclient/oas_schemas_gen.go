@@ -3534,6 +3534,34 @@ func (s *ProblemErrorsItem) SetPointer(val OptString) {
 	s.Pointer = val
 }
 
+// ProblemHeaders wraps Problem with response headers.
+type ProblemHeaders struct {
+	Location OptString
+	Response Problem
+}
+
+// GetLocation returns the value of Location.
+func (s *ProblemHeaders) GetLocation() OptString {
+	return s.Location
+}
+
+// GetResponse returns the value of Response.
+func (s *ProblemHeaders) GetResponse() Problem {
+	return s.Response
+}
+
+// SetLocation sets the value of Location.
+func (s *ProblemHeaders) SetLocation(val OptString) {
+	s.Location = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ProblemHeaders) SetResponse(val Problem) {
+	s.Response = val
+}
+
+func (*ProblemHeaders) addSourceRes() {}
+
 // ProblemStatusCode wraps Problem with StatusCode.
 type ProblemStatusCode struct {
 	StatusCode int

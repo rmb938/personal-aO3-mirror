@@ -30,12 +30,15 @@ commands:
   fetch-work [--now] ID|URL    queue one work at top priority (--now: fetch here if no daemon)
   reparse [--all] [--work ID]  rebuild parsed tables from stored raw pages; makes no requests
   status             content-free queue/progress summary
-  jobs [--state S] [--kind K] [--source ID] [--limit N]
+  jobs [--state S] [--kind K] [--source ID] [--limit N] [--names]
                      list jobs (ids, targets, states, errors); queued jobs in queue order
-  debug job|work ID  content-free trace for one job/work
+  debug job|work ID [--names]  trace for one job/work
+                     (jobs and debug hide targets/paths/errors as hashes unless --names)
   serve [--no-reveal]  run the JSON API (api: config); strings are hashed unless a request
                      asks to reveal; --no-reveal refuses that too (docs/part2-api.md)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
+
+source, status, jobs and debug talk to the API's admin socket: 'ao3mirror serve' must be running.
 `
 
 func main() {
@@ -111,16 +114,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "serve":
 		return runServe(ctx, cfg, logger, rest[1:], stderr)
-	case "jobs":
-		a, err := openApp(cfg, logger)
-		if err != nil {
-			fmt.Fprintf(stderr, "open: %v\n", err)
-			return 1
+	case "run":
+		if len(rest) > 1 {
+			fs.Usage()
+			return 2
 		}
-
-		return runJobs(ctx, a, rest[1:], stdout, stderr)
+		return runDaemon(ctx, cfg, logger, stderr)
+	case "fetch-work":
+		return runFetchWork(ctx, cfg, logger, rest[1:], stdout, stderr)
 	case "reparse":
-
 		// Offline: opens the store only; no HTTP client is built.
 		st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: logger})
 		if err != nil {
@@ -129,10 +131,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		defer st.Close()
 		ctl := newControllers(cfg, logger, st, nil)
-
 		return runReparse(ctx, ctl, rest[1:], stdout, stderr)
-	case "source", "run", "status", "debug", "fetch-work":
-		a, err := openApp(cfg, logger)
+	case "source", "status", "jobs", "debug":
+		// API clients: they talk to the admin socket of a running serve, never to the store.
+		a, err := openApp(cfg)
 		if err != nil {
 			fmt.Fprintf(stderr, "open: %v\n", err)
 			return 1
@@ -140,13 +142,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		switch rest[0] {
 		case "source":
 			return runSource(ctx, a, rest[1:], stdout, stderr)
-		case "run":
-			return runDaemon(ctx, a, stderr)
 		case "status":
-			return runStatus(ctx, a, stdout, stderr)
-			// TODO: make a API for fetch work
-		// case "fetch-work":
-		// 	return runFetchWork(ctx, a, rest[1:], stdout, stderr)
+			return runStatus(ctx, a, rest[1:], stdout, stderr)
+		case "jobs":
+			return runJobs(ctx, a, rest[1:], stdout, stderr)
 		default:
 			return runDebug(ctx, a, rest[1:], stdout, stderr)
 		}

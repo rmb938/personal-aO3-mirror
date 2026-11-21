@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/apiclient"
@@ -18,41 +17,38 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
-// app bundles the long-lived pieces commands need.
+// apiTimeout bounds one CLI call to the admin socket, from dial to the end of the response.
+const apiTimeout = time.Minute
+
+// app bundles what the API commands (source, jobs, status, debug) need: the config and a
+// client for the admin socket of a running `ao3mirror serve`. They never open the store.
 type app struct {
-	cfg       config.Config
-	log       *slog.Logger
-	apiClient *apiclient.Client
+	cfg    config.Config
+	client *apiclient.Client
 }
 
-func openApp(cfg config.Config, log *slog.Logger) (*app, error) {
-	a := &app{cfg: cfg, log: log}
-	clientOpt := apiclient.WithClient(&http.Client{
+func openApp(cfg config.Config) (*app, error) {
+	sock := cfg.Path(cfg.API.AdminSocket)
+	var d net.Dialer
+	hc := &http.Client{
+		Timeout: apiTimeout,
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost:   1,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   15 * time.Second,
-			ResponseHeaderTimeout: 60 * time.Second,
-
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				var d net.Dialer
-				adminSocket := path.Join(a.cfg.DataDir, "api", "admin.sock")
-				return d.DialContext(ctx, "unix", adminSocket)
+			// Every request goes to the admin socket, whatever the URL's host.
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return d.DialContext(ctx, "unix", sock)
 			},
+			MaxIdleConnsPerHost: 1,
 		},
-	})
-
-	var err error
-	a.apiClient, err = apiclient.NewClient("http://unix", clientOpt)
+	}
+	c, err := apiclient.NewClient("http://admin.sock", apiclient.WithClient(hc))
 	if err != nil {
 		return nil, err
 	}
-
-	return a, nil
+	return &app{cfg: cfg, client: c}, nil
 }
 
-// newControllers builds the business layer. client is nil for offline commands (reparse): no
-// HTTP client is ever built for them, and any AO3 fetch fails with controllers.ErrOffline.
+// newControllers builds the business layer. client is nil for offline commands (reparse, serve):
+// no HTTP client is ever built for them, and any AO3 fetch fails with controllers.ErrOffline.
 func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client *httpx.Client) *controllers.Controllers {
 	o := controllers.Options{
 		Store: st, Logger: log, Now: time.Now,
@@ -65,6 +61,35 @@ func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client
 		o.Client = client
 	}
 	return controllers.New(o)
+}
+
+// newAO3Client builds the one AO3 client of a fetching process (`run`, `fetch-work --now`). Every
+// request it makes is logged, content-free, to the requests table for `status` and `debug`.
+func newAO3Client(cfg config.Config, log *slog.Logger, st *store.Store) (*httpx.Client, error) {
+	base, err := baseURL()
+	if err != nil {
+		return nil, err
+	}
+	return httpx.New(httpx.Options{
+		BaseURL:     base,
+		UserAgent:   cfg.UserAgent(version),
+		Interval:    cfg.Rate.Interval,
+		Jitter:      cfg.Rate.Jitter,
+		DailyBudget: cfg.Rate.DailyBudget,
+		Logger:      log,
+		OnRequest: func(r httpx.RequestRecord) {
+			// Its own one-row transaction: the request ended outside any.
+			row := store.RequestRow{
+				Time: r.Time, ReqID: r.ReqID, Kind: string(r.Kind), Path: r.SafePath, Status: r.Status,
+				Class: string(r.Class), Reason: r.Reason, Bytes: r.Bytes, Duration: r.Duration, Waited: r.Waited, Hop: r.Hop, JobID: r.JobID,
+			}
+			if err := st.InTx(context.Background(), func(ctx context.Context, tx *store.Tx) error {
+				return tx.InsertRequest(ctx, row)
+			}); err != nil {
+				log.Warn("request log insert failed", "err", err.Error())
+			}
+		},
+	})
 }
 
 // baseURL returns the AO3 base URL. AO3MIRROR_BASE_URL may point at a local fake AO3

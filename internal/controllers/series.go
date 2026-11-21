@@ -25,7 +25,7 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool)
 	}
 	resp, err := c.ao3Get(ctx, httpx.KindSeries, "/series/"+target)
 	if err != nil {
-		return nil, giveUpInfo(ctx, err, final, markFetched)
+		return nil, markIfGivingUp(ctx, err, final, markFetched)
 	}
 	detail := &SeriesInfoDetail{SeriesID: new(id), Class: new(string(resp.Class)), ReqID: new(resp.ReqID)}
 	switch resp.Class {
@@ -33,7 +33,7 @@ func (c *Controllers) FetchSeriesInfo(ctx context.Context, id int64, final bool)
 		return detail, markFetched()
 	}
 	if err := outcome(resp); err != nil {
-		return detail, giveUpInfo(ctx, err, final, markFetched)
+		return detail, markIfGivingUp(ctx, err, final, markFetched)
 	}
 	ser, rep, err := parse.ParseSeries(id, resp.Body, c.options.Now())
 	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "series_id", id}, rep.Attrs()...)...)

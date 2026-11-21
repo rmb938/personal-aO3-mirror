@@ -31,7 +31,7 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (*
 	attempted := func() error { return update(store.TagInfoUpdate{AttemptOnly: true}) }
 	resp, err := c.ao3Get(ctx, httpx.KindTag, "/tags/"+ao3url.TagParam(t.Name))
 	if err != nil {
-		return nil, giveUpInfo(ctx, err, final, attempted)
+		return nil, markIfGivingUp(ctx, err, final, attempted)
 	}
 	skelID := strconv.FormatInt(id, 10)
 	detail := &TagInfoDetail{TagID: new(id), Class: new(string(resp.Class)), ReqID: new(resp.ReqID)}
@@ -41,7 +41,7 @@ func (c *Controllers) FetchTagInfo(ctx context.Context, id int64, final bool) (*
 	if err := outcome(resp); err != nil {
 		// Permanent (restricted, hidden, odd answer) or out of retries. An odd answer is not a
 		// tag page, so no skeleton is saved for it.
-		return detail, giveUpInfo(ctx, err, final, attempted)
+		return detail, markIfGivingUp(ctx, err, final, attempted)
 	}
 	info, rep, err := parse.ParseTag(resp.Body)
 	c.logger(ctx).Debug("parse report", append([]any{"req_id", resp.ReqID, "tag_id", id}, rep.Attrs()...)...)

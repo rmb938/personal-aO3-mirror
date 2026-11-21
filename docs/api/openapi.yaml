@@ -88,6 +88,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SourceAddQueued" }
+        "409":
+          description: The source already exists (`already-exists`).
+          headers:
+            Location:
+              { description: "The existing source.", schema: { type: string } }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/sources/{id}:
     get:

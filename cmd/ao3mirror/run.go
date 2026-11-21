@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
-	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/scheduler"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -88,8 +89,10 @@ func daemonRunning(dataDir string) (bool, error) {
 	return false, unlockDaemon(f)
 }
 
-func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
-	unlock, err := lockDaemon(a.cfg.DataDir)
+// runDaemon is `ao3mirror run`: the scheduler (and the image worker) until ctx ends. It is the
+// only process that talks to AO3, and it holds the daemon lock while it runs.
+func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut io.Writer) int {
+	unlock, err := lockDaemon(cfg.DataDir)
 	if err != nil {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
@@ -100,57 +103,31 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 		}
 	}()
 
-	st, err := store.Open(ctx, a.cfg.DataDir, store.Options{Logger: a.log})
+	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
 	if err != nil {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
 	}
 	defer st.Close()
 
-	base, err := baseURL()
+	client, err := newAO3Client(cfg, log, st)
 	if err != nil {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
 	}
-	client, err := httpx.New(httpx.Options{
-		BaseURL:     base,
-		UserAgent:   a.cfg.UserAgent(version),
-		Interval:    a.cfg.Rate.Interval,
-		Jitter:      a.cfg.Rate.Jitter,
-		DailyBudget: a.cfg.Rate.DailyBudget,
-		Logger:      a.log,
-		OnRequest: func(r httpx.RequestRecord) {
-			// Content-free request log for `status` and debugging (its own one-row transaction).
-			row := store.RequestRow{
-				Time: r.Time, ReqID: r.ReqID, Kind: string(r.Kind), Path: r.SafePath, Status: r.Status,
-				Class: string(r.Class), Reason: r.Reason, Bytes: r.Bytes, Duration: r.Duration, Waited: r.Waited, Hop: r.Hop, JobID: r.JobID,
-			}
-			if err := st.InTx(context.Background(), func(ctx context.Context, tx *store.Tx) error {
-				return tx.InsertRequest(ctx, row)
-			}); err != nil {
-				a.log.Warn("request log insert failed", "err", err.Error())
-			}
-		},
-	})
-	if err != nil {
-		fmt.Fprintf(errOut, "run: %v\n", err)
-		return 1
-	}
-
-	ctl := newControllers(a.cfg, a.log, st, client)
-
-	s := scheduler.New(scheduler.Options{Store: st, Controllers: ctl, Pacer: client, Logger: a.log})
-	a.log.Info("daemon starting", "interval", a.cfg.Rate.Interval.String(), "daily_budget", a.cfg.Rate.DailyBudget,
-		"user_agent_contact_set", a.cfg.Contact.Discord != "", "images", a.cfg.Images.Enabled,
-		"tag_info_types", len(a.cfg.Tags.InfoTypes))
+	ctl := newControllers(cfg, log, st, client)
+	s := scheduler.New(scheduler.Options{Store: st, Controllers: ctl, Pacer: client, Logger: log})
+	log.Info("daemon starting", "interval", cfg.Rate.Interval.String(), "daily_budget", cfg.Rate.DailyBudget,
+		"user_agent_contact_set", cfg.Contact.Discord != "", "images", cfg.Images.Enabled,
+		"tag_info_types", len(cfg.Tags.InfoTypes))
 
 	// Image downloads go to external hosts (not AO3), so they run beside the AO3 loop with their
 	// own per-host pacing.
 	var wg sync.WaitGroup
-	if a.cfg.Images.Enabled {
+	if cfg.Images.Enabled {
 		w, err := imagefetch.New(imagefetch.Options{
-			Store: st, UserAgent: client.UserAgent(), Dir: a.cfg.Path("images"),
-			PerHostInterval: a.cfg.Images.PerHostInterval, MaxBytes: a.cfg.Images.MaxBytes, Logger: a.log,
+			Store: st, UserAgent: client.UserAgent(), Dir: cfg.Path("images"),
+			PerHostInterval: cfg.Images.PerHostInterval, MaxBytes: cfg.Images.MaxBytes, Logger: log,
 		})
 		if err != nil {
 			fmt.Fprintf(errOut, "run: images: %v\n", err)
@@ -158,7 +135,7 @@ func runDaemon(ctx context.Context, a *app, errOut io.Writer) int {
 		}
 		wg.Go(func() {
 			if err := w.Run(ctx); err != nil {
-				a.log.Error("image worker stopped", "err", err.Error())
+				log.Error("image worker stopped", "err", err.Error())
 			}
 		})
 	}

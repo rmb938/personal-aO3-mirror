@@ -5,21 +5,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/apiclient"
-	"github.com/rmb938/personal-aO3-mirror/internal/config"
-	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
-	"github.com/rmb938/personal-aO3-mirror/internal/model"
-	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
 const sourceUsage = `usage: ao3mirror source <command> [flags]
 
-  add URL [--order kudos_desc] [--priority N] [--poll 6h] [--confirm] [--wait 2m]
+  add URL [--order kudos_desc] [--priority N] [--poll 6h] [--confirm] [--wait 2m] [--names]
         add an AO3 tag/user/pseud/bookmarks/series/collection/work URL. The daemon fetches
         page 1 once (1 request) to estimate the backfill; with a daemon running, add waits up
         to --wait for it, otherwise the add stays queued for 'ao3mirror run'. Sources over
@@ -36,82 +32,12 @@ const sourceUsage = `usage: ao3mirror source <command> [flags]
                            whole listing (rescan) and clears a parse-failure block
   set ID [--poll 3h] [--priority N]   change poll interval / priority after adding
 
+Every source command talks to the API's admin socket, so 'ao3mirror serve' must be running.
 Tag/user/collection names are hidden (shown as hashes) unless --names is given.
 `
 
-// waitSourceAdd follows a queued add: with a daemon running it waits up to wait for page 1 and
-// prints the result; otherwise the add stays queued for the next `ao3mirror run`.
-func waitSourceAdd(ctx context.Context, apiClient *apiclient.Client, cfg config.Config, q apiclient.SourceAddQueuedHeaders, wait time.Duration, out, errOut io.Writer) int {
-	verb := "queued"
-	if !q.Response.Created {
-		verb = "already queued"
-	}
-	fmt.Fprintf(out, "source add %s as job %d (see: ao3mirror debug job %d)\n", verb, q.Response.JobID, q.Response.JobID)
-	running, err := daemonRunning(cfg.DataDir)
-	if err != nil {
-		fmt.Fprintf(errOut, "add: checking for a running daemon: %v\n", err)
-		return 1
-	}
-	if !running {
-		fmt.Fprintf(out, "no daemon running: 'ao3mirror run' fetches page 1 (1 request) and adds the source\n")
-		return 0
-	}
-	if wait <= 0 {
-		return 0
-	}
-	fmt.Fprintf(out, "waiting for the daemon to fetch page 1...\n")
-	deadline := time.Now().Add(wait)
-	for {
-		sourceAdd, err := apiClient.GetSourceAdd(ctx, apiclient.GetSourceAddParams{
-			JobID: q.Response.JobID,
-		})
-		if err != nil {
-			fmt.Fprintf(errOut, "add: %v\n", err)
-			return 1
-		}
-		switch sourceAdd.State {
-		case model.JobDone:
-			printAdded(out, cfg, apiclient.SourceAddResultHeaders{
-				Response: sourceAdd.Result.Value,
-			})
-			return 0
-		case apiclient.JobStateFailed, apiclient.JobStateCancelled:
-			if id := sourceAdd.ExistingSourceID.Value; id != 0 {
-				fmt.Fprintf(errOut, "already added as source %d (see: ao3mirror source show %d)\n", id, id)
-				return 1
-			}
-			fmt.Fprintf(errOut, "add failed: %s: %s\n", dash(string(sourceAdd.LastErrorCode.Value)), dash(sourceAdd.LastErrorDetail.Value))
-			return 1
-		}
-		if time.Now().After(deadline) {
-			fmt.Fprintf(out, "still %s after %s (AO3 busy or a long queue); the daemon adds the source when it gets to it\n", sourceAdd.State, wait)
-			return 0
-		}
-		select {
-		case <-ctx.Done():
-			fmt.Fprintf(out, "stopped waiting; the add stays queued\n")
-			return 0
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func printAdded(out io.Writer, cfg config.Config, res apiclient.SourceAddResultHeaders) {
-	s, e := res.Response.Source, res.Response.Estimate
-	fmt.Fprintf(out, "source %d added: kind=%s target=%s state=%s order=%s\n", s.ID, s.Kind, s.Target, s.State, s.Order.Value)
-	fmt.Fprintf(out, "estimate: %s works, %s listing pages; ~%s requests (~%s at %s/request), ~%s on disk\n",
-		comma(e.Total), comma(e.Pages), comma(e.Requests), human(time.Duration(e.Duration)), cfg.Rate.Interval, mb(int64(e.DiskBytes)))
-	if e.Windowed {
-		fmt.Fprintf(out, "note: over 100,000 works; backfill will be sliced into date windows\n")
-	}
-	if res.Response.Blurbs > 0 {
-		fmt.Fprintf(out, "page 1: %d works stored\n", res.Response.Blurbs)
-	}
-	if s.State == apiclient.SourceStatePendingConfirm {
-		fmt.Fprintf(out, "pending: more than sources.auto_confirm_max (%d) works. Start it with 'ao3mirror source confirm %d',\nor remove it and re-add a narrower URL (filters on the tag page).\n",
-			cfg.Sources.AutoConfirmMax, s.ID)
-	}
-}
+// listPerPage is the page size the CLI lists with: the API's maximum.
+const listPerPage = 100
 
 func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -121,294 +47,386 @@ func runSource(ctx context.Context, a *app, args []string, out, errOut io.Writer
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "add":
-		fs := flag.NewFlagSet("source add", flag.ContinueOnError)
-		fs.SetOutput(errOut)
-		order := fs.String("order", "", "backfill order (default sources.default_backfill_order)")
-		prio := fs.Int("priority", 0, "priority within a scheduling class (higher first)")
-		poll := fs.Duration("poll", 0, "update poll interval (default sources.poll_interval)")
-		confirm := fs.Bool("confirm", false, "skip the auto_confirm_max gate")
-		names := fs.Bool("names", false, "show tag/user names")
-		wait := fs.Duration("wait", 2*time.Minute, "how long to wait for a running daemon to fetch page 1 (0: don't wait)")
-		u, ok := parseWithPositional(fs, rest)
-		if !ok {
-			fmt.Fprint(errOut, sourceUsage)
-			return 2
-		}
-
-		sourceAddRequest := &apiclient.SourceAddRequest{
-			URL: u,
-		}
-
-		if len(*order) > 0 {
-			sourceAddRequest.Order = apiclient.NewOptOrder(apiclient.Order(*order))
-		}
-		if *prio != 0 {
-			sourceAddRequest.Priority = apiclient.NewOptInt(*prio)
-		}
-		if *poll != 0 {
-			sourceAddRequest.PollInterval = apiclient.NewOptDuration(apiclient.Duration(*poll))
-		}
-		if *confirm {
-			sourceAddRequest.Confirm = apiclient.NewOptBool(true)
-		}
-
-		resp, err := a.apiClient.AddSource(ctx, sourceAddRequest, apiclient.WithEditRequest(func(req *http.Request) error {
-			q := req.URL.Query()
-
-			if *names {
-				q.Add(runtime.RevealParam, "1")
-			}
-
-			req.URL.RawQuery = q.Encode()
-			return nil
-		}))
-		if err != nil {
-			fmt.Fprintf(errOut, "add failed: %v\n", err)
-			return 1
-		}
-
-		if queued, ok := resp.(*apiclient.SourceAddQueuedHeaders); ok {
-			return waitSourceAdd(ctx, a.apiClient, a.cfg, *queued, *wait, out, errOut)
-		} else if result, ok := resp.(*apiclient.SourceAddResultHeaders); ok {
-			printAdded(out, a.cfg, *result)
-			return 0
-		}
-
-		fmt.Fprintf(errOut, "Unknown Add Source Result Type: %v\n", resp)
-		return 1
+		return sourceAdd(ctx, a, rest, out, errOut)
 	case "list":
-		fs := flag.NewFlagSet("source list", flag.ContinueOnError)
-		fs.SetOutput(errOut)
-		names := fs.Bool("names", false, "show tag/user names")
-		if err := fs.Parse(rest); err != nil {
-			return 2
-		}
-
-		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tKIND\tTARGET\tFILTERS\tSTATE\tWORKS seen/fetched/total\tORDER\tNEXT POLL\tERROR")
-		// Page through like the API client will (stage 6). Each page is its own snapshot, so a
-		// source added or removed meanwhile can shift a row across a page boundary.
-		const perPage = 100
-		for offset := 0; ; offset += perPage {
-			sourceList, err := a.apiClient.ListSources(ctx, apiclient.ListSourcesParams{
-				Page:    apiclient.NewOptInt(offset + 1),
-				PerPage: apiclient.NewOptInt(perPage),
-			}, apiclient.WithEditRequest(func(req *http.Request) error {
-				q := req.URL.Query()
-
-				if *names {
-					q.Add(runtime.RevealParam, "1")
-				}
-
-				req.URL.RawQuery = q.Encode()
-				return nil
-			}))
-			if err != nil {
-				tw.Flush()
-				fmt.Fprintf(errOut, "list: %v\n", err)
-				return 1
-			}
-
-			for _, i := range sourceList.Items {
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\t%s\n", i.ID, i.Kind, i.Target, i.Filters,
-					i.State, i.MemberWorks, i.FetchedWorks, total(i.TotalWorks.Value), i.Backfill.Value.Order.Value, when(time.Time(i.NextPollAt.Value)), dash(i.LastError.Value))
-			}
-
-			if len(sourceList.Items) < perPage || offset+perPage >= sourceList.Total {
-				break
-			}
-		}
-		tw.Flush()
-		return 0
+		return sourceList(ctx, a, rest, out, errOut)
 	case "show":
-		fs := flag.NewFlagSet("source show", flag.ContinueOnError)
-		fs.SetOutput(errOut)
-		names := fs.Bool("names", false, "show tag/user names")
-		idStr, ok := parseWithPositional(fs, rest)
-		if !ok {
-			fmt.Fprint(errOut, sourceUsage)
-			return 2
-		}
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			fmt.Fprintf(errOut, "bad id %q\n", idStr)
-			return 2
-		}
-
-		resp, err := a.apiClient.GetSource(ctx, apiclient.GetSourceParams{ID: apiclient.ID(int(id))}, apiclient.WithEditRequest(func(req *http.Request) error {
-			q := req.URL.Query()
-
-			if *names {
-				q.Add(runtime.RevealParam, "1")
-			}
-
-			req.URL.RawQuery = q.Encode()
-			return nil
-		}))
-		if err != nil {
-			fmt.Fprintf(errOut, "show: %v\n", err)
-			return 1
-		}
-		path := resp.Path
-		if !*names {
-			base, err := baseURL()
-			if err != nil {
-				fmt.Fprintf(errOut, "show: %v\n", err)
-				return 1
-			}
-			client, err := httpx.New(httpx.Options{
-				BaseURL:     base,
-				UserAgent:   a.cfg.UserAgent(version),
-				Interval:    a.cfg.Rate.Interval,
-				Jitter:      a.cfg.Rate.Jitter,
-				DailyBudget: -1,
-			})
-			if err != nil {
-				fmt.Fprintf(errOut, "show: %v\n", err)
-				return 1
-			}
-
-			u, _ := client.Resolve(resp.Path)
-			path = httpx.SafePath(u)
-		}
-		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-		for _, kv := range [][2]string{
-			{"id", strconv.Itoa(int(resp.ID))}, {"kind", string(resp.Kind)}, {"target", resp.Target},
-			{"filters", fmt.Sprintf("%s", resp.Filters)}, {"path", path}, {"state", string(resp.State)},
-			{"order", string(resp.Order.Value)}, {"priority", strconv.Itoa(resp.Priority)}, {"poll interval", time.Duration(resp.PollInterval).String()},
-			{"works seen", comma(resp.MemberWorks)}, {"works fetched", comma(resp.FetchedWorks)}, {"total (AO3)", total(resp.TotalWorks.Value)},
-			{"est requests", total(resp.EstRequests.Value)}, {"backfill cursor", fmt.Sprintf("%#v", resp.Backfill.Value)},
-			{"created", when(time.Time(resp.CreatedAt.Value))}, {"last poll", when(time.Time(resp.LastPollAt.Value))}, {"next poll", when(time.Time(resp.NextPollAt.Value))},
-			{"last full scan", when(time.Time(resp.LastFullScanAt.Value))}, {"backfill done", when(time.Time(resp.BackfillDoneAt.Value))}, {"last error", dash(resp.LastError.Value)},
-		} {
-			fmt.Fprintf(tw, "%s:\t%s\n", kv[0], kv[1])
-		}
-		tw.Flush()
-		return 0
+		return sourceShow(ctx, a, rest, out, errOut)
 	case "refresh":
-		fs := flag.NewFlagSet("source refresh", flag.ContinueOnError)
-		fs.SetOutput(errOut)
-		full := fs.Bool("full", false, "re-walk the whole listing now (rescan) and clear a parse-failure block")
-		idStr, ok := parseWithPositional(fs, rest)
-		if !ok {
-			fmt.Fprint(errOut, sourceUsage)
-			return 2
-		}
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			fmt.Fprintf(errOut, "bad id %q\n", idStr)
-			return 2
-		}
-
-		refreshSourceRequest := &apiclient.SourceRefreshRequest{}
-		if *full {
-			refreshSourceRequest.Full = apiclient.NewOptBool(true)
-		}
-		res, err := a.apiClient.RefreshSource(ctx, refreshSourceRequest, apiclient.RefreshSourceParams{
-			ID: apiclient.ID(int(id)),
-		})
-		if err != nil {
-			fmt.Fprintf(errOut, "refresh %d: %v\n", id, err)
-			return 1
-		}
-
-		fmt.Fprintf(out, "source %d: poll due now, %d failed work fetches re-queued", id, res.RequeuedWorks)
-		if res.RescanStarted {
-			fmt.Fprint(out, ", full re-walk started")
-		}
-		if res.UnblockedParser {
-			fmt.Fprint(out, ", parse-failure block cleared")
-		}
-		fmt.Fprintln(out, " (the running daemon picks this up within seconds)")
-		return 0
+		return sourceRefresh(ctx, a, rest, out, errOut)
 	case "set":
-		fs := flag.NewFlagSet("source set", flag.ContinueOnError)
-		fs.SetOutput(errOut)
-		poll := fs.Duration("poll", 0, "update poll interval, e.g. 3h (>= 10m)")
-		prio := fs.Int("priority", 0, "priority within a scheduling class (higher first)")
-		idStr, ok := parseWithPositional(fs, rest)
-		if !ok {
-			fmt.Fprint(errOut, sourceUsage)
-			return 2
-		}
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			fmt.Fprintf(errOut, "bad id %q\n", idStr)
-			return 2
-		}
-		var prioPtr *int
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "priority" {
-				prioPtr = prio
-			}
-		})
-		if *poll == 0 && prioPtr == nil {
-			fmt.Fprint(errOut, "set: give --poll and/or --priority\n")
-			return 2
-		}
-
-		sourceSettingsRequest := &apiclient.SourceSettingsRequest{}
-
-		if *poll != 0 {
-			sourceSettingsRequest.PollInterval = apiclient.NewOptDuration(apiclient.Duration(*poll))
-		}
-
-		if *prio != 0 {
-			sourceSettingsRequest.Priority = apiclient.NewOptNilInt(*prio)
-		}
-
-		if err := a.apiClient.SetSourceSettings(ctx, sourceSettingsRequest, apiclient.SetSourceSettingsParams{
-			ID: apiclient.ID(int(id)),
-		}); err != nil {
-			fmt.Fprintf(errOut, "set %d: %v\n", id, err)
-			return 1
-		}
-
-		resp, err := a.apiClient.GetSource(ctx, apiclient.GetSourceParams{
-			ID: apiclient.ID(int(id)),
-		})
-		if err != nil {
-			fmt.Fprintf(errOut, "get after set %d: %v\n", id, err)
-			return 1
-		}
-
-		fmt.Fprintf(out, "source %d: poll every %s, priority %d, next poll %s\n", id, time.Duration(resp.PollInterval), resp.Priority, when(time.Time(resp.NextPollAt.Value)))
-		return 0
+		return sourceSet(ctx, a, rest, out, errOut)
 	case "confirm", "pause", "resume", "cancel", "remove":
-		if len(rest) != 1 {
-			fmt.Fprint(errOut, sourceUsage)
-			return 2
-		}
-		id, err := strconv.ParseInt(rest[0], 10, 64)
-		if err != nil {
-			fmt.Fprintf(errOut, "bad id %q\n", rest[0])
-			return 2
-		}
-		var msg string
-		switch cmd {
-		case "confirm":
-			err, msg = a.apiClient.ConfirmSource(ctx, apiclient.ConfirmSourceParams{ID: apiclient.ID(int(id))}), "confirmed (active)"
-		case "pause":
-			err, msg = a.apiClient.PauseSource(ctx, apiclient.PauseSourceParams{ID: apiclient.ID(int(id))}), "paused"
-		case "resume":
-			err, msg = a.apiClient.ResumeSource(ctx, apiclient.ResumeSourceParams{ID: apiclient.ID(int(id))}), "resumed (active)"
-		case "cancel":
-			var resp *apiclient.SourceCancelled
-			resp, err = a.apiClient.CancelSource(ctx, apiclient.CancelSourceParams{ID: apiclient.ID(int(id))})
-
-			msg = fmt.Sprintf("cancelled (%d queued jobs dropped; mirrored works kept)", resp.DroppedJobs)
-		case "remove":
-			err, msg = a.apiClient.RemoveSource(ctx, apiclient.RemoveSourceParams{ID: apiclient.ID(int(id))}), "removed (mirrored works kept)"
-		}
-		if err != nil {
-			fmt.Fprintf(errOut, "%s %d: %v\n", cmd, id, err)
-			return 1
-		}
-		fmt.Fprintf(out, "source %d %s\n", id, msg)
-		return 0
+		return sourceAction(ctx, a, cmd, rest, out, errOut)
 	}
 	fmt.Fprint(errOut, sourceUsage)
 	return 2
+}
+
+func sourceAdd(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("source add", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	order := fs.String("order", "", "backfill order (default sources.default_backfill_order)")
+	prio := fs.Int("priority", 0, "priority within a scheduling class (higher first)")
+	poll := fs.Duration("poll", 0, "update poll interval (default sources.poll_interval)")
+	confirm := fs.Bool("confirm", false, "skip the auto_confirm_max gate")
+	names := fs.Bool("names", false, "show tag/user names")
+	wait := fs.Duration("wait", 2*time.Minute, "how long to wait for a running daemon to fetch page 1 (0: don't wait)")
+	u, ok := parseWithPositional(fs, args)
+	if !ok {
+		fmt.Fprint(errOut, sourceUsage)
+		return 2
+	}
+	req := &apiclient.SourceAddRequest{URL: u}
+	if *order != "" {
+		req.Order.SetTo(apiclient.Order(*order))
+	}
+	if flagSet(fs, "priority") {
+		req.Priority.SetTo(*prio)
+	}
+	if *poll != 0 {
+		req.PollInterval.SetTo(apiclient.Duration(*poll))
+	}
+	if *confirm {
+		req.Confirm.SetTo(true)
+	}
+	res, err := a.client.AddSource(ctx, req, reveal(*names))
+	if err != nil {
+		return fail(errOut, "source add", err)
+	}
+	switch r := res.(type) {
+	case *apiclient.SourceAddResultHeaders: // a single work, added at once
+		printAdded(out, a, r.Response)
+		return 0
+	case *apiclient.SourceAddQueuedHeaders:
+		return waitSourceAdd(ctx, a, r.Response, *wait, *names, out, errOut)
+	case *apiclient.ProblemHeaders: // 409 already-exists
+		if id, ok := idFromLocation(r.Location.Or("")); ok {
+			fmt.Fprintf(errOut, "source add: already added as source %d (see: ao3mirror source show %d)\n", id, id)
+			return 1
+		}
+		fmt.Fprintf(errOut, "source add: %s\n", problemText(r.Response))
+		return 1
+	}
+	fmt.Fprintf(errOut, "source add: unexpected response %T\n", res)
+	return 1
+}
+
+// waitSourceAdd follows a queued add: with a daemon running it waits up to wait for page 1 and
+// prints the result; otherwise the add stays queued for the next `ao3mirror run`.
+func waitSourceAdd(ctx context.Context, a *app, q apiclient.SourceAddQueued, wait time.Duration, names bool, out, errOut io.Writer) int {
+	verb := "queued"
+	if !q.Created {
+		verb = "already queued"
+	}
+	fmt.Fprintf(out, "source add %s as job %d (see: ao3mirror debug job %d)\n", verb, q.JobID, q.JobID)
+	running, err := daemonRunning(a.cfg.DataDir)
+	if err != nil {
+		fmt.Fprintf(errOut, "source add: checking for a running daemon: %v\n", err)
+		return 1
+	}
+	if !running {
+		fmt.Fprintln(out, "no daemon running: 'ao3mirror run' fetches page 1 (1 request) and adds the source")
+		return 0
+	}
+	if wait <= 0 {
+		return 0
+	}
+	fmt.Fprintln(out, "waiting for the daemon to fetch page 1...")
+	deadline := time.Now().Add(wait)
+	for {
+		sa, err := a.client.GetSourceAdd(ctx, apiclient.GetSourceAddParams{JobID: q.JobID}, reveal(names))
+		if err != nil {
+			return fail(errOut, "source add", err)
+		}
+		switch sa.State {
+		case apiclient.JobStateDone:
+			if r, ok := sa.Result.Get(); ok {
+				printAdded(out, a, r)
+				return 0
+			}
+			fmt.Fprintf(errOut, "source add: job %d is done but has no result\n", q.JobID)
+			return 1
+		case apiclient.JobStateFailed, apiclient.JobStateCancelled:
+			if id, ok := sa.ExistingSourceID.Get(); ok {
+				fmt.Fprintf(errOut, "source add: already added as source %d (see: ao3mirror source show %d)\n", id, id)
+				return 1
+			}
+			fmt.Fprintf(errOut, "source add: %s: %s\n", sa.State, jobError(sa.LastErrorCode, sa.LastErrorDetail))
+			return 1
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintf(out, "still %s after %s (AO3 busy or a long queue); the daemon adds the source when it gets to it\n", sa.State, wait)
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			fmt.Fprintln(out, "stopped waiting; the add stays queued")
+			return 0
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func printAdded(out io.Writer, a *app, res apiclient.SourceAddResult) {
+	s, e := res.Source, res.Estimate
+	fmt.Fprintf(out, "source %d added: kind=%s target=%s state=%s order=%s\n",
+		s.ID, s.Kind, sourceTarget(s), s.State, dash(string(s.Order.Or(""))))
+	fmt.Fprintf(out, "estimate: %s works, %s listing pages; ~%s requests (~%s at %s/request), ~%s on disk\n",
+		comma(e.Total), comma(e.Pages), comma(e.Requests), human(time.Duration(e.Duration)), a.cfg.Rate.Interval, mb(e.DiskBytes))
+	if e.Windowed {
+		fmt.Fprintln(out, "note: over 100,000 works; backfill will be sliced into date windows")
+	}
+	if res.Blurbs > 0 {
+		fmt.Fprintf(out, "page 1: %d works stored\n", res.Blurbs)
+	}
+	if s.State == apiclient.SourceStatePendingConfirm {
+		fmt.Fprintf(out, "pending: more than sources.auto_confirm_max (%d) works. Start it with 'ao3mirror source confirm %d',\nor remove it and re-add a narrower URL (filters on the tag page).\n",
+			a.cfg.Sources.AutoConfirmMax, s.ID)
+	}
+}
+
+func sourceList(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("source list", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	names := fs.Bool("names", false, "show tag/user names")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		fmt.Fprint(errOut, sourceUsage)
+		return 2
+	}
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tKIND\tTARGET\tFILTERS\tSTATE\tWORKS seen/fetched/total\tORDER\tNEXT POLL\tERROR")
+	err := eachSource(ctx, a, *names, func(s apiclient.Source) {
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%d/%d/%s\t%s\t%s\t%s\n", s.ID, s.Kind, sourceTarget(s), filters(s.Filters, *names),
+			s.State, s.MemberWorks, s.FetchedWorks, nilTotal(s.TotalWorks), dash(string(s.Order.Or(""))), when(s.NextPollAt), dash(s.LastError.Or("")))
+	})
+	tw.Flush()
+	if err != nil {
+		return fail(errOut, "source list", err)
+	}
+	return 0
+}
+
+// eachSource calls fn for every source, paging through the list. Each page is its own snapshot,
+// so a source added or removed meanwhile can shift a row across a page boundary.
+func eachSource(ctx context.Context, a *app, names bool, fn func(apiclient.Source)) error {
+	for page := 1; ; page++ {
+		l, err := a.client.ListSources(ctx, apiclient.ListSourcesParams{
+			Page: apiclient.NewOptInt(page), PerPage: apiclient.NewOptInt(listPerPage),
+		}, reveal(names))
+		if err != nil {
+			return err
+		}
+		for _, s := range l.Items {
+			fn(s)
+		}
+		if len(l.Items) < listPerPage || page*listPerPage >= l.Total {
+			return nil
+		}
+	}
+}
+
+func sourceShow(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("source show", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	names := fs.Bool("names", false, "show tag/user names")
+	arg, ok := parseWithPositional(fs, args)
+	if !ok {
+		fmt.Fprint(errOut, sourceUsage)
+		return 2
+	}
+	id, ok := parseID(errOut, arg)
+	if !ok {
+		return 2
+	}
+	s, err := a.client.GetSource(ctx, apiclient.GetSourceParams{ID: id}, reveal(*names))
+	if err != nil {
+		return fail(errOut, "source show", err)
+	}
+	printFields(out, [][2]string{
+		{"id", strconv.Itoa(int(s.ID))}, {"kind", string(s.Kind)}, {"target", sourceTarget(*s)},
+		{"filters", filters(s.Filters, *names)}, {"path", s.Path}, {"state", string(s.State)},
+		{"order", dash(string(s.Order.Or("")))}, {"priority", strconv.Itoa(s.Priority)},
+		{"poll interval", time.Duration(s.PollInterval).String()},
+		{"works seen", comma(s.MemberWorks)}, {"works fetched", comma(s.FetchedWorks)}, {"total (AO3)", nilTotal(s.TotalWorks)},
+		{"est requests", nilTotal(s.EstRequests)}, {"backfill cursor", backfill(s.Backfill)},
+		{"created", when(s.CreatedAt)}, {"last poll", when(s.LastPollAt)}, {"next poll", when(s.NextPollAt)},
+		{"last full scan", when(s.LastFullScanAt)}, {"backfill done", when(s.BackfillDoneAt)},
+		{"last error", dash(s.LastError.Or(""))},
+	})
+	return 0
+}
+
+func sourceRefresh(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("source refresh", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	full := fs.Bool("full", false, "re-walk the whole listing now (rescan) and clear a parse-failure block")
+	arg, ok := parseWithPositional(fs, args)
+	if !ok {
+		fmt.Fprint(errOut, sourceUsage)
+		return 2
+	}
+	id, ok := parseID(errOut, arg)
+	if !ok {
+		return 2
+	}
+	req := &apiclient.SourceRefreshRequest{}
+	if *full {
+		req.Full.SetTo(true)
+	}
+	res, err := a.client.RefreshSource(ctx, req, apiclient.RefreshSourceParams{ID: id})
+	if err != nil {
+		return fail(errOut, "source refresh", err)
+	}
+	fmt.Fprintf(out, "source %d: poll due now, %d failed work fetches re-queued", id, res.RequeuedWorks)
+	if res.RescanStarted {
+		fmt.Fprint(out, ", full re-walk started")
+	}
+	if res.UnblockedParser {
+		fmt.Fprint(out, ", parse-failure block cleared")
+	}
+	fmt.Fprintln(out, " (the running daemon picks this up within seconds)")
+	return 0
+}
+
+func sourceSet(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("source set", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	poll := fs.Duration("poll", 0, "update poll interval, e.g. 3h (>= 10m)")
+	prio := fs.Int("priority", 0, "priority within a scheduling class (higher first)")
+	arg, ok := parseWithPositional(fs, args)
+	if !ok {
+		fmt.Fprint(errOut, sourceUsage)
+		return 2
+	}
+	id, ok := parseID(errOut, arg)
+	if !ok {
+		return 2
+	}
+	req := &apiclient.SourceSettingsRequest{}
+	if *poll != 0 {
+		req.PollInterval.SetTo(apiclient.Duration(*poll))
+	}
+	if flagSet(fs, "priority") {
+		req.Priority.SetTo(*prio)
+	}
+	if !req.PollInterval.Set && !req.Priority.Set {
+		fmt.Fprint(errOut, "source set: give --poll and/or --priority\n")
+		return 2
+	}
+	if err := a.client.SetSourceSettings(ctx, req, apiclient.SetSourceSettingsParams{ID: id}); err != nil {
+		return fail(errOut, "source set", err)
+	}
+	s, err := a.client.GetSource(ctx, apiclient.GetSourceParams{ID: id})
+	if err != nil {
+		return fail(errOut, "source set", err)
+	}
+	fmt.Fprintf(out, "source %d: poll every %s, priority %d, next poll %s\n",
+		id, time.Duration(s.PollInterval), s.Priority, when(s.NextPollAt))
+	return 0
+}
+
+// sourceAction runs one of the state changes that take only an id.
+func sourceAction(ctx context.Context, a *app, cmd string, args []string, out, errOut io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprint(errOut, sourceUsage)
+		return 2
+	}
+	id, ok := parseID(errOut, args[0])
+	if !ok {
+		return 2
+	}
+	var err error
+	var msg string
+	switch cmd {
+	case "confirm":
+		err, msg = a.client.ConfirmSource(ctx, apiclient.ConfirmSourceParams{ID: id}), "confirmed (active)"
+	case "pause":
+		err, msg = a.client.PauseSource(ctx, apiclient.PauseSourceParams{ID: id}), "paused"
+	case "resume":
+		err, msg = a.client.ResumeSource(ctx, apiclient.ResumeSourceParams{ID: id}), "resumed (active)"
+	case "cancel":
+		var res *apiclient.SourceCancelled
+		if res, err = a.client.CancelSource(ctx, apiclient.CancelSourceParams{ID: id}); err == nil {
+			msg = fmt.Sprintf("cancelled (%d queued jobs dropped; mirrored works kept)", res.DroppedJobs)
+		}
+	case "remove":
+		err, msg = a.client.RemoveSource(ctx, apiclient.RemoveSourceParams{ID: id}), "removed (mirrored works kept)"
+	}
+	if err != nil {
+		return fail(errOut, fmt.Sprintf("source %s %d", cmd, id), err)
+	}
+	fmt.Fprintf(out, "source %d %s\n", id, msg)
+	return 0
+}
+
+// sourceTarget is a series or work source's numeric id, otherwise its target (a hash unless
+// revealed).
+func sourceTarget(s apiclient.Source) string {
+	if id, ok := s.TargetID.Get(); ok {
+		return strconv.Itoa(int(id))
+	}
+	return s.Target
+}
+
+// filters lists a source's work_search filters as "name=v1,v2 ..." with --names, otherwise
+// only how many there are; "-" when none.
+func filters(fs []apiclient.SourceFiltersItem, names bool) string {
+	if len(fs) == 0 {
+		return "-"
+	}
+	if !names {
+		return fmt.Sprintf("%d (hidden)", len(fs))
+	}
+	parts := make([]string, len(fs))
+	for i, f := range fs {
+		parts[i] = f.Name + "=" + strings.Join(f.Values, ",")
+	}
+	return strings.Join(parts, " ")
+}
+
+// backfill describes a backfill cursor, or "-" when the source has none.
+func backfill(o apiclient.OptBackfill) string {
+	b, ok := o.Get()
+	if !ok {
+		return "-"
+	}
+	s := "listing walk done"
+	if b.NextPage > 0 {
+		s = "next page " + strconv.Itoa(b.NextPage)
+	}
+	if ord, ok := b.Order.Get(); ok {
+		s += ", order " + string(ord)
+	}
+	if b.WindowStartOn.Set || b.WindowEndOn.Set {
+		s += ", window " + date(b.WindowStartOn) + ".." + date(b.WindowEndOn)
+	}
+	if b.Rescan.Or(false) {
+		s += ", rescan since " + when(b.RescanStartedAt)
+	}
+	if p, ok := b.BlockedParser.Get(); ok {
+		s += fmt.Sprintf(", blocked on parser %d", p)
+	}
+	if b.RetryAt.Set {
+		s += ", retry at " + when(b.RetryAt)
+	}
+	return s
+}
+
+// printFields prints "name:\tvalue" rows aligned.
+func printFields(out io.Writer, rows [][2]string) {
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	for _, kv := range rows {
+		fmt.Fprintf(tw, "%s:\t%s\n", kv[0], kv[1])
+	}
+	tw.Flush()
+}
+
+// flagSet reports whether the named flag was given on the command line.
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
 }
 
 // parseWithPositional allows flags before or after one positional argument.
@@ -423,54 +441,4 @@ func parseWithPositional(fs *flag.FlagSet, args []string) (string, bool) {
 		}
 	}
 	return pos, true
-}
-
-func total(n int) string {
-	if n < 0 {
-		return "?"
-	}
-	return comma(n)
-}
-
-func dash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
-func when(t time.Time) string {
-	if t.IsZero() {
-		return "-"
-	}
-	return t.Local().Format("2006-01-02 15:04")
-}
-
-func comma(n int) string {
-	s := strconv.Itoa(n)
-	if n < 0 {
-		return s
-	}
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
-	}
-	return s
-}
-
-func human(d time.Duration) string {
-	switch {
-	case d >= 48*time.Hour:
-		return fmt.Sprintf("%.1f days", d.Hours()/24)
-	case d >= time.Hour:
-		return fmt.Sprintf("%.1f h", d.Hours())
-	default:
-		return fmt.Sprintf("%d min", int(d.Minutes()+0.5))
-	}
-}
-
-func mb(b int64) string {
-	if b >= 1<<30 {
-		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
-	}
-	return fmt.Sprintf("%d MB", (b+(1<<20)-1)>>20)
 }
