@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -25,19 +26,59 @@ type WorkView struct {
 	Chapters    []model.Chapter // id, position, title, published date only
 }
 
-// ListWorks returns one page of the works matching f (f.Offset ≥ 0, f.Limit ≥ 1, in f's order)
-// and the number of matching works over all pages, read in one transaction so they agree. The
-// rows' relation slices are left empty.
-func (c *Controllers) ListWorks(ctx context.Context, f model.WorkFilter) (page []store.WorkRow, total int, err error) {
+// WorkBlurb is a listed work with the relations AO3's work blurb shows.
+type WorkBlurb struct {
+	Work     store.WorkRow // the works row; its relation slices are left empty
+	Creators []store.CreatorRef
+	Tags     []store.TagRef
+	Series   []store.SeriesPart // without coverage (WorkView has it)
+}
+
+// ListWorks returns one page of the works matching f (f.Offset ≥ 0, 1 ≤ f.Limit ≤
+// store.MaxWorkBatch, in f's order) with their blurb relations, and the number of matching
+// works over all pages, read in one transaction so they agree. Each relation is one query
+// over the page's ids.
+func (c *Controllers) ListWorks(ctx context.Context, f model.WorkFilter) (page []WorkBlurb, total int, err error) {
+	if f.Limit > store.MaxWorkBatch {
+		return nil, 0, fmt.Errorf("controllers: list works: limit %d over a batch (max %d)", f.Limit, store.MaxWorkBatch)
+	}
 	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
-		var err error
-		if page, err = tx.FindWorks(ctx, f); err != nil {
+		rows, err := tx.FindWorks(ctx, f)
+		if err != nil {
+			return err
+		}
+		if page, err = workBlurbs(ctx, tx, rows); err != nil {
 			return err
 		}
 		total, err = tx.CountWorks(ctx, f)
 		return err
 	})
 	return page, total, err
+}
+
+// workBlurbs loads the blurb relations of rows (at most store.MaxWorkBatch), keeping their order.
+func workBlurbs(ctx context.Context, tx *store.ReadTx, rows []store.WorkRow) ([]WorkBlurb, error) {
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	creators, err := tx.WorksCreators(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := tx.WorksTags(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	series, err := tx.WorksSeries(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	var out []WorkBlurb
+	for _, r := range rows {
+		out = append(out, WorkBlurb{Work: r, Creators: creators[r.ID], Tags: tags[r.ID], Series: series[r.ID]})
+	}
+	return out, nil
 }
 
 // GetWork returns one stored work with its creators, tags, series (with coverage),

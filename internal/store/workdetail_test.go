@@ -79,6 +79,58 @@ func TestWorkRelations(t *testing.T) {
 	require.Empty(t, creators)
 }
 
+// The batch readers group each relation by work, in the same order as the one-work readers.
+func TestWorksRelationsBatch(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	_, err := s.UpsertWork(ctx, detailWork(), model.FromPage, 1)
+	require.NoError(t, err)
+	_, err = s.UpsertWork(ctx, model.Work{
+		ID: 2, Title: "Fixture Title Beta", Revised: "2026-11-01",
+		Creators: []model.Creator{{User: "fixture_third", Pseud: "fixture_third"}},
+		Tags:     []model.Tag{{Type: model.TagFreeform, Name: "fixture freeform beta"}},
+	}, model.FromBlurb, 1)
+	require.NoError(t, err)
+	ids := []int64{2, 1, 3} // 3 is not stored
+
+	creators, err := s.WorksCreators(ctx, ids)
+	require.NoError(t, err)
+	one, err := s.WorkCreators(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, one, creators[1])
+	require.Len(t, creators[2], 1)
+	require.Equal(t, "fixture_third", creators[2][0].User)
+	require.NotContains(t, creators, int64(3))
+
+	tags, err := s.WorksTags(ctx, ids)
+	require.NoError(t, err)
+	oneTags, err := s.WorkTags(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, oneTags, tags[1])
+	require.Len(t, tags[2], 1)
+	require.Equal(t, "fixture freeform beta", tags[2][0].Name)
+	require.Len(t, tags, 2)
+
+	series, err := s.WorksSeries(ctx, ids)
+	require.NoError(t, err)
+	require.Equal(t, []SeriesPart{{ID: 77, Title: "Fixture Series", Position: 1}, {ID: 88, Title: "Fixture Series B", Position: 2}},
+		series[1], "by series id")
+	require.NotContains(t, series, int64(2), "a work in no series has no entry")
+
+	empty, err := s.WorksTags(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+
+	tooMany := make([]int64, MaxWorkBatch+1)
+	for i := range tooMany {
+		tooMany[i] = int64(i + 1)
+	}
+	_, err = s.WorksCreators(ctx, tooMany)
+	require.ErrorContains(t, err, "batch")
+	_, err = s.WorksCreators(ctx, tooMany[:MaxWorkBatch])
+	require.NoError(t, err, "a full page is allowed")
+}
+
 // A work view's series coverage follows the partial-series rule of PartialSeriesList.
 func TestWorkSeriesCoverage(t *testing.T) {
 	s, _, _ := openTest(t)

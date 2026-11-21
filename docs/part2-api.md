@@ -1027,6 +1027,25 @@ Status: tick when the PR merges.
   - `GET /works?page&per_page&sort` (simple listing).
   - `QUERY /works` with the body filter object (structured fields only in this stage).
   - Search rate limit.
+  - In three PRs:
+  - [x] **10a. Store + controller: work blurbs.** `FindWorks` rows carry no relations, and
+    loading them per work would be ~300 queries a page. As built:
+    - Batch readers in `store/workdetail.go`: `WorksCreators`, `WorksTags` and `WorksSeries`
+      take at most `store.MaxWorkBatch` (100, one page) work ids and return each relation by
+      work id, one `IN (…)` query each over the `(work_id, …)` primary keys / `series_works_work`.
+      The one-work readers (`WorkCreators`, `WorkTags`, `WorkSeries`) call them with one id, so
+      the order rules live in one place.
+    - `store.SeriesPart` (id, title, position) is a series membership without coverage;
+      `WorkSeriesPart` embeds it and adds `Coverage` (the work view only).
+    - `controllers.ListWorks` returns `[]WorkBlurb` (row, creators, tags, series; what AO3's
+      blurb shows, so no collections) and the total from one read transaction. A limit over
+      `MaxWorkBatch` is an error.
+  - [ ] **10b. `GET /works?page&per_page&sort&direction`** → `dto.WorkList{items, page, per_page,
+    total}` of `dto.WorkBlurb`, with `dto.WorkSort` / `dto.SortDirection` enums.
+  - [ ] **10c. `QUERY /works`**: a `request.WorkQuery` body with the stage 9 filters, sort and
+    direction; `page` / `per_page` stay query params, as on `GET`. `language` is free text (the
+    stored AO3 display name), so it is reveal-only (400 `reveal-required` in hashed mode). The
+    search rate limit (`search_per_min`) and `Accept-Query: application/json`.
 - [ ] **11. Full-text search**
   - Add `q` to the QUERY body (reveal-only). Sanitized FTS5 MATCH joined with the stage 9
     filters; total count; ranking.
