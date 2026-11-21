@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"cmp"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -111,6 +112,9 @@ type routeSample struct {
 	// content: the response holds seeded fanwork content, so revealed it must contain a
 	// sentinel (the per-route positive control).
 	content bool
+	// revealStatus is the revealed request's status when it differs from status (a route
+	// taking free text is refused hashed).
+	revealStatus int
 	// body is a JSON request body (sent as application/json), or "" for none.
 	body string
 	// fresh: the route changes state, so each request goes to a new API over a freshly seeded
@@ -152,6 +156,10 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/works/{id}/chapters": {target: "/api/v1/works/9/chapters", status: http.StatusOK, content: true},
 	"GET /api/v1/works/{id}/chapters/{position}": {target: "/api/v1/works/9/chapters/2", status: http.StatusOK,
 		content: true},
+	"GET /api/v1/tags/{id}": {target: "/api/v1/tags/3", status: http.StatusOK, content: true},
+	// The name is free text: refused hashed (it never reaches the store), served revealed.
+	"GET /api/v1/tags/by-name/{name}": {target: "/api/v1/tags/by-name/" + sentinel + "fandom",
+		status: http.StatusBadRequest, revealStatus: http.StatusOK, content: true},
 
 	// Admin socket only.
 	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},
@@ -253,7 +261,7 @@ func TestAllRoutesLeak(t *testing.T) {
 
 				if s.content {
 					w = testutil.Do(t, to(), s.request(method, sep+runtime.RevealParam+"=1"))
-					assert.Equal(t, s.status, w.Code)
+					assert.Equal(t, cmp.Or(s.revealStatus, s.status), w.Code)
 					assert.Equal(t, "revealed", w.Header().Get(runtime.HeaderFanwork))
 					assert.Contains(t, w.Body.String(), sentinel, "revealed response holds the seeded content")
 					assert.NotContains(t, logs.String(), sentinel, "revealed content is never logged")
@@ -358,4 +366,23 @@ func TestRoutesMatchOpenAPI(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	assert.Equal(t, public, walkRoutes(t, a.Router(false)), "public routes vs openapi.yaml")
 	assert.Equal(t, all, walkRoutes(t, a.Router(true)), "admin routes vs openapi.yaml")
+}
+
+// TestPathParamsDeclared: every route's path parameter is an id the access log records
+// (runtime.PathIDParams) or a free-text name it never logs, so a new parameter needs that
+// decision first.
+func TestPathParamsDeclared(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
+	freeText := []dto.ParamName{dto.ParamTagName}
+	for _, rt := range walkRoutes(t, a.Router(true)) {
+		for seg := range strings.SplitSeq(rt, "/") {
+			name, ok := strings.CutPrefix(seg, "{")
+			if !ok {
+				continue
+			}
+			p := dto.ParamName(strings.TrimSuffix(name, "}"))
+			assert.True(t, slices.Contains(runtime.PathIDParams, p) || slices.Contains(freeText, p),
+				"%s: path param %q is neither a logged id nor a free-text name", rt, p)
+		}
+	}
 }

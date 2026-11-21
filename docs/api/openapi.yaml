@@ -401,6 +401,46 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Chapter" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/tags/{id}:
+    get:
+      operationId: getTag
+      summary: One stored tag with what its AO3 tag page shows.
+      description: |
+        The tag's wrangling state, the tag it is a synonym of, its parents, children, direct
+        meta and sub tags and synonyms (each grouped by type, at most 100 per type) and how many
+        stored works a filter on it matches. Names are hashed unless revealed; hashes match the
+        `tags` of `GET /api/v1/works/{id}` in the same key epoch.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The tag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/tags/by-name/{name}:
+    get:
+      operationId: getTagByName
+      summary: One stored tag by name, as AO3's /tags/{name} page.
+      description: |
+        `GET /api/v1/tags/{id}` for the tag with this name (case-insensitive). The name is free
+        text, so in hashed mode it is refused with `reveal-required`.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: |
+            The tag name in AO3's /tags/ path form: `*s*` for `/`, `*a*` for `&`, `*d*` for `.`,
+            `*q*` for `?` and `*h*` for `#`, then percent-encoded. At most 256 characters decoded.
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: The tag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -1418,6 +1458,83 @@ components:
           Media,
           Unknown,
         ]
+    Tag:
+      type: object
+      description: |
+        A stored tag. Strings other than the `type`s and `info_fetched_at` are content, hashed
+        unless revealed. Lists are `[]` when empty.
+      required:
+        [
+          id,
+          name,
+          type,
+          canonical,
+          merger,
+          parents,
+          children,
+          meta_tags,
+          sub_tags,
+          synonyms,
+          works_count,
+        ]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        type: { $ref: "#/components/schemas/TagType" }
+        canonical:
+          type: [boolean, "null"]
+          description: Null until the tag page was read; a tag merged as a synonym is not canonical.
+        merger:
+          description: The tag this one is a synonym of, or null.
+          anyOf: [{ $ref: "#/components/schemas/TagRef" }, { type: "null" }]
+        parents:
+          type: array
+          items: { $ref: "#/components/schemas/TagGroup" }
+        children:
+          type: array
+          description: Tags listing this one as a parent.
+          items: { $ref: "#/components/schemas/TagGroup" }
+        meta_tags:
+          type: array
+          description: Direct meta tags only.
+          items: { $ref: "#/components/schemas/TagGroup" }
+        sub_tags:
+          type: array
+          description: Direct sub tags only.
+          items: { $ref: "#/components/schemas/TagGroup" }
+        synonyms:
+          type: array
+          items: { $ref: "#/components/schemas/TagGroup" }
+        works_count:
+          type: integer
+          description: |
+            Stored works (any status) a filter on this tag matches, counting its synonyms and
+            sub tags.
+        # The last tag page fetch, also one that yielded nothing (a 404 or a restricted page);
+        # omitted when never fetched.
+        info_fetched_at: { $ref: "#/components/schemas/Timestamp" }
+    TagRef:
+      type: object
+      required: [id, name, type]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        type: { $ref: "#/components/schemas/TagType" }
+    TagGroup:
+      type: object
+      description: |
+        Related tags of one type: the first 100 by name (case-insensitive) and how many there
+        are. Groups are in AO3's tag type order.
+      required: [type, total, tags]
+      additionalProperties: false
+      properties:
+        type: { $ref: "#/components/schemas/TagType" }
+        total: { type: integer, minimum: 1 }
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/TagRef" }
     TagInfoDetail:
       type: object
       required: [tag_id, class, req_id, type, canonical, parents]

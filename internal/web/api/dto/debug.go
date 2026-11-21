@@ -135,15 +135,6 @@ type WorkDetail struct {
 	ChapterCountMismatch *bool    `json:"chapter_count_mismatch"`
 }
 
-// TagType is an AO3 tag type (an enum).
-type TagType string
-
-// EnumValues lists every TagType.
-func (TagType) EnumValues() []string {
-	return []string{"Rating", "ArchiveWarning", "Category", "Fandom", "Relationship", "Character", "Freeform", "Media",
-		"Unknown"}
-}
-
 // TagInfoDetail is one tag info fetch run.
 type TagInfoDetail struct {
 	TagID *int64        `json:"tag_id"`

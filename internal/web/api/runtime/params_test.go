@@ -155,3 +155,42 @@ func TestPage(t *testing.T) {
 		assert.LessOrEqual(t, pg.Offset(), int64(MaxOffset))
 	}
 }
+
+func TestPathTagName(t *testing.T) {
+	// Through a chi router, so the value is escaped exactly when chi routes on RawPath.
+	get := func(target string) (string, error) {
+		var name string
+		var err error
+		r := chi.NewRouter()
+		r.Get("/t/{name}", func(_ http.ResponseWriter, r *http.Request) {
+			p, perr := ParseParams(r)
+			if perr != nil {
+				err = perr
+				return
+			}
+			name = p.PathTagName(dto.ParamTagName)
+			err = p.Err()
+		})
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, target, nil))
+		return name, err
+	}
+	for target, want := range map[string]string{
+		"/t/Fixture%20Tag":                           "Fixture Tag",
+		"/t/Fixture*s*Tag*d*One":                     "Fixture/Tag.One",
+		"/t/A*a*B*q*C*h*D":                           "A&B?C#D",
+		"/t/Fixture%2FTag":                           "Fixture/Tag",   // escaped slash: RawPath is set
+		"/t/Fixture%2FTag%20%C3%A9":                  "Fixture/Tag é", // and every other escape is decoded with it
+		"/t/" + strings.Repeat("a", MaxTagNameRunes): strings.Repeat("a", MaxTagNameRunes),
+	} {
+		got, err := get(target)
+		require.NoError(t, err, target)
+		assert.Equal(t, want, got, target)
+	}
+	for _, target := range []string{
+		"/t/a%01b", "/t/a%2Fb%7F", "/t/" + strings.Repeat("a", MaxTagNameRunes+1), "/t/%FF",
+	} {
+		got, err := get(target)
+		requireAPIError(t, err, dto.TypeValidation, string(dto.ParamTagName))
+		assert.Empty(t, got, target)
+	}
+}

@@ -44,6 +44,18 @@ type GetSourceAddParams struct {
 	JobID ID
 }
 
+// GetTagParams is parameters of getTag operation.
+type GetTagParams struct {
+	ID ID
+}
+
+// GetTagByNameParams is parameters of getTagByName operation.
+type GetTagByNameParams struct {
+	// The tag name in AO3's /tags/ path form: `*s*` for `/`, `*a*` for `&`, `*d*` for `.`, `*q*` for `?`
+	// and `*h*` for `#`, then percent-encoded. At most 256 characters decoded.
+	Name string
+}
+
 // GetWorkParams is parameters of getWork operation.
 type GetWorkParams struct {
 	ID ID

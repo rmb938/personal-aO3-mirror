@@ -1,0 +1,118 @@
+package integration
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
+)
+
+func TestGetTag(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Public()
+
+	tag := getJSON[dto.Tag](t, h, "/api/v1/tags/3")
+	assert.Equal(t, seedTag, tag.ID)
+	assert.Equal(t, dto.TagType("Fandom"), tag.Type)
+	assert.True(t, isHash(t, tag.Name), "tag name hashed")
+	work := getJSON[dto.Work](t, h, "/api/v1/works/9")
+	assert.Equal(t, work.Tags[1].Name, tag.Name, "the hash matches the work's tag in one key epoch")
+	assert.Equal(t, new(true), tag.Canonical)
+	assert.Nil(t, tag.Merger)
+	assert.Equal(t, 1, tag.WorksCount)
+	assert.Equal(t, seedTime, tag.InfoFetchedAt)
+	assert.Empty(t, tag.Children)
+	assert.Empty(t, tag.SubTags)
+	for name, groups := range map[string][]dto.TagGroup{
+		"parents": tag.Parents, "meta_tags": tag.MetaTags, "synonyms": tag.Synonyms,
+	} {
+		require.Len(t, groups, 1, name)
+		require.Len(t, groups[0].Tags, 1, name)
+		assert.Equal(t, 1, groups[0].Total, name)
+		assert.True(t, isHash(t, groups[0].Tags[0].Name), name+" name hashed")
+	}
+	assert.Equal(t, dto.TagType("Unknown"), tag.Parents[0].Type, "a parent's type is unknown until it is seen on a work")
+	assert.Equal(t, dto.TagType("Fandom"), tag.Synonyms[0].Type, "a synonym takes the tag's type")
+
+	// The synonym: merged into the seeded tag, so not canonical.
+	syn := getJSON[dto.Tag](t, h, "/api/v1/tags/"+strconv.FormatInt(tag.Synonyms[0].Tags[0].ID, 10))
+	require.NotNil(t, syn.Merger)
+	assert.Equal(t, dto.TagRef{ID: tag.ID, Name: tag.Name, Type: "Fandom"}, *syn.Merger)
+	assert.Equal(t, new(false), syn.Canonical)
+
+	// A tag never read from its tag page: canonical null, no fetch time, lists [].
+	var raw map[string]json.RawMessage
+	b := testutil.Get(t, h, "/api/v1/tags/1")
+	require.Equal(t, http.StatusOK, b.Code)
+	require.NoError(t, json.Unmarshal(b.Body.Bytes(), &raw))
+	assert.Equal(t, "null", string(raw["canonical"]))
+	assert.Equal(t, "null", string(raw["merger"]))
+	assert.Equal(t, "[]", string(raw["parents"]))
+	assert.NotContains(t, raw, "info_fetched_at")
+
+	nf := testutil.Get(t, h, "/api/v1/tags/999")
+	require.Equal(t, http.StatusNotFound, nf.Code)
+	assert.Equal(t, runtime.DetailNoTag.Message(), testutil.DecodeProblem(t, nf).Detail)
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/tags/x"), dto.ParamID, "bad id")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/tags/3?verbose=1"), "", "unknown param")
+
+	// Revealed: the real content.
+	tag = getJSON[dto.Tag](t, h, "/api/v1/tags/3"+revealQuery)
+	assert.Equal(t, sentinel+"fandom", tag.Name)
+	assert.Equal(t, sentinel+"synonym", tag.Synonyms[0].Tags[0].Name)
+}
+
+func TestGetTagByName(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Public()
+	path := "/api/v1/tags/by-name/" + sentinel + "fandom"
+
+	// Hashed: the name is free text, refused before the store is read.
+	w := testutil.Get(t, h, path)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	p := testutil.DecodeProblem(t, w)
+	assert.Equal(t, dto.TypeRevealRequired, p.Type)
+	assert.Equal(t, runtime.DetailFreeTextPath.Message(), p.Detail)
+	testutil.AssertNoSentinel(t, w, logs, sentinel)
+
+	// An invalid name or param is a validation error, hashed too.
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/tags/by-name/a%01b"), dto.ParamTagName, "control character")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, path+"?verbose=1"), "", "unknown param")
+
+	// Revealed: case-insensitive, as AO3's /tags/{name}.
+	tag := getJSON[dto.Tag](t, h, "/api/v1/tags/by-name/sentinel-FANDOM"+revealQuery)
+	assert.Equal(t, seedTag, tag.ID)
+	assert.Equal(t, sentinel+"fandom", tag.Name)
+	assert.NotContains(t, logs.String(), sentinel, "the name is never logged")
+
+	nf := testutil.Get(t, h, "/api/v1/tags/by-name/"+sentinel+"missing"+revealQuery)
+	require.Equal(t, http.StatusNotFound, nf.Code)
+	assert.Equal(t, runtime.DetailNoTag.Message(), testutil.DecodeProblem(t, nf).Detail)
+}
+
+// Requests refused before the handler (wrong method, URL too long) never log the name either.
+func TestGetTagByNameRefusedNotLogged(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Public()
+	path := "/api/v1/tags/by-name/" + sentinel + "fandom"
+
+	w := testutil.Do(t, h, httptest.NewRequest(http.MethodPost, path, nil))
+	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	testutil.AssertNoSentinel(t, w, logs, sentinel)
+
+	logs.Reset()
+	w = testutil.Get(t, h, path+strings.Repeat("x", runtime.MaxURLBytes))
+	require.Equal(t, http.StatusRequestURITooLong, w.Code)
+	testutil.AssertNoSentinel(t, w, logs, sentinel)
+	assert.Equal(t, route.TagByName, testutil.AccessLine(t, logs)["route"], "prerouted, logged by pattern")
+}

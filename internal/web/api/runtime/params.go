@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 )
@@ -26,6 +27,8 @@ const (
 	MaxID = 1<<53 - 1
 	// MaxPosition is the largest accepted chapter position.
 	MaxPosition = 100000
+	// MaxTagNameRunes caps a tag name path parameter, decoded (AO3 caps new tag names at 150).
+	MaxTagNameRunes = 256
 	// DefaultPerPage and MaxPerPage bound list page sizes.
 	DefaultPerPage = 20
 	MaxPerPage     = 100
@@ -136,6 +139,26 @@ func (p *Params) PathInt(name dto.ParamName, hi int64, d problem.Detail) int64 {
 		p.Param(string(name), d)
 	}
 	return v
+}
+
+// PathTagName returns the route's tag name path parameter name, decoded from AO3's /tags/ path
+// form (percent escapes, then ao3url.TagFromParam: "*s*" for "/" and so on). It is free text:
+// the caller needs the reveal parameter before using it.
+func (p *Params) PathTagName(name dto.ParamName) string {
+	s := chi.URLParam(p.r, string(name))
+	if p.r.URL.RawPath != "" { // chi routed on the escaped path, so the value is still escaped
+		var err error
+		if s, err = url.PathUnescape(s); err != nil {
+			p.Param(string(name), DetailTagName)
+			return ""
+		}
+	}
+	s = ao3url.TagFromParam(s)
+	if s == "" || !problem.ValidText(s, MaxTagNameRunes) {
+		p.Param(string(name), DetailTagName)
+		return ""
+	}
+	return s
 }
 
 // onlyPathID parses a route that takes one ID path parameter and no query parameters.

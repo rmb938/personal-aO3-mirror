@@ -53,7 +53,7 @@ func TestHandleError(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
-	w := testutil.Do(t, Handle(log, func(*http.Request) (any, error) { return nil, store.ErrNoTag }), httptest.NewRequest(http.MethodGet, "/x", nil))
+	w := testutil.Do(t, Handle(log, func(*http.Request) (any, error) { return nil, store.ErrNoSeries }), httptest.NewRequest(http.MethodGet, "/x", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, ContentTypeProblem, w.Header().Get("Content-Type"))
 	assert.JSONEq(t, `{"type":"`+string(dto.TypeNotFound)+`","title":"Not Found","status":404}`, w.Body.String())
