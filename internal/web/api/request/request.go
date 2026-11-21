@@ -27,5 +27,6 @@ func Types() []any {
 		SourceSettings{},
 		WorkQuery{},
 		TagQuery{},
+		CreatorQuery{},
 	}
 }

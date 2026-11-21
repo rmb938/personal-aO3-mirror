@@ -35,6 +35,9 @@ const (
 	seedTag int64 = 3
 	// seedMedium is seedTag's parent, a media tag named on its tag page.
 	seedMedium int64 = 4
+	// seedCreator is the creator of seedWork, seedFetchedWork and seedSeries, login and pseud
+	// sentinels.
+	seedCreator int64 = 1
 )
 
 // seedTime is the store clock while seeding.
@@ -77,6 +80,13 @@ func seedFetched(ctx context.Context, tx *store.Tx) error {
 	}
 	if _, err := tx.UpsertWork(ctx, w, model.FromPage, 1); err != nil {
 		return err
+	}
+	creators, err := tx.WorkCreators(ctx, w.ID)
+	if err != nil {
+		return err
+	}
+	if len(creators) != 1 || creators[0].ID != seedCreator {
+		return fmt.Errorf("seed: work creators %d, want one, seedCreator %d", len(creators), seedCreator)
 	}
 	tag, err := tx.TagByName(ctx, sentinel+"fandom")
 	if err != nil {

@@ -35,6 +35,9 @@ const (
 	MediumFandoms = "/api/v1/media/{id}/fandoms"
 	Series        = "/api/v1/series/{id}"
 	SeriesWorks   = "/api/v1/series/{id}/works"
+	Creators      = "/api/v1/creators"
+	Creator       = "/api/v1/creators/{id}"
+	CreatorWorks  = "/api/v1/creators/{id}/works"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

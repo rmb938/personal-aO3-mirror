@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
@@ -15,24 +16,28 @@ import (
 // ListWorks is GET /api/v1/works (sort, direction, page, per_page): one page of every stored
 // work, by default most recently revised first.
 func (a *Handlers) ListWorks(r *http.Request) (any, error) {
-	return a.listWorks(r, false)
+	return a.listWorks(r, nil)
 }
 
 // QueryWorks is QUERY /api/v1/works (page, per_page; body request.WorkQuery): one page of the
 // works matching the body's filters. A free-text member needs the reveal parameter.
 func (a *Handlers) QueryWorks(r *http.Request) (any, error) {
-	return a.queryWorks(r, false)
+	return a.queryWorks(r, nil)
 }
 
-// listWorks serves a GET works list: every stored work, or with tagPath those matching the
-// path's tag id.
-func (a *Handlers) listWorks(r *http.Request, tagPath bool) (any, error) {
+// worksScope lists the works matching a filter within the resource with the path's {id} (a
+// tag, a creator), as controllers.ListTagWorks; it fails with the resource's not-found error.
+type worksScope func(ctx context.Context, id int64, f model.WorkFilter) ([]controllers.WorkBlurb, int, error)
+
+// listWorks serves a GET works list: every stored work, or with a scope those within the
+// path's {id}.
+func (a *Handlers) listWorks(r *http.Request, scope worksScope) (any, error) {
 	q, err := runtime.ParseParams(r, string(dto.ParamSort), string(dto.ParamDirection),
 		string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
-	tagID := pathTagID(q, tagPath)
+	scopeID := pathScopeID(q, scope)
 	f := model.WorkFilter{
 		Sort:      model.WorkSort(q.Enum(string(dto.ParamSort), dto.WorkSort(""), runtime.DetailWorkSort)),
 		Direction: model.SortDirection(q.Enum(string(dto.ParamDirection), dto.SortDirection(""), runtime.DetailDirection)),
@@ -44,17 +49,17 @@ func (a *Handlers) listWorks(r *http.Request, tagPath bool) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	return a.worksPage(r, tagID, f, p)
+	return a.worksPage(r, scope, scopeID, f, p)
 }
 
-// queryWorks serves a QUERY works search: over every stored work, or with tagPath those
-// matching the path's tag id.
-func (a *Handlers) queryWorks(r *http.Request, tagPath bool) (any, error) {
+// queryWorks serves a QUERY works search: over every stored work, or with a scope those within
+// the path's {id}.
+func (a *Handlers) queryWorks(r *http.Request, scope worksScope) (any, error) {
 	q, err := runtime.ParseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
-	tagID := pathTagID(q, tagPath)
+	scopeID := pathScopeID(q, scope)
 	p := q.Page()
 	var req request.WorkQuery
 	if err := runtime.DecodeJSON(r, &req, &q.Validation); err != nil {
@@ -66,25 +71,25 @@ func (a *Handlers) queryWorks(r *http.Request, tagPath bool) (any, error) {
 	if req.NeedsReveal() && !runtime.Revealed(r) {
 		return nil, problem.WithDetail(dto.TypeRevealRequired, runtime.DetailFreeText)
 	}
-	return a.worksPage(r, tagID, convert.WorkFilter(req), p)
+	return a.worksPage(r, scope, scopeID, convert.WorkFilter(req), p)
 }
 
-// pathTagID reads the {id} path param when tagPath is set (recording a bad one in q), else 0.
-func pathTagID(q *runtime.Params, tagPath bool) int64 {
-	if !tagPath {
+// pathScopeID reads the {id} path param when there is a scope (recording a bad one in q), else 0.
+func pathScopeID(q *runtime.Params, scope worksScope) int64 {
+	if scope == nil {
 		return 0
 	}
 	return q.PathID(dto.ParamID)
 }
 
-// worksPage reads page p of the works matching f, scoped to tagID unless it is 0.
-func (a *Handlers) worksPage(r *http.Request, tagID int64, f model.WorkFilter, p runtime.Page) (any, error) {
+// worksPage reads page p of the works matching f, within scope's scopeID unless scope is nil.
+func (a *Handlers) worksPage(r *http.Request, scope worksScope, scopeID int64, f model.WorkFilter, p runtime.Page) (any, error) {
 	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
 	var items []controllers.WorkBlurb
 	var total int
 	var err error
-	if tagID != 0 {
-		items, total, err = a.ctl.ListTagWorks(r.Context(), tagID, f)
+	if scope != nil {
+		items, total, err = scope(r.Context(), scopeID, f)
 	} else {
 		items, total, err = a.ctl.ListWorks(r.Context(), f)
 	}

@@ -528,6 +528,236 @@ func (s *CountRange) SetMax(val OptInt) {
 	s.Max = val
 }
 
+// A stored creator: one AO3 pseud, as the `creators` items of a work. `user`, `pseud` and
+// `mirror_source_url` are content, hashed unless revealed; hashes match a work's `creators` in the
+// same key epoch.
+// Ref: #/components/schemas/Creator
+type Creator struct {
+	ID ID `json:"id"`
+	// AO3 login (hashed).
+	User string `json:"user"`
+	// Byline name (hashed).
+	Pseud string `json:"pseud"`
+	// Stored works (any status) with the creator in the byline: the `total` of
+	// `GET /api/v1/creators/{id}/works`. 0 for a creator named only by a series page.
+	Works int `json:"works"`
+	// The AO3 pseud works URL to pass to `POST /api/v1/sources` to mirror the creator's works (hashed
+	// unless revealed). Always set: adding a pseud that already is a source fails with `already-exists`.
+	MirrorSourceURL string `json:"mirror_source_url"`
+}
+
+// GetID returns the value of ID.
+func (s *Creator) GetID() ID {
+	return s.ID
+}
+
+// GetUser returns the value of User.
+func (s *Creator) GetUser() string {
+	return s.User
+}
+
+// GetPseud returns the value of Pseud.
+func (s *Creator) GetPseud() string {
+	return s.Pseud
+}
+
+// GetWorks returns the value of Works.
+func (s *Creator) GetWorks() int {
+	return s.Works
+}
+
+// GetMirrorSourceURL returns the value of MirrorSourceURL.
+func (s *Creator) GetMirrorSourceURL() string {
+	return s.MirrorSourceURL
+}
+
+// SetID sets the value of ID.
+func (s *Creator) SetID(val ID) {
+	s.ID = val
+}
+
+// SetUser sets the value of User.
+func (s *Creator) SetUser(val string) {
+	s.User = val
+}
+
+// SetPseud sets the value of Pseud.
+func (s *Creator) SetPseud(val string) {
+	s.Pseud = val
+}
+
+// SetWorks sets the value of Works.
+func (s *Creator) SetWorks(val int) {
+	s.Works = val
+}
+
+// SetMirrorSourceURL sets the value of MirrorSourceURL.
+func (s *Creator) SetMirrorSourceURL(val string) {
+	s.MirrorSourceURL = val
+}
+
+// Ref: #/components/schemas/CreatorList
+type CreatorList struct {
+	Items   []Creator `json:"items"`
+	Page    int       `json:"page"`
+	PerPage int       `json:"per_page"`
+	// Matching creators over all pages.
+	Total int `json:"total"`
+}
+
+// GetItems returns the value of Items.
+func (s *CreatorList) GetItems() []Creator {
+	return s.Items
+}
+
+// GetPage returns the value of Page.
+func (s *CreatorList) GetPage() int {
+	return s.Page
+}
+
+// GetPerPage returns the value of PerPage.
+func (s *CreatorList) GetPerPage() int {
+	return s.PerPage
+}
+
+// GetTotal returns the value of Total.
+func (s *CreatorList) GetTotal() int {
+	return s.Total
+}
+
+// SetItems sets the value of Items.
+func (s *CreatorList) SetItems(val []Creator) {
+	s.Items = val
+}
+
+// SetPage sets the value of Page.
+func (s *CreatorList) SetPage(val int) {
+	s.Page = val
+}
+
+// SetPerPage sets the value of PerPage.
+func (s *CreatorList) SetPerPage(val int) {
+	s.PerPage = val
+}
+
+// SetTotal sets the value of Total.
+func (s *CreatorList) SetTotal(val int) {
+	s.Total = val
+}
+
+// CreatorListHeaders wraps CreatorList with response headers.
+type CreatorListHeaders struct {
+	AcceptQuery OptAcceptQuery
+	Response    CreatorList
+}
+
+// GetAcceptQuery returns the value of AcceptQuery.
+func (s *CreatorListHeaders) GetAcceptQuery() OptAcceptQuery {
+	return s.AcceptQuery
+}
+
+// GetResponse returns the value of Response.
+func (s *CreatorListHeaders) GetResponse() CreatorList {
+	return s.Response
+}
+
+// SetAcceptQuery sets the value of AcceptQuery.
+func (s *CreatorListHeaders) SetAcceptQuery(val OptAcceptQuery) {
+	s.AcceptQuery = val
+}
+
+// SetResponse sets the value of Response.
+func (s *CreatorListHeaders) SetResponse(val CreatorList) {
+	s.Response = val
+}
+
+// Creator search filters. Every member is optional; absent members match everything. Invalid members
+// are all listed in one `validation-error` (by JSON Pointer).
+// Ref: #/components/schemas/CreatorQueryRequest
+type CreatorQueryRequest struct {
+	// Whitespace-separated words that must each appear in the creator's pseud or login, anywhere and
+	// ignoring ASCII case. 1 to 16 words, no control characters. Free text: refused with `reveal-required`
+	// unless the request is revealed.
+	Name OptString      `json:"name"`
+	Sort OptCreatorSort `json:"sort"`
+	// Omitted, ascending for `name` and descending for `works`.
+	Direction OptSortDirection `json:"direction"`
+}
+
+// GetName returns the value of Name.
+func (s *CreatorQueryRequest) GetName() OptString {
+	return s.Name
+}
+
+// GetSort returns the value of Sort.
+func (s *CreatorQueryRequest) GetSort() OptCreatorSort {
+	return s.Sort
+}
+
+// GetDirection returns the value of Direction.
+func (s *CreatorQueryRequest) GetDirection() OptSortDirection {
+	return s.Direction
+}
+
+// SetName sets the value of Name.
+func (s *CreatorQueryRequest) SetName(val OptString) {
+	s.Name = val
+}
+
+// SetSort sets the value of Sort.
+func (s *CreatorQueryRequest) SetSort(val OptCreatorSort) {
+	s.Sort = val
+}
+
+// SetDirection sets the value of Direction.
+func (s *CreatorQueryRequest) SetDirection(val OptSortDirection) {
+	s.Direction = val
+}
+
+// Creator listing sort column: `name` (pseud, then login, ignoring case; the default, ascending by
+// default) or `works` (descending by default; a tie is broken by name ascending).
+// Ref: #/components/schemas/CreatorSort
+type CreatorSort string
+
+const (
+	CreatorSortName  CreatorSort = "name"
+	CreatorSortWorks CreatorSort = "works"
+)
+
+// AllValues returns all CreatorSort values.
+func (CreatorSort) AllValues() []CreatorSort {
+	return []CreatorSort{
+		CreatorSortName,
+		CreatorSortWorks,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CreatorSort) MarshalText() ([]byte, error) {
+	switch s {
+	case CreatorSortName:
+		return []byte(s), nil
+	case CreatorSortWorks:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CreatorSort) UnmarshalText(data []byte) error {
+	switch CreatorSort(data) {
+	case CreatorSortName:
+		*s = CreatorSortName
+		return nil
+	case CreatorSortWorks:
+		*s = CreatorSortWorks
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/Daemon
 type Daemon struct {
 	// A heartbeat within 2 minutes that is not a clean stop.
@@ -2834,6 +3064,52 @@ func (o OptCountRange) Get() (v CountRange, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptCountRange) Or(d CountRange) CountRange {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCreatorSort returns new OptCreatorSort with value set to v.
+func NewOptCreatorSort(v CreatorSort) OptCreatorSort {
+	return OptCreatorSort{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCreatorSort is optional CreatorSort.
+type OptCreatorSort struct {
+	Value CreatorSort
+	Set   bool
+}
+
+// IsSet returns true if OptCreatorSort was set.
+func (o OptCreatorSort) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCreatorSort) Reset() {
+	var v CreatorSort
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCreatorSort) SetTo(v CreatorSort) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCreatorSort) Get() (v CreatorSort, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCreatorSort) Or(d CreatorSort) CreatorSort {
 	if v, ok := o.Get(); ok {
 		return v
 	}

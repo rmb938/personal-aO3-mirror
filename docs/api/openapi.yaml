@@ -604,6 +604,102 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/WorkList" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/creators:
+    query:
+      operationId: queryCreators
+      summary: One page of the stored creators (pseuds) matching a name search.
+      description: |
+        The body holds the filter, sort and direction (absent members match everything, so `{}`
+        lists every stored creator by name); paging stays in the query string. Logins and pseuds
+        are hashed unless revealed; `name` is free text, so in hashed mode it is refused with
+        `reveal-required`. Every sort ends with the name and then the id, so pages are stable;
+        in hashed mode the name order still says a little about the hidden text. It shares the
+        search rate limit.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatorQueryRequest" }
+      responses:
+        "200":
+          description: A page of the matching creators.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatorList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/creators/{id}:
+    get:
+      operationId: getCreator
+      summary: One stored creator (an AO3 pseud) and how many stored works it is on.
+      description: |
+        A creator is a pseud, as AO3's /users/{login}/pseuds/{pseud} page; users grouping pseuds
+        are not modelled. 404 `not-found` for an unknown creator.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The creator.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Creator" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/creators/{id}/works:
+    get:
+      operationId: listCreatorWorks
+      summary: One page of a creator's stored works, as AO3's pseud works page.
+      description: |
+        `GET /api/v1/works` scoped to the works with the creator in the byline. `total` equals
+        the creator's `works`. 404 `not-found` for an unknown creator.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: sort
+          in: query
+          description: "`best_match` needs a search query, which only `QUERY` takes: 422 here."
+          schema: { $ref: "#/components/schemas/WorkSort" }
+        - name: direction
+          in: query
+          description: Omitted, ascending for `title` and `creator` and descending for the rest.
+          schema: { $ref: "#/components/schemas/SortDirection" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the creator's works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
+    query:
+      operationId: queryCreatorWorks
+      summary: One page of a creator's stored works matching an AO3-style search and filters.
+      description: |
+        `QUERY /api/v1/works` within the works with the creator in the byline. It shares the
+        search rate limit. 404 `not-found` for an unknown creator.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkQueryRequest" }
+      responses:
+        "200":
+          description: A page of the creator's matching works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -2351,6 +2447,64 @@ components:
             $ref: "#/components/schemas/Timestamp",
             description: "The last series page fetch; omitted if never fetched.",
           }
+    Creator:
+      type: object
+      description: |
+        A stored creator: one AO3 pseud, as the `creators` items of a work. `user`, `pseud` and
+        `mirror_source_url` are content, hashed unless revealed; hashes match a work's
+        `creators` in the same key epoch.
+      required: [id, user, pseud, works, mirror_source_url]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        user: { type: string, description: "AO3 login (hashed)." }
+        pseud: { type: string, description: "Byline name (hashed)." }
+        works:
+          type: integer
+          description: |
+            Stored works (any status) with the creator in the byline: the `total` of
+            `GET /api/v1/creators/{id}/works`. 0 for a creator named only by a series page.
+        mirror_source_url:
+          type: string
+          description: |
+            The AO3 pseud works URL to pass to `POST /api/v1/sources` to mirror the creator's
+            works (hashed unless revealed). Always set: adding a pseud that already is a source
+            fails with `already-exists`.
+    CreatorSort:
+      type: string
+      description: |
+        Creator listing sort column: `name` (pseud, then login, ignoring case; the default,
+        ascending by default) or `works` (descending by default; a tie is broken by name
+        ascending).
+      enum: [name, works]
+    CreatorQueryRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Creator search filters. Every member is optional; absent members match everything.
+        Invalid members are all listed in one `validation-error` (by JSON Pointer).
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Whitespace-separated words that must each appear in the creator's pseud or login,
+            anywhere and ignoring ASCII case. 1 to 16 words, no control characters. Free text:
+            refused with `reveal-required` unless the request is revealed.
+        sort: { $ref: "#/components/schemas/CreatorSort" }
+        direction:
+          allOf: [{ $ref: "#/components/schemas/SortDirection" }]
+          description: Omitted, ascending for `name` and descending for `works`.
+    CreatorList:
+      type: object
+      required: [items, page, per_page, total]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Creator" } }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: "Matching creators over all pages." }
     ChapterRef:
       type: object
       required: [position]

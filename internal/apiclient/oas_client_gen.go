@@ -123,6 +123,13 @@ type Invoker interface {
 	//
 	// GET /api/v1/works/{id}/chapters/{position}
 	GetChapter(ctx context.Context, params GetChapterParams, options ...RequestOption) (*Chapter, error)
+	// GetCreator invokes getCreator operation.
+	//
+	// A creator is a pseud, as AO3's /users/{login}/pseuds/{pseud} page; users grouping pseuds are not
+	// modelled. 404 `not-found` for an unknown creator.
+	//
+	// GET /api/v1/creators/{id}
+	GetCreator(ctx context.Context, params GetCreatorParams, options ...RequestOption) (*Creator, error)
 	// GetHealthz invokes getHealthz operation.
 	//
 	// Liveness check.
@@ -206,6 +213,13 @@ type Invoker interface {
 	//
 	// GET /api/v1/works/{id}/skin
 	GetWorkSkin(ctx context.Context, params GetWorkSkinParams, options ...RequestOption) (*WorkSkin, error)
+	// ListCreatorWorks invokes listCreatorWorks operation.
+	//
+	// `GET /api/v1/works` scoped to the works with the creator in the byline. `total` equals the creator's
+	// `works`. 404 `not-found` for an unknown creator.
+	//
+	// GET /api/v1/creators/{id}/works
+	ListCreatorWorks(ctx context.Context, params ListCreatorWorksParams, options ...RequestOption) (*WorkListHeaders, error)
 	// ListJobs invokes listJobs operation.
 	//
 	// One page of jobs, newest first (state=queued lists them in queue order).
@@ -267,6 +281,23 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/pause
 	PauseSource(ctx context.Context, params PauseSourceParams, options ...RequestOption) error
+	// QueryCreatorWorks invokes queryCreatorWorks operation.
+	//
+	// `QUERY /api/v1/works` within the works with the creator in the byline. It shares the search rate
+	// limit. 404 `not-found` for an unknown creator.
+	//
+	// QUERY /api/v1/creators/{id}/works
+	QueryCreatorWorks(ctx context.Context, request *WorkQueryRequest, params QueryCreatorWorksParams, options ...RequestOption) (*WorkListHeaders, error)
+	// QueryCreators invokes queryCreators operation.
+	//
+	// The body holds the filter, sort and direction (absent members match everything, so `{}` lists every
+	// stored creator by name); paging stays in the query string. Logins and pseuds are hashed unless
+	// revealed; `name` is free text, so in hashed mode it is refused with `reveal-required`. Every sort
+	// ends with the name and then the id, so pages are stable; in hashed mode the name order still says a
+	// little about the hidden text. It shares the search rate limit.
+	//
+	// QUERY /api/v1/creators
+	QueryCreators(ctx context.Context, request *CreatorQueryRequest, params QueryCreatorsParams, options ...RequestOption) (*CreatorListHeaders, error)
 	// QueryTagWorks invokes queryTagWorks operation.
 	//
 	// `QUERY /api/v1/works` with the path tag as one more tag every work must match (on top of `tag_ids`).
@@ -842,6 +873,89 @@ func (c *Client) sendGetChapter(ctx context.Context, params GetChapterParams, re
 	}
 
 	result, err := decodeGetChapterResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetCreator invokes getCreator operation.
+//
+// A creator is a pseud, as AO3's /users/{login}/pseuds/{pseud} page; users grouping pseuds are not
+// modelled. 404 `not-found` for an unknown creator.
+//
+// GET /api/v1/creators/{id}
+func (c *Client) GetCreator(ctx context.Context, params GetCreatorParams, options ...RequestOption) (*Creator, error) {
+	res, err := c.sendGetCreator(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetCreator(ctx context.Context, params GetCreatorParams, requestOptions ...RequestOption) (res *Creator, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/creators/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetCreatorResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1773,6 +1887,161 @@ func (c *Client) sendGetWorkSkin(ctx context.Context, params GetWorkSkinParams, 
 	}
 
 	result, err := decodeGetWorkSkinResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListCreatorWorks invokes listCreatorWorks operation.
+//
+// `GET /api/v1/works` scoped to the works with the creator in the byline. `total` equals the creator's
+// `works`. 404 `not-found` for an unknown creator.
+//
+// GET /api/v1/creators/{id}/works
+func (c *Client) ListCreatorWorks(ctx context.Context, params ListCreatorWorksParams, options ...RequestOption) (*WorkListHeaders, error) {
+	res, err := c.sendListCreatorWorks(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendListCreatorWorks(ctx context.Context, params ListCreatorWorksParams, requestOptions ...RequestOption) (res *WorkListHeaders, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/creators/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/works"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "sort" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "sort",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Sort.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "direction" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "direction",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Direction.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListCreatorWorksResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -2777,6 +3046,235 @@ func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams, 
 	}
 
 	result, err := decodePauseSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// QueryCreatorWorks invokes queryCreatorWorks operation.
+//
+// `QUERY /api/v1/works` within the works with the creator in the byline. It shares the search rate
+// limit. 404 `not-found` for an unknown creator.
+//
+// QUERY /api/v1/creators/{id}/works
+func (c *Client) QueryCreatorWorks(ctx context.Context, request *WorkQueryRequest, params QueryCreatorWorksParams, options ...RequestOption) (*WorkListHeaders, error) {
+	res, err := c.sendQueryCreatorWorks(ctx, request, params, options...)
+	return res, err
+}
+
+func (c *Client) sendQueryCreatorWorks(ctx context.Context, request *WorkQueryRequest, params QueryCreatorWorksParams, requestOptions ...RequestOption) (res *WorkListHeaders, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/creators/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/works"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "QUERY", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeQueryCreatorWorksRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeQueryCreatorWorksResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// QueryCreators invokes queryCreators operation.
+//
+// The body holds the filter, sort and direction (absent members match everything, so `{}` lists every
+// stored creator by name); paging stays in the query string. Logins and pseuds are hashed unless
+// revealed; `name` is free text, so in hashed mode it is refused with `reveal-required`. Every sort
+// ends with the name and then the id, so pages are stable; in hashed mode the name order still says a
+// little about the hidden text. It shares the search rate limit.
+//
+// QUERY /api/v1/creators
+func (c *Client) QueryCreators(ctx context.Context, request *CreatorQueryRequest, params QueryCreatorsParams, options ...RequestOption) (*CreatorListHeaders, error) {
+	res, err := c.sendQueryCreators(ctx, request, params, options...)
+	return res, err
+}
+
+func (c *Client) sendQueryCreators(ctx context.Context, request *CreatorQueryRequest, params QueryCreatorsParams, requestOptions ...RequestOption) (res *CreatorListHeaders, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/creators"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "QUERY", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeQueryCreatorsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeQueryCreatorsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
