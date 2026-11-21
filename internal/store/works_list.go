@@ -72,6 +72,9 @@ func workWhere(f model.WorkFilter) (string, []any, error) {
 	if f.Complete != nil {
 		cond(`complete = ?`, boolInt(*f.Complete))
 	}
+	if f.Crossover != nil {
+		cond(`crossover = ?`, boolInt(*f.Crossover))
+	}
 	if f.SingleChapter {
 		cond(`chapters_expected = 1`)
 	}

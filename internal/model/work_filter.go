@@ -59,6 +59,7 @@ type WorkFilter struct {
 	Tags          []int64      // every one must match (AO3 filter_ids; at most MaxWorkFilterTags)
 	ExcludeTags   []int64      // none may match (AO3 excluded_tag_ids; at most MaxWorkFilterTags)
 	Complete      *bool        // AO3 complete
+	Crossover     *bool        // AO3 crossover: no fandom on the work is related to all the others
 	SingleChapter bool         // AO3 single_chapter: one chapter expected
 	Language      string       // exact match on the stored language
 	Statuses      []WorkStatus // any of these (at most MaxWorkStatuses)

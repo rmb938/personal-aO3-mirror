@@ -982,10 +982,26 @@ Status: tick when the PR merges.
       ~0.2–30 ms, ~55 ms for excluding the popular tag. Walking the sort index instead (a
       correlated `EXISTS`) would make popular first pages cheap but scan the whole index for
       rare tags, so it was left out.
-  - [ ] **9c. Crossover.** AO3's rule (`lib/fandom_crossover.rb`): a work is a crossover when no
+  - [x] **9c. Crossover.** AO3's rule (`lib/fandom_crossover.rb`): a work is a crossover when no
     fandom on it shares a meta tag ancestor (after mergers) with all the others. Too costly to
     work out per query, so a precomputed `works.crossover` column, recomputed on work upsert
-    and when tag info changes a fandom's merger or meta tags.
+    and when tag info changes a fandom's merger or meta tags. As built:
+    - `model.WorkFilter.Crossover` (tri-state, AO3 `crossover` T/F), matched as
+      `crossover = ?` with no index (like `complete`; `TestWorksPagePlans` covers it).
+    - The rule is Go (`store/crossover.go`): `isCrossover` mirrors AO3's loop over each
+      fandom's group (the fandom and every meta tag above it, a cached breadth-first walk up
+      `tag_meta`); `updateCrossover(sel)` loads the selected works' fandoms (mergers applied)
+      and writes only rows whose value changed. A set-based SQL version was tried first and
+      dropped: its correlated pair check rebuilt automatic indexes per row (2.5 s for a
+      popular fandom at 200k works).
+    - Recomputed on every upsert that rewrites tags, and by `UpdateTagInfo` for the works a tag
+      filter on the tag matches (`tagFilterWorks`), only when a Fandom tag's type, merger, meta
+      tags or merged synonyms changed. Most tag info refetches change nothing and cost nothing.
+    - Meta migration `0006_work_crossover.sql` adds the column; its backfill is a Go step
+      (`migrationSteps` in `store.go`, run in the migration's transaction).
+    - `BenchmarkCrossover` at 200k works: one work ~0.05 ms, a rare tag ~0.5 ms, a meta tag
+      over ~10% of works ~55 ms, a fandom on a third of works ~150 ms, the full backfill
+      ~0.3 s.
   - [ ] **9d. Title and creator sorts.** Precomputed sort-key columns with indexes, after AO3's
     `sorted_title` (lowercase, strip a leading quote/dot/slash, move a leading a/an/the to the
     end, zero-pad a leading number to 5) and `authors_to_sort_on` (pseud names sorted, joined,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -126,6 +127,10 @@ func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) er
 		_, err := tx.ExecContext(ctx, `UPDATE tags SET info_fetched_at = ? WHERE id = ?`, now, tagID)
 		return err
 	}
+	before, err := loadTagLinks(ctx, tx, tagID)
+	if err != nil {
+		return err
+	}
 	sameType := u.Type
 	if sameType == model.TagUnknown || sameType == "" {
 		if err := tx.QueryRowContext(ctx, `SELECT type FROM tags WHERE id = ?`, tagID).Scan(&sameType); err != nil {
@@ -185,7 +190,16 @@ func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) er
 			return err
 		}
 	}
+	after, err := loadTagLinks(ctx, tx, tagID)
+	if err != nil {
+		return err
+	}
+	crossovers, err := updateTagCrossover(ctx, tx, tagID, before, after)
+	if err != nil {
+		return fmt.Errorf("update crossover: %w", err)
+	}
 	s.log.Debug("tag info stored", "tag_id", tagID, "type", string(u.Type), "canonical", u.Canonical,
-		"has_merger", u.MergerOf != "", "parents", len(u.Parents), "meta", len(u.MetaTags), "synonyms", len(u.Synonyms))
+		"has_merger", u.MergerOf != "", "parents", len(u.Parents), "meta", len(u.MetaTags), "synonyms", len(u.Synonyms),
+		"links_changed", !before.equal(after), "crossover_changed", crossovers)
 	return nil
 }

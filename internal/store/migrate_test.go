@@ -25,6 +25,14 @@ func openAt(t *testing.T, dir string, upTo int) *Store {
 	return s
 }
 
+// Every Go step names a migration file (a misspelt key would never run).
+func TestMigrationStepsNameFiles(t *testing.T) {
+	for key := range migrationSteps {
+		_, err := migrationsFS.ReadFile("migrations/" + key)
+		require.NoError(t, err, key)
+	}
+}
+
 // 0003 turns text job targets into integers and keeps every job event.
 func TestMigrateJobTargetInt(t *testing.T) {
 	dir := t.TempDir()
