@@ -12,7 +12,7 @@ import (
 
 const (
 	// MaxWorkQueryTags caps tag_ids and exclude_tag_ids (each); model.MaxWorkFilterTags must
-	// equal it (a convert test checks).
+	// be one more, for /tags/{id}/works' path tag (a convert test checks).
 	MaxWorkQueryTags = 20
 	// MaxLanguageRunes caps language (AO3's language names are short).
 	MaxLanguageRunes = 100

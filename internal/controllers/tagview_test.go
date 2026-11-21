@@ -83,3 +83,54 @@ func TestGetTag(t *testing.T) {
 	_, err = e.svc.GetTagByName(ctx, "Fixture Missing")
 	require.ErrorIs(t, err, store.ErrNoTag)
 }
+
+func TestListTagWorks(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	seedViewTags(t, e)
+	char, err := e.svc.GetTagByName(ctx, "Fixture Character")
+	require.NoError(t, err)
+	synID := char.Synonyms[0].Tags[0].ID
+	ids := func(page []WorkBlurb) []int64 {
+		var out []int64
+		for _, b := range page {
+			out = append(out, b.Work.ID)
+		}
+		return out
+	}
+
+	page, total, err := e.svc.ListTagWorks(ctx, char.Tag.ID, model.WorkFilter{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, char.Works, total, "the tag view's count")
+	assert.Equal(t, []int64{2, 1}, ids(page), "its works and its synonym's")
+
+	page, total, err = e.svc.ListTagWorks(ctx, synID, model.WorkFilter{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Equal(t, []int64{2}, ids(page), "a synonym matches only its own works")
+
+	tags := []int64{synID}
+	page, _, err = e.svc.ListTagWorks(ctx, char.Tag.ID, model.WorkFilter{Tags: tags, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{2}, ids(page), "the body's tags must match too")
+	assert.Equal(t, []int64{synID}, tags, "the caller's slice is not changed")
+
+	_, total, err = e.svc.ListTagWorks(ctx, char.Tag.ID, model.WorkFilter{Tags: []int64{char.Tag.ID}, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total, "the path tag repeated in the body")
+
+	_, total, err = e.svc.ListTagWorks(ctx, char.Tag.ID, model.WorkFilter{ExcludeTags: []int64{synID}, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+
+	full := make([]int64, model.MaxWorkFilterTags-1)
+	for i := range full {
+		full[i] = synID + 1000 + int64(i)
+	}
+	_, total, err = e.svc.ListTagWorks(ctx, char.Tag.ID, model.WorkFilter{Tags: full, Limit: 10})
+	require.NoError(t, err, "a full body list plus the path tag fits the store's cap")
+	assert.Zero(t, total)
+
+	_, _, err = e.svc.ListTagWorks(ctx, 999_999, model.WorkFilter{Limit: 10})
+	require.ErrorIs(t, err, store.ErrNoTag)
+}

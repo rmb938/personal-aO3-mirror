@@ -419,6 +419,59 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tag" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/tags/{id}/works:
+    get:
+      operationId: listTagWorks
+      summary: One page of the stored works a filter on a tag matches, as AO3's tag works page.
+      description: |
+        `GET /api/v1/works` scoped to the tag: works tagged with it, a synonym of it or any of
+        its sub tags (transitively) or their synonyms. `total` equals the tag's `works_count`.
+        404 `not-found` for an unknown tag.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: sort
+          in: query
+          description: "`best_match` needs a search query, which only `QUERY` takes: 422 here."
+          schema: { $ref: "#/components/schemas/WorkSort" }
+        - name: direction
+          in: query
+          description: Omitted, ascending for `title` and `creator` and descending for the rest.
+          schema: { $ref: "#/components/schemas/SortDirection" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the tag's works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
+    query:
+      operationId: queryTagWorks
+      summary: One page of a tag's stored works matching an AO3-style search and filters.
+      description: |
+        `QUERY /api/v1/works` with the path tag as one more tag every work must match (on top of
+        `tag_ids`). It shares the search rate limit. 404 `not-found` for an unknown tag.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkQueryRequest" }
+      responses:
+        "200":
+          description: A page of the tag's matching works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/tags/by-name/{name}:
     get:
       operationId: getTagByName

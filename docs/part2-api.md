@@ -1163,8 +1163,17 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - `store.ErrNoTag` is 404 with `DetailNoTag`. The leak test's samples gained
       `revealStatus` (the by-name sample is 400 hashed, 200 revealed); the seed reads tag info
       for the fandom tag (`seedTag`: canonical, a parent, a meta tag, a synonym).
-  - [ ] **12c. `GET` + `QUERY /tags/{id}/works`**: the works list and query handlers with the
-    path tag as one more required tag filter.
+  - [x] **12c. `GET` + `QUERY /tags/{id}/works`**: the works list and query handlers with the
+    path tag as one more required tag filter. As built:
+    - `controllers.ListTagWorks(tagID, f)`: in one read transaction, `store.ErrNoTag` (404) for
+      an unknown tag, then `ListWorks`' page and total with the tag added to `f.Tags` (not
+      repeated if the body lists it). It matches like any tag filter (synonyms, sub tags), so
+      the total equals the tag view's `works_count`.
+    - `model.MaxWorkFilterTags` is 21: the body's 20 `tag_ids` plus the path tag (the convert
+      test checks it is `request.MaxWorkQueryTags+1`).
+    - The `/works` handlers' bodies became `listWorks` / `queryWorks` (shared with the tag
+      routes); a bad path id is reported with the other invalid params. Same `WorkList`
+      response, `Accept-Query`, and the QUERY route shares the search rate limit.
   - [ ] **12d. Store + `QUERY /tags`**: `store.FindTags` (type, canonical and parent filters,
     paging, name or use-count sort); `name` is reveal-only.
   - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d.

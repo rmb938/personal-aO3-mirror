@@ -26,6 +26,7 @@ const (
 	Chapters  = "/api/v1/works/{id}/chapters"
 	Chapter   = "/api/v1/works/{id}/chapters/{position}"
 	Tag       = "/api/v1/tags/{id}"
+	TagWorks  = "/api/v1/tags/{id}/works"
 	// TagByName's {name} is a free-text tag name (AO3's /tags/ path form), not an id, so Path
 	// cannot build it.
 	TagByName = "/api/v1/tags/by-name/{name}"

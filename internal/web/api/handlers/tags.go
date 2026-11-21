@@ -22,6 +22,19 @@ func (a *Handlers) GetTag(r *http.Request) (any, error) {
 	return convert.TagView(v), nil
 }
 
+// ListTagWorks is GET /api/v1/tags/{id}/works (sort, direction, page, per_page): ListWorks
+// for the works a filter on the tag matches (its synonyms' and sub tags' too), as AO3's
+// /tags/{name}/works.
+func (a *Handlers) ListTagWorks(r *http.Request) (any, error) {
+	return a.listWorks(r, true)
+}
+
+// QueryTagWorks is QUERY /api/v1/tags/{id}/works: QueryWorks with the path tag as one more
+// tag every work must match.
+func (a *Handlers) QueryTagWorks(r *http.Request) (any, error) {
+	return a.queryWorks(r, true)
+}
+
 // GetTagByName is GET /api/v1/tags/by-name/{name}: GetTag for the tag AO3's /tags/{name} page
 // shows. The name is free text, so it needs the reveal parameter.
 func (a *Handlers) GetTagByName(r *http.Request) (any, error) {

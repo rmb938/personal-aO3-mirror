@@ -116,3 +116,41 @@ func TestGetTagByNameRefusedNotLogged(t *testing.T) {
 	testutil.AssertNoSentinel(t, w, logs, sentinel)
 	assert.Equal(t, route.TagByName, testutil.AccessLine(t, logs)["route"], "prerouted, logged by pattern")
 }
+
+func TestTagWorks(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 2 })
+	h := a.Public()
+	fandom := "/api/v1/tags/" + strconv.FormatInt(seedTag, 10) + "/works"
+	blurb := getJSON[dto.Work](t, h, "/api/v1/works/"+strconv.FormatInt(seedWork, 10))
+	require.Len(t, blurb.Tags, 1)
+	freeform := strconv.FormatInt(blurb.Tags[0].ID, 10)
+
+	g := testutil.Get(t, h, fandom)
+	require.Equal(t, http.StatusOK, g.Code)
+	assert.Equal(t, runtime.ContentTypeJSON, g.Header().Get(runtime.HeaderAcceptQuery), "GET advertises QUERY")
+	l := getJSON[dto.List[dto.WorkBlurb]](t, h, fandom+"?per_page=1")
+	assert.Equal(t, []int64{seedFetchedWork}, workIDs(t, l), "only the tag's works")
+	assert.Equal(t, getJSON[dto.Tag](t, h, "/api/v1/tags/3").WorksCount, l.Total, "the tag view's count")
+	assert.Equal(t, int64(1), l.PerPage)
+	assert.Empty(t, workIDs(t, getJSON[dto.List[dto.WorkBlurb]](t, h, fandom+"?page=2")))
+
+	// QUERY: the body's filters on top of the path tag.
+	assert.Equal(t, []int64{seedFetchedWork}, workIDs(t, queryWorks(t, h, fandom, `{"fetched":true}`)))
+	assert.Empty(t, workIDs(t, queryWorks(t, h, fandom, `{"tag_ids":[`+freeform+`]}`)), "both tags must match")
+
+	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/tags/x/works"), dto.ParamID, "bad id")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, fandom+"?verbose=1"), "", "unknown param")
+	testutil.RequireParamProblem(t, testutil.Get(t, h, fandom+"?sort=best_match"), dto.ParamSort, "best_match without q")
+	testutil.RequireParamProblem(t, queryJSON(t, a.Admin(), "/api/v1/tags/0/works", `{}`), dto.ParamID, "query bad id")
+	bad := testutil.Get(t, h, "/api/v1/tags/0/works?sort=x")
+	require.Equal(t, http.StatusUnprocessableEntity, bad.Code)
+	assert.Len(t, testutil.DecodeProblem(t, bad).Errors, 2, "the id and the sort in one response")
+
+	nf := testutil.Get(t, h, "/api/v1/tags/999/works")
+	require.Equal(t, http.StatusNotFound, nf.Code)
+	assert.Equal(t, runtime.DetailNoTag.Message(), testutil.DecodeProblem(t, nf).Detail)
+
+	// QUERY shares the search budget with QUERY /works (2 per minute here, both spent above).
+	w := queryJSON(t, h, "/api/v1/works", `{}`)
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
+}

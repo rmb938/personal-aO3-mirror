@@ -39,20 +39,44 @@ type WorkBlurb struct {
 // works over all pages, read in one transaction so they agree. Each relation is one query
 // over the page's ids.
 func (c *Controllers) ListWorks(ctx context.Context, f model.WorkFilter) (page []WorkBlurb, total int, err error) {
+	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		page, total, err = listWorks(ctx, tx, f)
+		return err
+	})
+	return page, total, err
+}
+
+// ListTagWorks is ListWorks scoped to the stored tag tagID: the path tag is one more tag f must
+// match (like f.Tags, so its synonyms and sub tags match too), or store.ErrNoTag. f.Tags holds
+// at most model.MaxWorkFilterTags-1 other tags.
+func (c *Controllers) ListTagWorks(ctx context.Context, tagID int64, f model.WorkFilter) (page []WorkBlurb, total int, err error) {
+	if !slices.Contains(f.Tags, tagID) {
+		f.Tags = append(slices.Clip(f.Tags), tagID)
+	}
+	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		if _, err := tx.TagByID(ctx, tagID); err != nil {
+			return err
+		}
+		page, total, err = listWorks(ctx, tx, f)
+		return err
+	})
+	return page, total, err
+}
+
+// listWorks reads ListWorks' page and total in the caller's transaction.
+func listWorks(ctx context.Context, tx *store.ReadTx, f model.WorkFilter) ([]WorkBlurb, int, error) {
 	if f.Limit > store.MaxWorkBatch {
 		return nil, 0, fmt.Errorf("controllers: list works: limit %d over a batch (max %d)", f.Limit, store.MaxWorkBatch)
 	}
-	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
-		rows, err := tx.FindWorks(ctx, f)
-		if err != nil {
-			return err
-		}
-		if page, err = workBlurbs(ctx, tx, rows); err != nil {
-			return err
-		}
-		total, err = tx.CountWorks(ctx, f)
-		return err
-	})
+	rows, err := tx.FindWorks(ctx, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	page, err := workBlurbs(ctx, tx, rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := tx.CountWorks(ctx, f)
 	return page, total, err
 }
 
