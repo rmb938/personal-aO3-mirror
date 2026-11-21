@@ -886,7 +886,22 @@ Status: tick when the PR merges.
     a revealed HTML chapter grew. It now quotes with `jsontext.AppendQuote` (minimal escaping,
     RFC 8785). Responses are JSON with `nosniff` and a `default-src 'none'` CSP, so the
     escaping protected nothing.
-  - [ ] **8b. Work + skin routes**: `GET /works/{id}` and `/works/{id}/skin` (public).
+  - [x] **8b. Work + skin routes**: `GET /works/{id}` and `/works/{id}/skin` (public). As built:
+    - `GET /works/{id}` → `dto.Work` (`convert.WorkView`): metadata, `stats` (`dto.WorkStats`,
+      moved from `debug.go` and shared with `WorkDiag`), `creators` `{id, user, pseud}`, `tags`
+      `{id, name, type}`, `collections` `{id, name, title}`, `series` and `chapters`
+      (`dto.ChapterRef` `{id, position, title, published_on}`, no bodies). Optional strings
+      (notes, language, dates) are omitted when empty; `last_fetched_at` is omitted for a
+      blurb-only work, which has `chapters: []`.
+    - Each `series` item carries the partial-series flag (`docs/plan.md`): `complete_locally`
+      (`!SeriesCoverage.Partial()`), `works_total` (null until the series page was fetched),
+      `works_mirrored`, `missing_positions`, `missing_work_ids`. `mirror_source_url` is left to
+      the series route (stage 13).
+    - `GET /works/{id}/skin` → `dto.WorkSkin{css}`, `css` omitted when the work has none (the
+      enforcer allows only JSON in hashed mode, so the CSS is a hashed string, not `text/css`).
+    - Unknown work → 404 `not-found` (`DetailNoWork`). The leak-test seed adds a fetched work
+      (9) with chapters, a skin and a partial series (77), so `/status` now lists one partial
+      series.
   - [ ] **8c. Chapter routes**: `GET /works/{id}/chapters/{position}` and `/works/{id}/chapters`.
     The whole-work route adds up the raw content bytes first; over 16 MiB (a constant) is a new
     `work-too-large` problem (422) whose detail points to the per-chapter route.
