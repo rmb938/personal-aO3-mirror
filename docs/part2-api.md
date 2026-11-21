@@ -1122,7 +1122,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       `q`, at `/sort` in the body and on the `sort` parameter of `GET` (which has no `q`).
     - The all-routes leak sample stays without `q` (it must succeed hashed);
       `TestQueryWorksSearch` searches the seeded works revealed and checks q is never logged.
-- [ ] **12. Tags**
+- [x] **12. Tags**
   - Store readers for parents, meta/sub tags, synonyms/merger, and work counts.
   - `GET /tags/{id}`; `GET` + `QUERY /tags/{id}/works` (stage 9 filters scoped to the tag and,
     for canonical tags, their synonyms).
@@ -1238,6 +1238,36 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     `missing_positions`, `missing_work_ids`, `mirror_source_url`) and `/series/{id}/works`.
   - `GET /creators/{id}` and `/creators/{id}/works`; `QUERY /creators` (name is reveal-only).
   - `GET /collections/{id}` and `/collections/{id}/works`.
+  - A creator is a pseud (`creators.id`, as the work view's `creators` items), after AO3's
+    `/users/{login}/pseuds/{pseud}/works`; users grouping pseuds are not modelled. Series works
+    are a plain `GET` in part order, as AO3's series page; creator and collection works are
+    `GET` + `QUERY` with the stage 9 filters, as `/tags/{id}/works`.
+  - In six PRs:
+  - [x] **13a. Store + controller: series view.** As built:
+    - `store.SeriesCreators` (by creator id: `series_creators` keeps no byline order),
+      `SeriesWorks(id, offset, limit)` (the series' stored works, fetched or blurb-only, by part
+      number with unknown parts last, then work id; at most `MaxWorkBatch`; the page is picked
+      from `series_works` first) and `CountSeriesWorks`. Members with no works row are not
+      listed. `seriesCoverage` is exported as `SeriesCoverage`. `TestSeriesWorksPlans` checks
+      both read the `series_works` primary key.
+    - `controllers.GetSeries` returns a `SeriesView`: the row, creators, coverage and `Works`
+      (the stored works, so it equals the `/series/{id}/works` total; `Coverage.Mirrored`
+      counts fetched works only). `ListSeriesWorks(id, offset, limit)` returns `WorkBlurb`s and
+      the total. Both are one read transaction and return `store.ErrNoSeries` for no row; a
+      series named by a work page but never fetched has a row (title only).
+  - [ ] **13b. Series routes**: `GET /series/{id}` (with `mirror_source_url`, the AO3 series URL
+    for source add) and `GET /series/{id}/works` (page, per_page), DTOs, convert,
+    `ErrNoSeries` as 404, leak samples, OpenAPI and the client.
+  - [ ] **13c. Store + controller: creators**: a creator scope on `model.WorkFilter` (AO3
+    `pseud_id`), `GetCreator` (login, pseud, works count) and a creator listing (name filter,
+    paging, name or works sort).
+  - [ ] **13d. Creator routes**: `GET /creators/{id}`, `GET` + `QUERY /creators/{id}/works`,
+    `QUERY /creators` (`name` is reveal-only).
+  - [ ] **13e. Store + controller: collections**: a meta migration indexing
+    `work_collections(collection_id)`, a collection scope on `model.WorkFilter`, and
+    `GetCollection` (name, title, works count).
+  - [ ] **13f. Collection routes**: `GET /collections/{id}` and `GET` + `QUERY
+    /collections/{id}/works`.
 - [ ] **14. Images (reveal-only)**
   - `GET /images/{sha256}`: the stored Content-Type, `nosniff`, and
     `CSP: default-src 'none'; style-src 'unsafe-inline'` (per `docs/plan.md`).

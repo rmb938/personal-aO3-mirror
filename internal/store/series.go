@@ -76,6 +76,49 @@ func (s *ReadTx) Series(ctx context.Context, id int64) (SeriesRow, error) {
 	return r, err
 }
 
+// SeriesCreators returns a series' creators (from its series page) by creator id: AO3's series
+// byline has no stored order. A series whose page was never fetched has none.
+func (s *ReadTx) SeriesCreators(ctx context.Context, seriesID int64) ([]CreatorRef, error) {
+	return queryRows(ctx, s.meta, func(r *sql.Rows, c *CreatorRef) error {
+		return r.Scan(&c.ID, &c.User, &c.Pseud)
+	}, `SELECT c.id, c.user_login, c.pseud FROM series_creators sc JOIN creators c ON c.id = sc.creator_id
+		WHERE sc.series_id = ? ORDER BY c.id`, seriesID)
+}
+
+// seriesWorkRows selects the series_works members (one bound parameter, the series id) that
+// have a works row: the stored works of the series, fetched or known from blurbs only.
+const seriesWorkRows = `FROM series_works sw JOIN works w ON w.id = sw.work_id WHERE sw.series_id = ?`
+
+// seriesWorkOrder orders seriesWorkRows by part number, as AO3's series page, with unknown
+// part numbers (0) last and ties by work id.
+const seriesWorkOrder = ` ORDER BY sw.position = 0, sw.position, sw.work_id`
+
+// seriesWorksPage is SeriesWorks' query (series id, limit, offset). The page is picked from
+// series_works first, so a deep offset never reads works rows in full.
+const seriesWorksPage = `SELECT ` + workRowCols + ` FROM works JOIN (SELECT sw.work_id, sw.position ` +
+	seriesWorkRows + seriesWorkOrder + ` LIMIT ? OFFSET ?) sw ON sw.work_id = works.id` + seriesWorkOrder
+
+// SeriesWorks returns up to limit (1..MaxWorkBatch) of a series' stored works in part order,
+// skipping the first offset (≥ 0). Members known only from the series page (no works row) are
+// not listed; SeriesCoverage reports them. It holds fanwork content: never log it.
+func (s *ReadTx) SeriesWorks(ctx context.Context, seriesID int64, offset, limit int) ([]WorkRow, error) {
+	if offset < 0 || limit < 1 || limit > MaxWorkBatch {
+		return nil, fmt.Errorf("store: series works: bad page (offset %d, limit %d)", offset, limit)
+	}
+	return queryRows(ctx, s.meta, func(r *sql.Rows, w *WorkRow) error {
+		var err error
+		*w, err = scanWorkRow(r)
+		return err
+	}, seriesWorksPage, seriesID, limit, offset)
+}
+
+// CountSeriesWorks returns the number of a series' stored works, as SeriesWorks lists them.
+func (s *ReadTx) CountSeriesWorks(ctx context.Context, seriesID int64) (int, error) {
+	var n int
+	err := s.meta.QueryRowContext(ctx, `SELECT COUNT(*) `+seriesWorkRows, seriesID).Scan(&n)
+	return n, err
+}
+
 // seriesMaxRevised is the newest revised_at (YYYY-MM-DD, ” if none) of a series' mirrored
 // works; seriesAlias names the series row.
 func seriesMaxRevised(seriesAlias string) string {
@@ -250,8 +293,8 @@ func (c SeriesCoverage) Partial() bool {
 	return c.Fetched && !c.Source && c.WorksTotal > c.Mirrored
 }
 
-// seriesCoverage returns a series' coverage; a series with no row has the zero value.
-func (s *ReadTx) seriesCoverage(ctx context.Context, seriesID int64) (SeriesCoverage, error) {
+// SeriesCoverage returns a series' coverage; a series with no row has the zero value.
+func (s *ReadTx) SeriesCoverage(ctx context.Context, seriesID int64) (SeriesCoverage, error) {
 	var c SeriesCoverage
 	var fetched int64
 	var source int

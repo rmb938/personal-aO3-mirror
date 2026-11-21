@@ -140,7 +140,7 @@ func (s *ReadTx) WorkSeries(ctx context.Context, workID int64) ([]WorkSeriesPart
 	}
 	var parts []WorkSeriesPart
 	for _, p := range m[workID] {
-		c, err := s.seriesCoverage(ctx, p.ID)
+		c, err := s.SeriesCoverage(ctx, p.ID)
 		if err != nil {
 			return nil, err
 		}

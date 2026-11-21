@@ -72,6 +72,78 @@ func TestPartialSeries(t *testing.T) {
 	require.Empty(t, ps, "source series listed as partial")
 }
 
+func TestSeriesWorksAndCreators(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	// Series 77: work 3 is part 2, work 1 part 1, work 5 has no part number, work 4 is part 3
+	// and only a blurb. Work 9 is listed on the series page but not stored.
+	for _, u := range []struct {
+		id     int64
+		pos    int
+		origin model.Origin
+	}{{3, 2, model.FromPage}, {1, 1, model.FromPage}, {5, 0, model.FromPage}, {4, 3, model.FromBlurb}} {
+		w := fixtureWork(u.id)
+		w.Series = []model.SeriesPart{{ID: 77, Title: "Fixture Series", Position: u.pos}}
+		_, err := s.UpsertWork(ctx, w, u.origin, 1)
+		require.NoError(t, err)
+	}
+	// The series page lists the unfetched members (it replaces those, so work 4 too).
+	require.NoError(t, s.SetSeriesMembers(ctx, 77, []SeriesMember{{WorkID: 4, Position: 3}, {WorkID: 9, Position: 4}}))
+
+	ids := func(offset, limit int) []int64 {
+		t.Helper()
+		rows, err := s.SeriesWorks(ctx, 77, offset, limit)
+		require.NoError(t, err)
+		var out []int64
+		for _, r := range rows {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	require.Equal(t, []int64{1, 3, 4, 5}, ids(0, 10), "by part number, unknown last, members with no row dropped")
+	require.Equal(t, []int64{3, 4}, ids(1, 2))
+	require.Empty(t, ids(4, 10))
+	rows, err := s.SeriesWorks(ctx, 77, 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, "Fixture Title Alpha", rows[0].Title, "full works rows")
+	n, err := s.CountSeriesWorks(ctx, 77)
+	require.NoError(t, err)
+	require.Equal(t, 4, n)
+	n, err = s.CountSeriesWorks(ctx, 999)
+	require.NoError(t, err)
+	require.Zero(t, n)
+	for _, p := range [][2]int{{-1, 1}, {0, 0}, {0, MaxWorkBatch + 1}} {
+		_, err := s.SeriesWorks(ctx, 77, p[0], p[1])
+		require.Error(t, err, "bad page %v", p)
+	}
+
+	cs, err := s.SeriesCreators(ctx, 77)
+	require.NoError(t, err)
+	require.Empty(t, cs, "none until the series page is stored")
+	require.NoError(t, s.UpsertSeries(ctx, model.Series{ID: 77, WorksCount: 4, Creators: []model.Creator{
+		{User: "fixture_b", Pseud: "fixture_b"}, {User: "fixture_author", Pseud: "fixture_pseud"},
+	}}))
+	cs, err = s.SeriesCreators(ctx, 77)
+	require.NoError(t, err)
+	require.Len(t, cs, 2)
+	require.Equal(t, "fixture_pseud", cs[0].Pseud, "by creator id: the works' creator was stored first")
+	require.Equal(t, "fixture_b", cs[1].User)
+	byline, err := s.WorkCreators(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, byline[0], cs[0], "one creators row for the work's and the series' byline")
+}
+
+func TestSeriesWorksPlans(t *testing.T) {
+	s, _, _ := openTest(t)
+	for _, q := range []string{seriesWorksPage, `SELECT COUNT(*) ` + seriesWorkRows} {
+		plan := explain(t, s, q, 77, 10, 0)
+		// One series' members only; sorting them by part number is a per-series sort.
+		require.Contains(t, plan, "INDEX sqlite_autoindex_series_works_1 (series_id=?)", plan)
+		require.NotContains(t, plan, "SCAN works", plan)
+		require.NotContains(t, plan, "SCAN w", plan)
+	}
+}
+
 func TestSeriesUpsertAndNeedingInfo(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
