@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -17,8 +18,9 @@ import (
 // it, recording every invalid member on v:
 //   - Content-Type must be application/json (charset, if given, utf-8), else 415;
 //   - the body is capped at maxBodyBytes by handle (413 above it);
-//   - exactly one JSON value: no trailing data, no unknown fields, no duplicate keys, valid
-//     UTF-8 (encoding/json/v2 defaults plus RejectUnknownMembers); else 400 invalid-body.
+//   - exactly one JSON object (not null): no trailing data, no unknown fields, no duplicate
+//     keys, valid UTF-8 (encoding/json/v2 defaults plus RejectUnknownMembers); else 400
+//     invalid-body.
 //
 // An unreadable body is returned at once (before any parameter error); validation problems
 // are only recorded, so the caller returns them with its other ones (v.Err). Errors never
@@ -35,6 +37,10 @@ func DecodeJSON(r *http.Request, dst request.Request, v *problem.Validation) err
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			return problem.WithDetail(dto.TypeBodyTooLarge, DetailBodyTooLarge)
 		}
+		return problem.WithDetail(dto.TypeInvalidBody, DetailInvalidBody)
+	}
+	// Unmarshal takes null as a zero struct; the body must be an object (found by fuzzing).
+	if jsontext.Value(raw).Kind() != '{' {
 		return problem.WithDetail(dto.TypeInvalidBody, DetailInvalidBody)
 	}
 	if err := json.Unmarshal(raw, dst, json.RejectUnknownMembers(true)); err != nil {

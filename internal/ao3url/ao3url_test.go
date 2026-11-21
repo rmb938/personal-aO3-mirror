@@ -71,6 +71,8 @@ func TestParseReasons(t *testing.T) {
 		"works/1":                                       ReasonNotAO3,
 		"http://[x":                                     ReasonMalformed,
 		host + "/tags/a%zz/works":                       ReasonMalformed,
+		host + "/users/a%2Fb/pseuds/c":                  ReasonMalformed, // found by FuzzParse
+		host + "/users/a%2Fb":                           ReasonMalformed,
 		host + "/chapters/5":                            ReasonChapter,
 		host + "/tags/x/bookmarks":                      ReasonTagPage,
 		host + "/users/a/pseuds/b/bookmarks":            ReasonPseudBookmarks,

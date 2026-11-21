@@ -171,6 +171,10 @@ func Parse(raw string) (Source, error) {
 		if err != nil {
 			return Source{}, errMalformed(err)
 		}
+		if strings.Contains(login, "/") {
+			// AO3 logins never hold one, and a pseud's target "login/pseud" would not split back.
+			return Source{}, urlErr(ReasonMalformed)
+		}
 		switch {
 		case len(segs) >= 4 && segs[2] == "pseuds":
 			pseud, err := url.PathUnescape(segs[3])
