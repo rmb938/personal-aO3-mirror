@@ -113,7 +113,7 @@ func runStatus(ctx context.Context, a *app, args []string, out, errOut io.Writer
 	}
 	tw = tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	for _, j := range st.FailedJobs {
-		fmt.Fprintf(tw, "job %d\t%s\t%s\t%s\t%s\t%s\n", j.ID, j.Kind, j.Target, "source "+optID(j.SourceID), when(j.FinishedAt),
+		fmt.Fprintf(tw, "job %d\t%s\t%d\t%s\t%s\t%s\n", j.ID, j.Kind, j.Target, "source "+optID(j.SourceID), when(j.FinishedAt),
 			jobError(j.LastErrorCode, j.LastErrorDetail))
 	}
 	tw.Flush()
@@ -158,7 +158,7 @@ func runDebug(ctx context.Context, a *app, args []string, out, errOut io.Writer)
 	}
 	fs := flag.NewFlagSet("debug "+args[0], flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	names := fs.Bool("names", false, "show real targets, paths, reasons and errors")
+	names := fs.Bool("names", false, "show real paths, reasons and errors")
 	arg, ok := parseWithPositional(fs, args[1:])
 	if !ok {
 		fmt.Fprint(errOut, debugUsage)
@@ -204,7 +204,7 @@ func runDebug(ctx context.Context, a *app, args []string, out, errOut io.Writer)
 
 func printJob(out io.Writer, j apiclient.Job, dedupe string) {
 	printFields(out, [][2]string{
-		{"id", strconv.Itoa(int(j.ID))}, {"kind", string(j.Kind)}, {"target", j.Target}, {"source", optID(j.SourceID)},
+		{"id", strconv.Itoa(int(j.ID))}, {"kind", string(j.Kind)}, {"target", strconv.Itoa(j.Target)}, {"source", optID(j.SourceID)},
 		{"class", strconv.Itoa(j.Priority)}, {"state", string(j.State)}, {"attempts", fmt.Sprintf("%d/%d", j.Attempts, j.MaxAttempts)},
 		{"not before", when(j.NotBeforeAt)}, {"created", when(j.CreatedAt)}, {"started", when(j.StartedAt)},
 		{"finished", when(j.FinishedAt)}, {"last error", jobError(j.LastErrorCode, j.LastErrorDetail)}, {"dedupe", dedupe},

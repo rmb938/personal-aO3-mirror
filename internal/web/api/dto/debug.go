@@ -41,8 +41,8 @@ type JobEvent struct {
 type JobOutcome struct {
 	// Attempt (start event) is the attempt number, counting this one.
 	Attempt *int `json:"attempt"`
-	// Target (start event) is the job's target (hashed).
-	Target *string `json:"target"`
+	// Target (start event) is the job's target.
+	Target *int64 `json:"target"`
 	// Duration is how long the handler ran.
 	Duration *Duration `json:"duration"`
 	// ErrorCode and ErrorDetail are the run's error, split at the first ':' (the detail is

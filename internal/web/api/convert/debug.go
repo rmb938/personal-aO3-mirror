@@ -1,7 +1,6 @@
 package convert
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
@@ -51,7 +50,7 @@ func jobEvent(e controllers.JobEvent) dto.JobEvent {
 func jobOutcome(o controllers.JobOutcome) dto.JobOutcome {
 	out := dto.JobOutcome{
 		Attempt:     o.Attempt,
-		Target:      convPtr(o.Target, func(t int64) string { return strconv.FormatInt(t, 10) }),
+		Target:      o.Target,
 		Duration:    convPtr(o.MS, func(ms int64) dto.Duration { return dto.Duration(time.Duration(ms) * time.Millisecond) }),
 		NextState:   enumPtr[dto.JobState](o.NextState),
 		NotBeforeAt: convPtr(o.NotBefore, utc),

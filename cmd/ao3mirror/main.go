@@ -33,7 +33,7 @@ commands:
   jobs [--state S] [--kind K] [--source ID] [--limit N] [--names]
                      list jobs (ids, targets, states, errors); queued jobs in queue order
   debug job|work ID [--names]  trace for one job/work
-                     (jobs and debug hide targets/paths/errors as hashes unless --names)
+                     (jobs and debug hide paths/errors as hashes unless --names)
   serve [--no-reveal]  run the JSON API (api: config); strings are hashed unless a request
                      asks to reveal; --no-reveal refuses that too (docs/part2-api.md)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing

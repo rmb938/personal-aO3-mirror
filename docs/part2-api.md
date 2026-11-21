@@ -539,7 +539,7 @@ Status: tick when the PR merges.
         `/jobs/{id}`. `convert.Job` splits `last_error`; `dto.JobKind` (key `kind`) gets a
         convert test against the `jobs.Kind*` constants.
         - As built:
-          - `dto.Job`: id, kind, target (hashed), `source_id` (omitted when none), priority,
+          - `dto.Job`: id, kind, target (a hashed string until 6d-2, then an integer), `source_id` (omitted when none), priority,
             state, attempts, max_attempts, `last_error_code`/`last_error_detail`,
             `not_before_at`, `created_at`, `started_at`, `finished_at` (zero times omitted). The
             dedupe key is not exposed (debug, stage 5, may add it).
@@ -821,7 +821,7 @@ Status: tick when the PR merges.
       up to `--limit`. `run` and `fetch-work` stay direct and share `newAO3Client`.
   - [x] 6c: the `cmd/ao3mirror/main_test.go` end-to-end tests start an in-process `serve` (and
     `run`) on the test's data dir.
-- [ ] **6d. Refactor: integer job targets.** `jobs.target` is `TEXT` ("path or id") from the
+- [x] **6d. Refactor: integer job targets.** `jobs.target` is `TEXT` ("path or id") from the
   first schema, which planned `listing_page`, `verify` and `image` jobs. None was built: listing
   pages are `poll`/`backfill` jobs targeting a page number, images have their own worker and
   table, and a source add targets its `source_adds` row id so no names reach `jobs`. Every kind's
@@ -829,7 +829,7 @@ Status: tick when the PR merges.
   formats it with `strconv` and the scheduler's `atoi`/`atoi64` parse it back, dropping the
   error, so a bad target runs as 0. The API hashes it as free text, so `jobs` and `debug` need
   `--names` to show a work id. Two PRs:
-  - [ ] **6d-1. Store + model.** A meta migration (`0003` unless another lands first) rebuilds
+  - [x] **6d-1. Store + model.** A meta migration (`0003` unless another lands first) rebuilds
     `jobs` with `target INTEGER NOT NULL` (copy-table pattern: SQLite cannot change a column's
     type), failing if a stored target is not an integer. `model.Job.Target` and
     `store.NewJob.Target` become `int64`; enqueues pass the number and the scheduler handlers
@@ -843,11 +843,14 @@ Status: tick when the PR merges.
       Stored start events get their `target` rewritten to a JSON number.
     - `convert` formats the target as a string until 6d-2. A job with target 0 now shows `"0"`.
     - `migrateTo(ctx, db, name, upTo)` stops at a version, so tests can upgrade a 0002 db.
-  - [ ] **6d-2. API.** `dto.Job.Target` and the start event's `target` (`dto/debug.go`) become
+  - [x] **6d-2. API.** `dto.Job.Target` and the start event's `target` (`dto/debug.go`) become
     integers, copied by `convert`; `openapi.yaml` and `internal/apiclient` follow
     (`make generate`). The all-routes leak test drops the sentinel job targets (an integer
     cannot hold one). `jobs` and `debug` show plain targets without `--names`, which stays for
-    the fields that are still strings.
+    the fields that are still strings. As built:
+    - The seed's sentinel job targets were already gone in 6d-1 (the store took integers);
+      the integration tests now assert the plain numbers.
+    - OpenAPI `target` is `integer` (`[integer, "null"]` on the outcome), with no minimum.
 - [ ] **7. Store + controller: work detail**
   - Loaders for a work's creators, tags (with type), series parts (+ partial-series flag per
     `docs/plan.md`), collections, and chapter metadata (meta `chapters`).

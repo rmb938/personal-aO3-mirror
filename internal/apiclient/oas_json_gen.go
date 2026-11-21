@@ -1459,7 +1459,7 @@ func (s *Job) encodeFields(e *jx.Encoder) {
 	}
 	{
 		e.FieldStart("target")
-		e.Str(s.Target)
+		e.Int(s.Target)
 	}
 	{
 		if s.SourceID.Set {
@@ -1570,8 +1570,8 @@ func (s *Job) Decode(d *jx.Decoder) error {
 		case "target":
 			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
-				v, err := d.Str()
-				s.Target = string(v)
+				v, err := d.Int()
+				s.Target = int(v)
 				if err != nil {
 					return err
 				}

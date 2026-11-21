@@ -12,7 +12,7 @@ import (
 )
 
 // runJobs lists up to --limit jobs, newest first; a --state queued listing is in queue order
-// (oldest first). Content-free: the API hashes job targets unless --names.
+// (oldest first). Content-free: the API hashes job errors unless --names.
 func runJobs(ctx context.Context, a *app, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("jobs", flag.ContinueOnError)
 	fs.SetOutput(errOut)
@@ -20,7 +20,7 @@ func runJobs(ctx context.Context, a *app, args []string, out, errOut io.Writer) 
 	kind := fs.String("kind", "", "poll|backfill|work|tag_info|series_info|source_add (default: all)")
 	source := fs.Int("source", 0, "only jobs of this source id")
 	limit := fs.Int("limit", 50, "max rows")
-	names := fs.Bool("names", false, "show real job targets and errors")
+	names := fs.Bool("names", false, "show real job errors")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -68,7 +68,7 @@ func runJobs(ctx context.Context, a *app, args []string, out, errOut io.Writer) 
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tKIND\tTARGET\tSOURCE\tCLASS\tSTATE\tATTEMPTS\tNOT BEFORE\tLAST ACTIVITY\tERROR")
 	for _, j := range jobs {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%s\t%d/%d\t%s\t%s\t%s\n", j.ID, j.Kind, j.Target, optID(j.SourceID), j.Priority, j.State,
+		fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%d\t%s\t%d/%d\t%s\t%s\t%s\n", j.ID, j.Kind, j.Target, optID(j.SourceID), j.Priority, j.State,
 			j.Attempts, j.MaxAttempts, when(j.NotBeforeAt), whenTime(lastActivity(j)), jobError(j.LastErrorCode, j.LastErrorDetail))
 	}
 	tw.Flush()

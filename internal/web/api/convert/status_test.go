@@ -52,7 +52,7 @@ func TestStatus(t *testing.T) {
 	assert.Equal(t, []dto.Request{{RequestedAt: at.UTC(), ReqID: "r1", Kind: "work", Path: "/works/1", Status: 503,
 		Class: "unavailable", Reason: "status=503", Duration: dto.Duration(1500 * time.Millisecond), Waited: dto.Duration(2 * time.Second), Hop: 1}}, got.RequestErrors)
 	assert.Equal(t, time.UTC, got.RequestErrors[0].RequestedAt.Location())
-	assert.Equal(t, []dto.Job{{ID: 3, Kind: "work", Target: "5", State: "failed", LastErrorCode: "not_found"}}, got.FailedJobs)
+	assert.Equal(t, []dto.Job{{ID: 3, Kind: "work", Target: 5, State: "failed", LastErrorCode: "not_found"}}, got.FailedJobs)
 	assert.True(t, got.Daemon.Running)
 
 	empty := Status(controllers.StatusReport{})

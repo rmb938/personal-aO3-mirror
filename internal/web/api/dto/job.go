@@ -39,9 +39,8 @@ func (JobErrorCode) EnumValues() []string {
 type Job struct {
 	ID   int64   `json:"id"`
 	Kind JobKind `json:"kind"`
-	// Target is what the job acts on: a page number, a work/tag/series id or a source add id
-	// (hashed).
-	Target string `json:"target"`
+	// Target is what the job acts on: a page number, a work/tag/series id or a source add id.
+	Target int64 `json:"target"`
 	// SourceID is the job's source (omitted when it has none).
 	SourceID int64 `json:"source_id,omitzero"`
 	// Priority is the job's class: lower runs first.
