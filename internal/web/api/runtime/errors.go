@@ -38,7 +38,9 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoTag)
 	case errors.Is(err, controllers.ErrNoMedium):
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoMedium)
-	case errors.Is(err, store.ErrNoSeries), errors.Is(err, store.ErrNoRawPage):
+	case errors.Is(err, store.ErrNoSeries):
+		e = problem.WithDetail(dto.TypeNotFound, DetailNoSeries)
+	case errors.Is(err, store.ErrNoRawPage):
 		e = problem.New(dto.TypeNotFound)
 	case errors.Is(err, store.ErrStateConflict):
 		e = problem.WithDetail(dto.TypeStateConflict, DetailStateConflict)

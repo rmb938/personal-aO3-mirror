@@ -168,6 +168,8 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/media": {target: "/api/v1/media", status: http.StatusOK, content: true},
 	"GET /api/v1/media/{id}/fandoms": {target: "/api/v1/media/4/fandoms?sort=uses", status: http.StatusOK,
 		content: true},
+	"GET /api/v1/series/{id}":       {target: "/api/v1/series/77", status: http.StatusOK, content: true},
+	"GET /api/v1/series/{id}/works": {target: "/api/v1/series/77/works", status: http.StatusOK, content: true},
 
 	// Admin socket only.
 	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},

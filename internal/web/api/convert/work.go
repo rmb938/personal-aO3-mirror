@@ -60,14 +60,18 @@ func workCollection(c store.CollectionRef) dto.WorkCollection {
 // workSeries maps one series part; the total is null until the series page was fetched.
 func workSeries(p store.WorkSeriesPart) dto.WorkSeries {
 	c := p.Coverage
-	out := dto.WorkSeries{
-		ID: p.ID, Title: p.Title, Position: p.Position, CompleteLocally: !c.Partial(), WorksMirrored: c.Mirrored,
-		MissingPositions: c.MissingPositions, MissingWorkIDs: c.MissingWorkIDs,
+	return dto.WorkSeries{
+		ID: p.ID, Title: p.Title, Position: p.Position, CompleteLocally: !c.Partial(), WorksTotal: worksTotal(c),
+		WorksMirrored: c.Mirrored, MissingPositions: c.MissingPositions, MissingWorkIDs: c.MissingWorkIDs,
 	}
-	if c.Fetched {
-		out.WorksTotal = new(c.WorksTotal)
+}
+
+// worksTotal is a series' AO3 work count, null until its series page was fetched.
+func worksTotal(c store.SeriesCoverage) *int {
+	if !c.Fetched {
+		return nil
 	}
-	return out
+	return new(c.WorksTotal)
 }
 
 func chapterRef(c model.Chapter) dto.ChapterRef {

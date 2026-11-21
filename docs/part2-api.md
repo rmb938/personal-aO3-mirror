@@ -1255,9 +1255,22 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       counts fetched works only). `ListSeriesWorks(id, offset, limit)` returns `WorkBlurb`s and
       the total. Both are one read transaction and return `store.ErrNoSeries` for no row; a
       series named by a work page but never fetched has a row (title only).
-  - [ ] **13b. Series routes**: `GET /series/{id}` (with `mirror_source_url`, the AO3 series URL
+  - [x] **13b. Series routes**: `GET /series/{id}` (with `mirror_source_url`, the AO3 series URL
     for source add) and `GET /series/{id}/works` (page, per_page), DTOs, convert,
-    `ErrNoSeries` as 404, leak samples, OpenAPI and the client.
+    `ErrNoSeries` as 404, leak samples, OpenAPI and the client. As built:
+    - `GET /series/{id}` answers `dto.Series` (`convert.SeriesView`): `id`, `title`, `creators`
+      (`WorkCreator`s by id), `summary_html` and `notes_html` (omitted when empty), `begun_on`
+      and `updated_on` (omitted until fetched), `words`, `bookmarks`, `complete`, the coverage
+      fields of `WorkSeries` (`worksTotal` is now shared), `works_stored` (the works route's
+      total) and `last_fetched_at` (omitted if never fetched).
+    - `mirror_source_url` is `httpx.DefaultBaseURL` plus `ao3url.BasePath` (the public AO3
+      URL, which `ao3url.Parse` accepts), hashed like any plain string. It is always set: a
+      re-add of a series that already is a source is refused as `already-exists`.
+    - `GET /series/{id}/works` answers the `WorkList` of `GET /works` through
+      `convert.WorkBlurbList`; plain GET, no sort (part order, as AO3).
+    - `store.ErrNoSeries` is 404 with `DetailNoSeries`. The seed's series 77 now has a
+      creator, description, notes, dates and stats, every string a sentinel; both routes have
+      leak samples.
   - [ ] **13c. Store + controller: creators**: a creator scope on `model.WorkFilter` (AO3
     `pseud_id`), `GetCreator` (login, pseud, works count) and a creator listing (name filter,
     paging, name or works sort).
