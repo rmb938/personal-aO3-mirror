@@ -141,7 +141,9 @@ type TagInfoUpdate struct {
 // AO3 only links synonyms, mergers and meta tags within one tag type, so those referenced tags
 // get this tag's type (an already-known type is never overwritten). Parent tags can be of other
 // types (a relationship's parents mix fandoms and characters), so they are created as Unknown
-// and get a type when they appear on a work.
+// and get a type when they appear on a work. A fandom's parents are the exception: AO3 gives a
+// fandom only media parents (Fandom#parent_types; meta tags are listed apart), and media never
+// appear on a work, so they are typed Media here (meta migration 0009 typed the older ones).
 func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) error {
 	tx := s.meta
 	now := s.unix()
@@ -159,8 +161,12 @@ func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) er
 			return err
 		}
 	}
-	ref := func(name string) (int64, error) {
-		return s.tagID(ctx, tx, model.Tag{Type: model.TagUnknown, Name: name})
+	parentType := model.TagUnknown
+	if sameType == model.TagFandom {
+		parentType = model.TagMedia
+	}
+	refParent := func(name string) (int64, error) {
+		return s.tagID(ctx, tx, model.Tag{Type: parentType, Name: name})
 	}
 	refSame := func(name string) (int64, error) {
 		return s.tagID(ctx, tx, model.Tag{Type: sameType, Name: name})
@@ -182,7 +188,7 @@ func (s *Tx) UpdateTagInfo(ctx context.Context, tagID int64, u TagInfoUpdate) er
 		return err
 	}
 	for _, p := range u.Parents {
-		id, err := ref(p)
+		id, err := refParent(p)
 		if err != nil {
 			return err
 		}

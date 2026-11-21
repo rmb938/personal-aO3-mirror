@@ -73,3 +73,37 @@ func TestTagInfo(t *testing.T) {
 	}
 	require.Equal(t, map[string]string{"FC": "Character", "Fixture Meta": "Character", "Canonical Fandom": "Fandom"}, got)
 }
+
+// A fandom's parents are media (AO3 gives a fandom no other parent type); other tags' parents
+// stay Unknown until they appear on a work.
+func TestTagInfoMediaParents(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+	w := fixtureWork(1)
+	w.Tags = []model.Tag{{Type: model.TagFandom, Name: "Fixture Fandom"}, {Type: model.TagFandom, Name: "Fixture Fandom 2"},
+		{Type: model.TagCharacter, Name: "Fixture Character"}}
+	_, err := s.UpsertWork(ctx, w, model.FromBlurb, 1)
+	require.NoError(t, err)
+	id := func(name string) int64 {
+		var id int64
+		require.NoError(t, s.meta.QueryRow(`SELECT id FROM tags WHERE name = ?`, name).Scan(&id))
+		return id
+	}
+	typeOf := func(name string) string {
+		var ty string
+		require.NoError(t, s.meta.QueryRow(`SELECT type FROM tags WHERE name = ?`, name).Scan(&ty))
+		return ty
+	}
+
+	require.NoError(t, s.UpdateTagInfo(ctx, id("Fixture Fandom"), TagInfoUpdate{Type: model.TagFandom, Canonical: true,
+		Parents: []string{"Fixture Media"}}))
+	require.Equal(t, "Media", typeOf("Fixture Media"))
+	// The page's type is unknown, but the stored tag is a fandom.
+	require.NoError(t, s.UpdateTagInfo(ctx, id("Fixture Fandom 2"), TagInfoUpdate{Type: model.TagUnknown,
+		Parents: []string{"Fixture Media 2"}}))
+	require.Equal(t, "Media", typeOf("Fixture Media 2"))
+	require.NoError(t, s.UpdateTagInfo(ctx, id("Fixture Character"), TagInfoUpdate{Type: model.TagCharacter,
+		Parents: []string{"Fixture Fandom", "Fixture Parent"}}))
+	require.Equal(t, "Unknown", typeOf("Fixture Parent"), "a character's parents mix types")
+	require.Equal(t, "Fandom", typeOf("Fixture Fandom"), "a known type is kept")
+}
