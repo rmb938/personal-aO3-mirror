@@ -107,6 +107,13 @@ added).
 `GET /api/v1/works/{id}/chapters/{position}`; the work's chapter list is in
 `GET /api/v1/works/{id}`.
 
+## misdirected-request
+
+**421 Misdirected Request.** The `Host` header (without its port) is not one of the public
+listener's `api.allowed_hosts` (default `127.0.0.1`, `::1`, `localhost`). This stops a web
+page from reaching the API through DNS rebinding. Use one of the configured names, or add the
+name you serve under (e.g. the Funnel host). The admin socket does not check `Host`.
+
 ## uri-too-long
 
 **414 URI Too Long.** The path plus query string is over 4096 bytes.

@@ -187,13 +187,15 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
      is not used, because it prints the panic value, which could hold content.
   5. security headers
   6. enforcer
-  7. URL limits
-  8. rate limit
-  9. ThrottleBacklog
-  10. per-request timeout (context deadline, default 10s; SQLite queries honour ctx)
-  11. `http.CrossOriginProtection` (Go 1.25+)
-  12. reveal parser
-  13. routes
+  7. Host check (public listener only, stage 15d): 421 `misdirected-request` unless `Host`
+     without its port is in `api.allowed_hosts`
+  8. URL limits
+  9. rate limit
+  10. ThrottleBacklog
+  11. per-request timeout (context deadline, default 10s; SQLite queries honour ctx)
+  12. `http.CrossOriginProtection` (Go 1.25+)
+  13. reveal parser
+  14. routes
 - **Client IP:** use `middleware.ClientIPFromXFF(api.trusted_proxies...)` (default
   `127.0.0.1/32`, `::1/128`) and read the result with `middleware.GetClientIPAddr`. I checked
   that it matches what we need (chi v5.5.0 `middleware/client_ip.go`, tailscale
@@ -250,6 +252,7 @@ api:
   listen: 127.0.0.1:8080     # public listener; Funnel points here
   admin_socket: api/admin.sock   # relative to data_dir
   trusted_proxies: ["127.0.0.1/32", "::1/128"]   # quoted: bare ::1 breaks a YAML flow list
+  allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # public listener's Host names (stage 15d)
   request_timeout: 10s
   hash_key_rotation: 24h     # in-memory random key; 0 = once per process; min 1h
   rate: { general_per_min: 120, search_per_min: 30, source_add_per_hour: 10 }
@@ -1377,7 +1380,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       file in the controllers' temp `ImageDir`) and a queued one; every route has a leak sample
       (the image route: 403 hashed, 200 revealed). OpenAPI declares the `image/*` binary
       response; the client is regenerated.
-- [ ] **15. Hardening pass**
+- [x] **15. Hardening pass**
   - Fuzz tests for the param and body parsers.
   - Run the `/security-review` skill and `make deadcode`; govulncheck.
   - Update the OpenAPI spec; load-test the rate limits.
@@ -1491,9 +1494,71 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       steps), and pausing a cancelled source.
     - The client is regenerated: the 409's `Location` is a plain string now that it is
       required (one CLI line), and the tag query's `types` is validated.
-  - [ ] **15d. Security review**: `/security-review`, `make deadcode` triage, govulncheck, and
+  - [x] **15d. Security review**: `/security-review`, `make deadcode` triage, govulncheck, and
     the OWASP API Security Top 10 (2023) item by item, written up here; small gaps fixed,
-    auth items (API1, API2, API5) left to stage 16.
+    auth items (API1, API2, API5) left to stage 16. As built:
+    - govulncheck: no vulnerabilities. `make deadcode`: `Controllers.FindJobs` was unreachable
+      even from tests and is gone; `Params.Values` had `Page`'s doc comment. The rest of the
+      production-only list is test helpers, the enum lists their tests check, and `Epoch`'s
+      printing methods (kept so a formatted epoch never prints its key).
+    - `/security-review` over the whole API (not just the branch diff): no finding at
+      confidence ≥ 8. The one candidate, `POST /sources` answering 409 `already-exists` for a
+      guessed tag or user URL in hashed mode, is the stage 4 design: hashing keeps content from
+      Claude, not names from clients (any client may reveal on a normal server), the names are
+      public AO3 names, and each miss queues a job under the 10/hour limit. Checked and sound:
+      SQL (bound values, sorts from fixed maps, quoted FTS terms, escaped LIKE), image paths
+      (64 lowercase hex, extension from a fixed switch, hash checked on read), image responses
+      (`image/*` only, `nosniff`, sandboxed CSP, refused hashed), admin routes registered only
+      on the socket (0700 dir, 0600 socket), XFF, every response through the enforcer, reveal
+      parsing, cross-origin checks on POST/PATCH/DELETE/QUERY, the hash key (`crypto/rand`,
+      memory only), source add hosts (AO3 allowlist; `serve` has no AO3 client) and logs.
+    - OWASP API Security Top 10 (2023):
+      - **API1 Broken Object Level Authorization**: stage 16. There are no users or owned
+        objects yet; every object is the owner's, and the public listener shows all of them
+        (hashed by default).
+      - **API2 Broken Authentication**: stage 16. No auth; the admin boundary is the socket's
+        file permissions, not a credential. Funnel stays off until stage 16.
+      - **API3 Broken Object Property Level Authorization**: covered. Responses are `dto` types
+        filled field by field by `convert`, so a new model field is never exposed by accident,
+        and the enforcer hashes every free-text string. Requests are `request` types with
+        unknown members rejected (no mass assignment); `confirm` is refused publicly.
+        `/status`, jobs and request history are content-free by design.
+      - **API4 Unrestricted Resource Consumption**: covered. Server timeouts and a 16 KiB
+        header cap; a 10s request deadline honoured by SQLite; 4 KiB URLs, 32 params, 16 KiB
+        bodies, bounded strings and arrays, ≤ 16 FTS terms; `per_page` ≤ 100 and offset
+        ≤ 100000; a 32 MiB hashed-mode buffer; rate limits per group (load-tested in 15b) and
+        the in-flight throttle. Source adds cost AO3 requests, but only `run` fetches, through
+        the global pacer.
+      - **API5 Broken Function Level Authorization**: the listener split is the control
+        (admin routes exist only on the socket; `TestRoutesMatchOpenAPI` walks both routers,
+        and PATCH/DELETE `/sources/{id}` are 405 publicly). Per-user roles are stage 16.
+      - **API6 Unrestricted Access to Sensitive Business Flows**: source add is the sensitive
+        flow (it makes the daemon scrape). It has its own 10/hour limit, large sources wait
+        for an admin `confirm`, and the pacer bounds AO3 load whatever the queue holds.
+        Accepted: a public add may set `priority` (±1000) and `poll_interval` (≥ 10m), so it
+        can jump the queue or poll often; stage 16 limits adds to trusted user accounts.
+      - **API7 Server Side Request Forgery**: covered. `ao3url.Parse` allows only AO3 hosts
+        and keeps a kind and target, and the fetch URL is rebuilt from the fixed base; `serve`
+        builds no outbound client. Image URLs come from parsed AO3 pages, not API input.
+      - **API8 Security Misconfiguration**: covered: security headers on every response, no
+        CORS, RFC 9457 problems with catalogue details only, a recoverer that hides panic
+        values, chi's `Logger`/`Recoverer`/`RealIP` avoided, `--no-reveal`, loopback listener
+        by default. Gap fixed: the public listener did not check `Host`, so a web page could
+        use DNS rebinding to call it from the owner's browser, reveal param included (Go's
+        cross-origin check sees a rebound request as same-origin). New `api.allowed_hosts`
+        (default `127.0.0.1`, `::1`, `localhost`; host names or IPs, no port or wildcard,
+        checked by `config.ValidHost` in config and `runtime.New`). The `hostCheck`
+        middleware, after the enforcer on the public listener only, answers anything else
+        (port ignored, case-insensitive) with the new 421 `misdirected-request` (RFC 9110
+        §15.5.20: the server will not answer for that host). The socket can't be rebound
+        and is left unchecked. Enabling Funnel means adding its name to the list.
+      - **API9 Improper Inventory Management**: covered. One version (`/api/v1`), one spec
+        (`openapi.yaml`), checked against both routers and every response by the 15c tests;
+        the CLI client is generated from it.
+      - **API10 Unsafe Consumption of APIs**: `serve` consumes no third-party API. The scraper
+        treats AO3 as untrusted: `httpx` classifies responses (429/5xx/Cloudflare), the parser
+        reports selector hits, images are size-capped and stored by hash with a validated
+        `image/*` type, and stored text only leaves through the enforcer.
 - [ ] **16. Auth (placeholder, design later)**
   - Must land before Funnel exposure. Expected: a separate `users.db`.
   - Revisit then: reveal requiring auth, per-user rate limits, Tailscale identity headers

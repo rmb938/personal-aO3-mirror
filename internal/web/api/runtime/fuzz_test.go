@@ -254,7 +254,7 @@ func fuzzAPI(f *testing.F, noReveal bool, logs *bytes.Buffer) *API {
 	cfg := config.Default()
 	ctrls := controllers.New(controllers.Options{Store: st, Logger: log, Sources: cfg.Sources, Interval: cfg.Rate.Interval})
 	opts := Options{
-		Version: "test", TrustedProxies: []string{"127.0.0.1/32"}, RequestTimeout: 10 * time.Second,
+		Version: "test", TrustedProxies: []string{"127.0.0.1/32"}, AllowedHosts: testHosts, RequestTimeout: 10 * time.Second,
 		GeneralPerMin: math.MaxInt32, SourceAddPerHour: math.MaxInt32, SearchPerMin: math.MaxInt32, NoReveal: noReveal,
 	}
 	a, err := New(opts, log, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) {

@@ -50,6 +50,9 @@ type API struct {
 	AdminSocket string `yaml:"admin_socket"`
 	// TrustedProxies are the CIDR prefixes whose X-Forwarded-For is trusted.
 	TrustedProxies []string `yaml:"trusted_proxies"`
+	// AllowedHosts are the host names (no port) the public listener answers to; any other Host
+	// header gets 421, which stops DNS rebinding. Add the Funnel name when enabling Funnel.
+	AllowedHosts []string `yaml:"allowed_hosts"`
 	// RequestTimeout is the per-request context deadline.
 	RequestTimeout time.Duration `yaml:"request_timeout"`
 	// HashKeyRotation is the in-memory hash key lifetime; 0 means one key per process.
@@ -143,6 +146,7 @@ func Default() Config {
 			Listen:          "127.0.0.1:8080",
 			AdminSocket:     "api/admin.sock",
 			TrustedProxies:  []string{"127.0.0.1/32", "::1/128"},
+			AllowedHosts:    []string{"127.0.0.1", "::1", "localhost"},
 			RequestTimeout:  10 * time.Second,
 			HashKeyRotation: 24 * time.Hour,
 			Rate:            APIRate{GeneralPerMin: 120, SearchPerMin: 30, SourceAddPerHour: 10},
@@ -264,6 +268,14 @@ func (a API) validate() []error {
 			add("api.trusted_proxies: %q is not a CIDR prefix", p)
 		}
 	}
+	if len(a.AllowedHosts) == 0 {
+		add("api.allowed_hosts must not be empty (default [127.0.0.1, ::1, localhost])")
+	}
+	for _, h := range a.AllowedHosts {
+		if !ValidHost(h) {
+			add("api.allowed_hosts: %q is not a host name or IP address (no port, no wildcard)", h)
+		}
+	}
 	if a.RequestTimeout < time.Second || a.RequestTimeout > MaxRequestTimeout {
 		add("api.request_timeout %s must be between 1s and %s", a.RequestTimeout, MaxRequestTimeout)
 	}
@@ -274,6 +286,26 @@ func (a API) validate() []error {
 		add("api.rate.general_per_min, search_per_min and source_add_per_hour must be >= 1")
 	}
 	return errs
+}
+
+// hostLabel is one DNS label: letters, digits and inner hyphens, at most 63 bytes.
+var hostLabel = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+// ValidHost reports whether s is an IP address (no zone) or a DNS name of at most 253 bytes
+// with no trailing dot: an entry of api.allowed_hosts.
+func ValidHost(s string) bool {
+	if ip, err := netip.ParseAddr(s); err == nil {
+		return ip.Zone() == ""
+	}
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for l := range strings.SplitSeq(s, ".") {
+		if !hostLabel.MatchString(l) {
+			return false
+		}
+	}
+	return true
 }
 
 // UserAgent builds the User-Agent sent on every request. It always includes the contact.

@@ -65,6 +65,7 @@ var (
 	DetailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
 	DetailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")
 	DetailSourceExists     = problem.NewDetail("this source is already added")
+	DetailHostNotAllowed   = problem.NewDetail("the Host header names a host this server does not answer to")
 	DetailURITooLong       = problem.NewDetail("the path and query must be at most " + itoa(MaxURLBytes) + " bytes")
 	DetailRateLimited      = problem.NewDetail("too many requests; retry after the Retry-After delay")
 	DetailBusy             = problem.NewDetail("the server is busy; retry after the Retry-After delay")

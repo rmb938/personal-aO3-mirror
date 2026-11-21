@@ -29,6 +29,7 @@ func testOptions(t *testing.T) runtime.Options {
 	return runtime.Options{
 		Version:          testVersion,
 		TrustedProxies:   []string{"127.0.0.1/32", "::1/128"},
+		AllowedHosts:     []string{"example.com"}, // httptest.NewRequest's default Host
 		RequestTimeout:   10 * time.Second,
 		GeneralPerMin:    1000,
 		SourceAddPerHour: 1000,
@@ -49,6 +50,8 @@ func TestNewValidatesOptions(t *testing.T) {
 		"no version":    func(o *runtime.Options) { o.Version = "" },
 		"no proxies":    func(o *runtime.Options) { o.TrustedProxies = nil },
 		"bad proxy":     func(o *runtime.Options) { o.TrustedProxies = []string{"127.0.0.1"} },
+		"no hosts":      func(o *runtime.Options) { o.AllowedHosts = nil },
+		"bad host":      func(o *runtime.Options) { o.AllowedHosts = []string{"example.com:80"} },
 		"no timeout":    func(o *runtime.Options) { o.RequestTimeout = 0 },
 		"no rate":       func(o *runtime.Options) { o.GeneralPerMin = 0 },
 		"short rotate":  func(o *runtime.Options) { o.HashKeyRotation = time.Minute },

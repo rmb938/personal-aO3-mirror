@@ -206,12 +206,13 @@ type Page struct {
 // Offset is the row offset of the page's first item.
 func (p Page) Offset() int64 { return (p.Page - 1) * p.PerPage }
 
-// page reads `page` (default 1) and `per_page` (default 20, max 100), and enforces
-// (page-1)*per_page <= MaxOffset without overflowing (when per_page itself is valid).
+// Values returns a copy of the param values read so far (the fuzz oracle compares them).
 func (p *Params) Values() map[string]string {
 	return maps.Clone(p.vals)
 }
 
+// Page reads `page` (default 1) and `per_page` (default 20, max 100), and enforces
+// (page-1)*per_page <= MaxOffset without overflowing (when per_page itself is valid).
 func (p *Params) Page() Page {
 	n := p.Len()
 	per := p.Int(string(dto.ParamPerPage), DefaultPerPage, MaxPerPage, DetailPerPage)
