@@ -319,6 +319,102 @@ func (s *BackfillDetail) SetRetryAt(val NilTimestamp) {
 	s.RetryAt = val
 }
 
+// One chapter with its content. Strings other than `published_on` are content, hashed unless revealed.
+// Optional fields are omitted when unset.
+// Ref: #/components/schemas/Chapter
+type Chapter struct {
+	// AO3 chapter id; omitted when unknown.
+	ID          OptID     `json:"id"`
+	Position    int       `json:"position"`
+	Title       OptString `json:"title"`
+	PublishedOn OptDate   `json:"published_on"`
+	// The chapter's own summary.
+	SummaryHTML  OptString `json:"summary_html"`
+	NotesHTML    OptString `json:"notes_html"`
+	EndNotesHTML OptString `json:"end_notes_html"`
+	BodyHTML     string    `json:"body_html"`
+}
+
+// GetID returns the value of ID.
+func (s *Chapter) GetID() OptID {
+	return s.ID
+}
+
+// GetPosition returns the value of Position.
+func (s *Chapter) GetPosition() int {
+	return s.Position
+}
+
+// GetTitle returns the value of Title.
+func (s *Chapter) GetTitle() OptString {
+	return s.Title
+}
+
+// GetPublishedOn returns the value of PublishedOn.
+func (s *Chapter) GetPublishedOn() OptDate {
+	return s.PublishedOn
+}
+
+// GetSummaryHTML returns the value of SummaryHTML.
+func (s *Chapter) GetSummaryHTML() OptString {
+	return s.SummaryHTML
+}
+
+// GetNotesHTML returns the value of NotesHTML.
+func (s *Chapter) GetNotesHTML() OptString {
+	return s.NotesHTML
+}
+
+// GetEndNotesHTML returns the value of EndNotesHTML.
+func (s *Chapter) GetEndNotesHTML() OptString {
+	return s.EndNotesHTML
+}
+
+// GetBodyHTML returns the value of BodyHTML.
+func (s *Chapter) GetBodyHTML() string {
+	return s.BodyHTML
+}
+
+// SetID sets the value of ID.
+func (s *Chapter) SetID(val OptID) {
+	s.ID = val
+}
+
+// SetPosition sets the value of Position.
+func (s *Chapter) SetPosition(val int) {
+	s.Position = val
+}
+
+// SetTitle sets the value of Title.
+func (s *Chapter) SetTitle(val OptString) {
+	s.Title = val
+}
+
+// SetPublishedOn sets the value of PublishedOn.
+func (s *Chapter) SetPublishedOn(val OptDate) {
+	s.PublishedOn = val
+}
+
+// SetSummaryHTML sets the value of SummaryHTML.
+func (s *Chapter) SetSummaryHTML(val OptString) {
+	s.SummaryHTML = val
+}
+
+// SetNotesHTML sets the value of NotesHTML.
+func (s *Chapter) SetNotesHTML(val OptString) {
+	s.NotesHTML = val
+}
+
+// SetEndNotesHTML sets the value of EndNotesHTML.
+func (s *Chapter) SetEndNotesHTML(val OptString) {
+	s.EndNotesHTML = val
+}
+
+// SetBodyHTML sets the value of BodyHTML.
+func (s *Chapter) SetBodyHTML(val string) {
+	s.BodyHTML = val
+}
+
 // Ref: #/components/schemas/ChapterRef
 type ChapterRef struct {
 	// AO3 chapter id; omitted when unknown.
@@ -6086,6 +6182,22 @@ func (s *Work) SetChapters(val []ChapterRef) {
 // SetLastFetchedAt sets the value of LastFetchedAt.
 func (s *Work) SetLastFetchedAt(val OptTimestamp) {
 	s.LastFetchedAt = val
+}
+
+// Ref: #/components/schemas/WorkChapters
+type WorkChapters struct {
+	// In order.
+	Chapters []Chapter `json:"chapters"`
+}
+
+// GetChapters returns the value of Chapters.
+func (s *WorkChapters) GetChapters() []Chapter {
+	return s.Chapters
+}
+
+// SetChapters sets the value of Chapters.
+func (s *WorkChapters) SetChapters(val []Chapter) {
+	s.Chapters = val
 }
 
 // Ref: #/components/schemas/WorkCollection

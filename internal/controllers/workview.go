@@ -3,6 +3,7 @@ package controllers
 import (
 	"cmp"
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -77,12 +78,27 @@ func (c *Controllers) GetChapter(ctx context.Context, workID int64, position int
 	})
 }
 
+// MaxWorkChaptersBytes caps GetWorkChapters: the uncompressed size of a work's chapter bodies,
+// notes, end notes and summaries together. A larger work is read one chapter at a time.
+const MaxWorkChaptersBytes = 16 << 20
+
+// ErrWorkTooLarge means a work's chapters are over MaxWorkChaptersBytes together.
+var ErrWorkTooLarge = errors.New("controllers: work chapters over the size cap")
+
 // GetWorkChapters returns every chapter of a stored work with bodies, in order, or
-// store.ErrNoWork. A work known only from listing blurbs has none.
+// store.ErrNoWork. A work known only from listing blurbs has none. It returns ErrWorkTooLarge,
+// before loading any body, when the chapters are over MaxWorkChaptersBytes.
 func (c *Controllers) GetWorkChapters(ctx context.Context, id int64) ([]model.Chapter, error) {
 	return store.ReadValue(ctx, c.store, func(ctx context.Context, tx *store.ReadTx) ([]model.Chapter, error) {
 		if err := workExists(ctx, tx, id); err != nil {
 			return nil, err
+		}
+		size, err := tx.ChapterContentBytes(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if size > MaxWorkChaptersBytes {
+			return nil, ErrWorkTooLarge
 		}
 		meta, err := tx.WorkChapters(ctx, id)
 		if err != nil {

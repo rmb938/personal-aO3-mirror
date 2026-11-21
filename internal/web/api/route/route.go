@@ -22,6 +22,8 @@ const (
 	Status    = "/api/v1/status"
 	Work      = "/api/v1/works/{id}"
 	WorkSkin  = "/api/v1/works/{id}/skin"
+	Chapters  = "/api/v1/works/{id}/chapters"
+	Chapter   = "/api/v1/works/{id}/chapters/{position}"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

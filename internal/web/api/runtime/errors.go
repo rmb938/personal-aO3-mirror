@@ -13,7 +13,8 @@ import (
 )
 
 // problemFor maps any handler error to a problem, in one place: *problem.Error as is; store
-// not-found sentinels → 404; state conflicts → 409; an existing source → 409 already-exists; a
+// not-found sentinels → 404; state conflicts → 409; a work over the whole-work cap → 422
+// work-too-large; an existing source → 409 already-exists; a
 // cancelled or timed-out request → 503; anything else → 500 internal. internal reports
 // whether the error is unexpected (the caller logs it).
 func ProblemFor(err error) (p dto.Problem, internal bool) {
@@ -29,6 +30,10 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoJob)
 	case errors.Is(err, store.ErrNoWork):
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoWork)
+	case errors.Is(err, store.ErrNoChapter):
+		e = problem.WithDetail(dto.TypeNotFound, DetailNoChapter)
+	case errors.Is(err, controllers.ErrWorkTooLarge):
+		e = problem.WithDetail(dto.TypeWorkTooLarge, DetailWorkTooLarge)
 	case errors.Is(err, store.ErrNoSeries), errors.Is(err, store.ErrNoTag), errors.Is(err, store.ErrNoRawPage):
 		e = problem.New(dto.TypeNotFound)
 	case errors.Is(err, store.ErrStateConflict):

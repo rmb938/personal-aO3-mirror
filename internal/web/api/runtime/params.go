@@ -24,6 +24,8 @@ const (
 	MaxQueryParams = 32
 	// MaxID is the largest accepted ID: 2^53-1, exact in a JavaScript number.
 	MaxID = 1<<53 - 1
+	// MaxPosition is the largest accepted chapter position.
+	MaxPosition = 100000
 	// DefaultPerPage and MaxPerPage bound list page sizes.
 	DefaultPerPage = 20
 	MaxPerPage     = 100
@@ -121,11 +123,17 @@ func (p *Params) Enum(name string, e interface{ EnumValues() []string }, d probl
 	return s
 }
 
-// pathID returns the route's ID path parameter name (1..MaxID).
+// PathID returns the route's ID path parameter name (1..MaxID).
 func (p *Params) PathID(name dto.ParamName) int64 {
-	v, ok := ParseInt(chi.URLParam(p.r, string(name)), MaxID)
+	return p.PathInt(name, MaxID, DetailID)
+}
+
+// PathInt returns the route's path parameter name as an integer in [1, hi]. d describes the
+// accepted range.
+func (p *Params) PathInt(name dto.ParamName, hi int64, d problem.Detail) int64 {
+	v, ok := ParseInt(chi.URLParam(p.r, string(name)), hi)
 	if !ok {
-		p.Param(string(name), DetailID)
+		p.Param(string(name), d)
 	}
 	return v
 }

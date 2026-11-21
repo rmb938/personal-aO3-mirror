@@ -97,6 +97,29 @@ type ChapterRef struct {
 	PublishedOn string `json:"published_on,omitzero"`
 }
 
+// Chapter is one chapter with its content (GET /api/v1/works/{id}/chapters/{position}). Every
+// string but the date is fanwork content, hashed unless revealed; HTML fields hold AO3's
+// markup as stored, which clients must sanitize.
+type Chapter struct {
+	// ID is AO3's chapter id (omitted when unknown, e.g. a single-chapter work).
+	ID       int64  `json:"id,omitzero"`
+	Position int    `json:"position"`
+	Title    string `json:"title,omitzero"`
+	// PublishedOn is omitted when unknown.
+	PublishedOn string `json:"published_on,omitzero"`
+	// SummaryHTML, NotesHTML and EndNotesHTML are the chapter's own, omitted when it has none.
+	SummaryHTML  string `json:"summary_html,omitzero"`
+	NotesHTML    string `json:"notes_html,omitzero"`
+	EndNotesHTML string `json:"end_notes_html,omitzero"`
+	BodyHTML     string `json:"body_html"`
+}
+
+// WorkChapters is every chapter of a work with its content, in order
+// (GET /api/v1/works/{id}/chapters). Chapters is [] for a work known only from listing blurbs.
+type WorkChapters struct {
+	Chapters []Chapter `json:"chapters"`
+}
+
 // WorkSkin is a work's skin (GET /api/v1/works/{id}/skin): untrusted CSS, to be sanitized
 // and scoped by the client.
 type WorkSkin struct {

@@ -39,6 +39,8 @@ func TestProblemFor(t *testing.T) {
 		{fmt.Errorf("get: %w", store.ErrNoJob), dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoSourceAdd, dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoWork, dto.TypeNotFound, http.StatusNotFound, false},
+		{store.ErrNoChapter, dto.TypeNotFound, http.StatusNotFound, false},
+		{fmt.Errorf("read: %w", controllers.ErrWorkTooLarge), dto.TypeWorkTooLarge, http.StatusUnprocessableEntity, false},
 		{store.ErrNoSeries, dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoTag, dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoRawPage, dto.TypeNotFound, http.StatusNotFound, false},

@@ -82,7 +82,8 @@ or a response that is not JSON (e.g. an image), which is only served revealed.
 
 ## not-found
 
-**404 Not Found.** No route matches the path, or the resource (source, job, ...) does not exist.
+**404 Not Found.** No route matches the path, or the resource (source, job, work, chapter, ...)
+does not exist.
 
 ## method-not-allowed
 
@@ -98,6 +99,13 @@ confirming a source that is not pending confirmation).
 
 **409 Already Exists.** The resource already exists (e.g. adding a source that was already
 added).
+
+## work-too-large
+
+**422 Work Too Large.** The work's chapters (bodies, notes, end notes and summaries) are over
+16 MiB together, too large for `GET /api/v1/works/{id}/chapters`. Read them one at a time from
+`GET /api/v1/works/{id}/chapters/{position}`; the work's chapter list is in
+`GET /api/v1/works/{id}`.
 
 ## uri-too-long
 

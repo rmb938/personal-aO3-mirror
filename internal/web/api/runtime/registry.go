@@ -26,6 +26,8 @@ var responseTypes = []any{
 	dto.Status{},
 	dto.Work{},
 	dto.WorkSkin{},
+	dto.Chapter{},
+	dto.WorkChapters{},
 	dto.JobDebug{},
 	dto.WorkDebug{},
 }

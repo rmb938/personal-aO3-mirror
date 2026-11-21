@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -139,4 +140,40 @@ func TestChapterBodyAndSkin(t *testing.T) {
 	skin, err = s.WorkSkin(ctx, 9)
 	require.NoError(t, err)
 	require.Equal(t, "#workskin p { color: red; }", skin)
+}
+
+func TestChapterContentBytes(t *testing.T) {
+	s, _, _ := openTest(t)
+	ctx := context.Background()
+
+	// Every frame records its size, but those under 256 bytes may not; those count as
+	// smallFrameMax, which must bound them.
+	for _, n := range []int{1, 100, 255, 256, 1024, 1025, 70_000, 9 << 20} {
+		size, err := frameContentSize(s.compress([]byte(strings.Repeat("a", n))))
+		require.NoError(t, err)
+		if n > smallFrameMax {
+			require.Equal(t, int64(n), size, "size %d recorded", n)
+		} else {
+			require.True(t, size == int64(n) || size == smallFrameMax, "size %d bounded, got %d", n, size)
+		}
+	}
+
+	n, err := s.ChapterContentBytes(ctx, 9)
+	require.NoError(t, err)
+	require.Zero(t, n, "no chapters")
+
+	body := strings.Repeat("<p>fixture lorem ipsum</p>", 50_000)
+	_, err = s.PutWorkContent(ctx, 9, []model.Chapter{
+		{Position: 1, BodyHTML: body, NotesHTML: strings.Repeat("n", 300)},
+		{Position: 2, BodyHTML: "<p>fixture two</p>", SummaryHTML: "<p>s</p>"},
+	}, "")
+	require.NoError(t, err)
+	n, err = s.ChapterContentBytes(ctx, 9)
+	require.NoError(t, err)
+	exact := int64(len(body) + 300 + len("<p>fixture two</p>") + len("<p>s</p>"))
+	require.GreaterOrEqual(t, n, exact)
+	require.LessOrEqual(t, n, exact+2*smallFrameMax, "only the two small frames may be over")
+
+	_, err = frameContentSize([]byte("not zstd"))
+	require.Error(t, err)
 }

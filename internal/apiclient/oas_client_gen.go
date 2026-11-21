@@ -116,6 +116,13 @@ type Invoker interface {
 	//
 	// GET /api/v1/debug/works/{id}
 	DebugWork(ctx context.Context, params DebugWorkParams, options ...RequestOption) (*WorkDebug, error)
+	// GetChapter invokes getChapter operation.
+	//
+	// Content strings are hashed unless revealed; HTML is untrusted. 404 `not-found` when no chapter is
+	// stored at the position (a work known only from listing blurbs has none).
+	//
+	// GET /api/v1/works/{id}/chapters/{position}
+	GetChapter(ctx context.Context, params GetChapterParams, options ...RequestOption) (*Chapter, error)
 	// GetHealthz invokes getHealthz operation.
 	//
 	// Liveness check.
@@ -161,6 +168,14 @@ type Invoker interface {
 	//
 	// GET /api/v1/works/{id}
 	GetWork(ctx context.Context, params GetWorkParams, options ...RequestOption) (*Work, error)
+	// GetWorkChapters invokes getWorkChapters operation.
+	//
+	// Content strings are hashed unless revealed; HTML is untrusted. A work whose chapters are over 16 MiB
+	// together (bodies, notes, end notes, summaries) is refused with 422 `work-too-large`: read it one
+	// chapter at a time instead.
+	//
+	// GET /api/v1/works/{id}/chapters
+	GetWorkChapters(ctx context.Context, params GetWorkChaptersParams, options ...RequestOption) (*WorkChapters, error)
 	// GetWorkSkin invokes getWorkSkin operation.
 	//
 	// Untrusted CSS (hashed unless revealed); sanitize and scope it before use.
@@ -632,6 +647,108 @@ func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams, requ
 	}
 
 	result, err := decodeDebugWorkResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetChapter invokes getChapter operation.
+//
+// Content strings are hashed unless revealed; HTML is untrusted. 404 `not-found` when no chapter is
+// stored at the position (a work known only from listing blurbs has none).
+//
+// GET /api/v1/works/{id}/chapters/{position}
+func (c *Client) GetChapter(ctx context.Context, params GetChapterParams, options ...RequestOption) (*Chapter, error) {
+	res, err := c.sendGetChapter(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetChapter(ctx context.Context, params GetChapterParams, requestOptions ...RequestOption) (res *Chapter, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [4]string
+	pathParts[0] = "/api/v1/works/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/chapters/"
+	{
+		// Encode "position" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "position",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.IntToString(params.Position))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[3] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetChapterResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1146,6 +1263,91 @@ func (c *Client) sendGetWork(ctx context.Context, params GetWorkParams, requestO
 	}
 
 	result, err := decodeGetWorkResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetWorkChapters invokes getWorkChapters operation.
+//
+// Content strings are hashed unless revealed; HTML is untrusted. A work whose chapters are over 16 MiB
+// together (bodies, notes, end notes, summaries) is refused with 422 `work-too-large`: read it one
+// chapter at a time instead.
+//
+// GET /api/v1/works/{id}/chapters
+func (c *Client) GetWorkChapters(ctx context.Context, params GetWorkChaptersParams, options ...RequestOption) (*WorkChapters, error) {
+	res, err := c.sendGetWorkChapters(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetWorkChapters(ctx context.Context, params GetWorkChaptersParams, requestOptions ...RequestOption) (res *WorkChapters, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/works/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/chapters"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetWorkChaptersResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

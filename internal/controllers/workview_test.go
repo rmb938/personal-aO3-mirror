@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,6 +98,20 @@ func TestGetChapterAndSkin(t *testing.T) {
 	assert.Empty(t, all)
 	_, err = e.svc.GetWorkChapters(ctx, 3)
 	require.ErrorIs(t, err, store.ErrNoWork)
+
+	// Over the cap: the whole work is refused, one chapter still reads.
+	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := tx.PutWorkContent(ctx, 2, []model.Chapter{
+			{Position: 1, BodyHTML: strings.Repeat("a", MaxWorkChaptersBytes)},
+			{Position: 2, BodyHTML: strings.Repeat("b", 300)},
+		}, "")
+		return err
+	}))
+	_, err = e.svc.GetWorkChapters(ctx, 2)
+	require.ErrorIs(t, err, ErrWorkTooLarge)
+	c, err = e.svc.GetChapter(ctx, 2, 2)
+	require.NoError(t, err)
+	assert.Len(t, c.BodyHTML, 300)
 
 	skin, err := e.svc.GetWorkSkin(ctx, 1)
 	require.NoError(t, err)

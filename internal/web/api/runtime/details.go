@@ -3,8 +3,10 @@ package runtime
 import (
 	"strconv"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 )
 
 // The api package's part of the problem detail catalogue (problem.NewDetail: package-level
@@ -13,11 +15,15 @@ import (
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
+// workCapMiB is controllers.MaxWorkChaptersBytes in MiB.
+var workCapMiB = itoa(controllers.MaxWorkChaptersBytes >> 20)
+
 var (
 	// Validation errors (dto.TypeValidation).
 	DetailUnknownParam = problem.NewDetail("this route does not take this parameter")
 	DetailDuplicate    = problem.NewDetail("must be given at most once")
 	DetailID           = problem.NewDetail("must be an integer from 1 to " + itoa(MaxID))
+	DetailPosition     = problem.NewDetail("must be an integer from 1 to " + itoa(MaxPosition))
 	DetailPerPage      = problem.NewDetail("must be an integer from 1 to " + itoa(MaxPerPage))
 	DetailPage         = problem.NewDetail("must be an integer from 1, with (page-1)*per_page at most " + itoa(MaxOffset))
 	DetailRevealValue  = problem.NewDetail("must be 1")
@@ -40,6 +46,8 @@ var (
 	DetailNoSource         = problem.NewDetail("no source has this id")
 	DetailNoJob            = problem.NewDetail("no job of this kind has this id")
 	DetailNoWork           = problem.NewDetail("no work has this id")
+	DetailNoChapter        = problem.NewDetail("the work has no stored chapter at this position")
+	DetailWorkTooLarge     = problem.NewDetail("the work's chapters are over " + workCapMiB + " MiB together; read them one at a time from " + route.Chapter)
 	DetailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
 	DetailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")
 	DetailSourceExists     = problem.NewDetail("this source is already added")

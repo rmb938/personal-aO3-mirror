@@ -60,6 +60,7 @@ const (
 	TypeMethodNotAllowed     ProblemType = ProblemTypeBase + "method-not-allowed"
 	TypeStateConflict        ProblemType = ProblemTypeBase + "state-conflict"
 	TypeAlreadyExists        ProblemType = ProblemTypeBase + "already-exists"
+	TypeWorkTooLarge         ProblemType = ProblemTypeBase + "work-too-large"
 	TypeURITooLong           ProblemType = ProblemTypeBase + "uri-too-long"
 	TypeRateLimited          ProblemType = ProblemTypeBase + "rate-limited"
 	TypeUnavailable          ProblemType = ProblemTypeBase + "unavailable"
@@ -93,6 +94,7 @@ var problemInfo = map[ProblemType]ProblemInfo{
 	TypeMethodNotAllowed:     {http.StatusMethodNotAllowed, "Method Not Allowed"},
 	TypeStateConflict:        {http.StatusConflict, "State Conflict"},
 	TypeAlreadyExists:        {http.StatusConflict, "Already Exists"},
+	TypeWorkTooLarge:         {http.StatusUnprocessableEntity, "Work Too Large"},
 	TypeURITooLong:           {http.StatusRequestURITooLong, "URI Too Long"},
 	TypeRateLimited:          {http.StatusTooManyRequests, "Too Many Requests"},
 	TypeUnavailable:          {http.StatusServiceUnavailable, "Service Unavailable"},
@@ -138,12 +140,14 @@ const (
 	ParamState    ParamName = "state"
 	ParamKind     ParamName = "kind"
 	ParamSourceID ParamName = "source_id"
+	ParamPosition ParamName = "position"
 	// ParamReveal is the query parameter that asks for real fanwork content on one request
 	// (api.RevealParam).
 	ParamReveal ParamName = "reveal_fanwork"
 )
 
-var paramNames = []ParamName{ParamPage, ParamPerPage, ParamID, ParamJobID, ParamState, ParamKind, ParamSourceID, ParamReveal}
+var paramNames = []ParamName{ParamPage, ParamPerPage, ParamID, ParamJobID, ParamState, ParamKind, ParamSourceID, ParamPosition,
+	ParamReveal}
 
 // Known reports whether p is a declared name.
 func (p ParamName) Known() bool { return slices.Contains(paramNames, p) }
