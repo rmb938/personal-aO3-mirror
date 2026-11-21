@@ -204,6 +204,9 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		if err := s.replaceTags(ctx, tx, w.ID, w.Tags); err != nil {
 			return res, err
 		}
+		if _, err := updateCrossover(ctx, tx, `VALUES (?)`, w.ID); err != nil {
+			return res, fmt.Errorf("update crossover: %w", err)
+		}
 		if err := s.replaceSeries(ctx, tx, w.ID, w.Series); err != nil {
 			return res, err
 		}

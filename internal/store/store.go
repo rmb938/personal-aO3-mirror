@@ -177,6 +177,12 @@ func (s *Store) Close() error {
 
 func (c *core) unix() int64 { return c.now().Unix() }
 
+// migrationSteps are Go steps for migrations whose data change is too costly or too intricate in
+// SQL, keyed "<db>/<file>". A step runs after its file's SQL, in the same transaction.
+var migrationSteps = map[string]func(ctx context.Context, tx querier) error{
+	"meta/0006_work_crossover.sql": backfillCrossover,
+}
+
 // migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.
 func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
 	return s.migrateTo(ctx, db, name, math.MaxInt)
@@ -224,6 +230,11 @@ func (s *Store) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int
 		}
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 			return errors.Join(fmt.Errorf("store: %s migration %s: %w", name, e.Name(), err), tx.Rollback())
+		}
+		if step := migrationSteps[name+"/"+e.Name()]; step != nil {
+			if err := step(ctx, tx); err != nil {
+				return errors.Join(fmt.Errorf("store: %s migration %s step: %w", name, e.Name(), err), tx.Rollback())
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES (?,?,?)`,
 			ver, e.Name(), s.unix()); err != nil {

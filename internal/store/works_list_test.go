@@ -265,7 +265,7 @@ var listPlanFilters = []model.WorkFilter{
 	{},
 	{Statuses: []model.WorkStatus{model.StatusOK}},
 	{Statuses: []model.WorkStatus{model.StatusOK}, Complete: new(true), Language: "English", Fetched: new(true),
-		SingleChapter: true},
+		SingleChapter: true, Crossover: new(false)},
 }
 
 // TestWorksTagFilterPlans checks that expanding a tag filter uses the 0005 indexes (no automatic
