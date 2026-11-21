@@ -77,6 +77,7 @@ type WorkFilter struct {
 	Tags          []int64      // every one must match (AO3 filter_ids; at most MaxWorkFilterTags)
 	ExcludeTags   []int64      // none may match (AO3 excluded_tag_ids; at most MaxWorkFilterTags)
 	CreatorID     int64        // 0 = any; else works with this creator (pseud) in the byline (AO3 pseud_ids)
+	CollectionID  int64        // 0 = any; else works in this collection (AO3 collection_ids)
 	Complete      *bool        // AO3 complete
 	Crossover     *bool        // AO3 crossover: no fandom on the work is related to all the others
 	SingleChapter bool         // AO3 single_chapter: one chapter expected
