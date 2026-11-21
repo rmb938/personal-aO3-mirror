@@ -20,6 +20,8 @@ const (
 	Jobs      = "/api/v1/jobs"
 	Job       = "/api/v1/jobs/{id}"
 	Status    = "/api/v1/status"
+	Work      = "/api/v1/works/{id}"
+	WorkSkin  = "/api/v1/works/{id}/skin"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

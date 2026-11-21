@@ -24,6 +24,11 @@ const (
 	seedOtherJob     int64 = 3 // a work job (not a source add), queued
 	seedBackfillJob  int64 = 4 // a backfill job of seedTagSource with a sentinel dedupe key, queued
 	seedWork         int64 = 7 // seedOtherJob's work, from a blurb, every text field a sentinel
+	// seedFetchedWork is a fetched work page with relations, chapters and a skin, every text
+	// field a sentinel. It is part 2 of seedSeries, which is partial (3 works, 1 mirrored).
+	seedFetchedWork int64 = 9
+	seedSeries      int64 = 77
+	seedSeriesOther int64 = 40 // a member of seedSeries we have not fetched (part 3)
 )
 
 // seedTime is the store clock while seeding.
@@ -41,6 +46,37 @@ func newTestControllers(t *testing.T, log *slog.Logger) *controllers.Controllers
 	cfg := config.Default()
 	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime },
 		Sources: cfg.Sources, Interval: cfg.Rate.Interval})
+}
+
+// seedFetched stores seedFetchedWork as a fetched page and seedSeries as a fetched, partial
+// series.
+func seedFetched(ctx context.Context, tx *store.Tx) error {
+	w := model.Work{
+		ID: seedFetchedWork, Title: sentinel + "title", SummaryHTML: sentinel + "summary", NotesHTML: sentinel + "notes",
+		EndNotesHTML: sentinel + "endnotes", Language: sentinel + "lang", Words: 3000, ChaptersPosted: 2,
+		ChaptersExpected: 3, Published: "2025-01-02", Revised: "2025-03-04", Stats: model.Stats{Kudos: 9, Hits: 90},
+		Creators:    []model.Creator{{User: sentinel + "user", Pseud: sentinel + "pseud"}},
+		Tags:        []model.Tag{{Type: model.TagRating, Name: sentinel + "rating"}, {Type: model.TagFandom, Name: sentinel + "fandom"}},
+		Series:      []model.SeriesPart{{ID: seedSeries, Title: sentinel + "series", Position: 2}},
+		Collections: []model.Collection{{Name: sentinel + "collname", Title: sentinel + "colltitle"}},
+		Chapters: []model.Chapter{
+			{ID: 91, Position: 1, Title: sentinel + "chapter1", Published: "2025-01-02", BodyHTML: sentinel + "body1"},
+			{ID: 92, Position: 2, Title: sentinel + "chapter2", Published: "2025-03-04", BodyHTML: sentinel + "body2",
+				NotesHTML: sentinel + "chnotes", EndNotesHTML: sentinel + "chend"},
+		},
+		SkinCSS: "#workskin ." + sentinel + "skin { color: red; }",
+	}
+	if _, err := tx.PutWorkContent(ctx, w.ID, w.Chapters, w.SkinCSS); err != nil {
+		return err
+	}
+	if _, err := tx.UpsertWork(ctx, w, model.FromPage, 1); err != nil {
+		return err
+	}
+	if err := tx.UpsertSeries(ctx, model.Series{ID: seedSeries, Title: sentinel + "series", WorksCount: 3}); err != nil {
+		return err
+	}
+	return tx.SetSeriesMembers(ctx, seedSeries, []store.SeriesMember{{WorkID: seedFetchedWork, Position: 2},
+		{WorkID: seedSeriesOther, Position: 3}})
 }
 
 // seed fills st with the rows the route samples read.
@@ -133,6 +169,10 @@ func seed(t *testing.T, st *store.Store) {
 		}
 		if err := tx.InsertRequest(ctx, store.RequestRow{Time: seedTime, ReqID: sentinel + "workreq", JobID: seedOtherJob,
 			Kind: "work", Path: "/works/7?view_adult=true", Status: 200, Class: "ok", Reason: sentinel + "workreason"}); err != nil {
+			return err
+		}
+
+		if err := seedFetched(ctx, tx); err != nil {
 			return err
 		}
 

@@ -276,6 +276,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Status" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/works/{id}:
+    get:
+      operationId: getWork
+      summary: One stored work's metadata, relations and chapter list (no chapter bodies).
+      description: |
+        Content strings are hashed unless revealed. HTML fields hold AO3's markup as stored
+        (untrusted: sanitize before display). A work known only from listing blurbs has no
+        chapters, notes, published date or `last_fetched_at`.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Work" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/works/{id}/skin:
+    get:
+      operationId: getWorkSkin
+      summary: One stored work's skin CSS.
+      description: Untrusted CSS (hashed unless revealed); sanitize and scope it before use.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The skin; `css` is omitted when the work has none.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkSkin" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -1409,15 +1440,7 @@ components:
         chapters_posted: { type: integer }
         chapters_expected:
           { type: integer, description: "Omitted when unknown." }
-        stats:
-          type: object
-          required: [kudos, hits, comments, bookmarks]
-          additionalProperties: false
-          properties:
-            kudos: { type: integer }
-            hits: { type: integer }
-            comments: { type: integer }
-            bookmarks: { type: integer }
+        stats: { $ref: "#/components/schemas/WorkStats" }
         restricted: { type: boolean }
         anonymous: { type: boolean }
         parser_version:
@@ -1460,3 +1483,169 @@ components:
               { type: integer, description: "Their uncompressed size." }
             chapter_bodies:
               { type: integer, description: "Stored chapter texts." }
+    WorkStats:
+      type: object
+      required: [kudos, hits, comments, bookmarks]
+      additionalProperties: false
+      properties:
+        kudos: { type: integer }
+        hits: { type: integer }
+        comments: { type: integer }
+        bookmarks: { type: integer }
+    Work:
+      type: object
+      description: |
+        A stored work. Strings other than `status`, tag `type` and the `_on`/`_at` dates are
+        content, hashed unless revealed. Lists are `[]` when empty; optional fields are omitted
+        when unset.
+      required:
+        [
+          id,
+          status,
+          title,
+          creators,
+          anonymous,
+          restricted,
+          words,
+          chapters_posted,
+          complete,
+          stats,
+          tags,
+          series,
+          collections,
+          chapters,
+        ]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        status:
+          { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
+        title: { type: string }
+        creators:
+          type: array
+          description: Byline order.
+          items: { $ref: "#/components/schemas/WorkCreator" }
+        anonymous: { type: boolean }
+        restricted: { type: boolean }
+        summary_html: { type: string }
+        notes_html: { type: string }
+        end_notes_html: { type: string }
+        language: { type: string }
+        words: { type: integer }
+        chapters_posted: { type: integer }
+        chapters_expected:
+          { type: integer, description: "Omitted when unknown." }
+        complete: { type: boolean }
+        published_on:
+          {
+            type: string,
+            format: date,
+            description: "Known only from the work page.",
+          }
+        revised_on: { type: string, format: date }
+        stats: { $ref: "#/components/schemas/WorkStats" }
+        tags:
+          type: array
+          description: Page order (grouped by type).
+          items: { $ref: "#/components/schemas/WorkTag" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/WorkSeries" }
+        collections:
+          type: array
+          items: { $ref: "#/components/schemas/WorkCollection" }
+        chapters:
+          type: array
+          description: The chapter list in order, without bodies.
+          items: { $ref: "#/components/schemas/ChapterRef" }
+        last_fetched_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "The last full fetch; omitted for a blurb-only work.",
+          }
+    WorkCreator:
+      type: object
+      required: [id, user, pseud]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        user: { type: string, description: "AO3 login (hashed)." }
+        pseud: { type: string, description: "Byline name (hashed)." }
+    WorkTag:
+      type: object
+      required: [id, name, type]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        type: { $ref: "#/components/schemas/TagType" }
+    WorkCollection:
+      type: object
+      required: [id, name, title]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string, description: "URL name (hashed)." }
+        title: { type: string }
+    WorkSeries:
+      type: object
+      description: |
+        A series the work is in, with how much of it is mirrored. `complete_locally` is false
+        for a partial series: not a source, with fewer mirrored works than AO3 lists. A series
+        whose page was never fetched has `works_total` null and is not partial.
+      required:
+        [
+          id,
+          title,
+          complete_locally,
+          works_total,
+          works_mirrored,
+          missing_positions,
+          missing_work_ids,
+        ]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        title: { type: string }
+        position:
+          {
+            type: integer,
+            description: "The work's part number; omitted when unknown.",
+          }
+        complete_locally: { type: boolean }
+        works_total: { type: [integer, "null"], description: "AO3's count." }
+        works_mirrored: { type: integer }
+        missing_positions:
+          {
+            type: array,
+            items: { type: integer },
+            description: "Part numbers none of our works has.",
+          }
+        missing_work_ids:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/ID" },
+            description: "Known member works we have not fetched.",
+          }
+    ChapterRef:
+      type: object
+      required: [position]
+      additionalProperties: false
+      properties:
+        id:
+          {
+            $ref: "#/components/schemas/ID",
+            description: "AO3 chapter id; omitted when unknown.",
+          }
+        position: { type: integer, minimum: 1 }
+        title: { type: string }
+        published_on: { type: string, format: date }
+    WorkSkin:
+      type: object
+      additionalProperties: false
+      properties:
+        css:
+          {
+            type: string,
+            description: "Untrusted CSS (hashed); omitted when the work has none.",
+          }

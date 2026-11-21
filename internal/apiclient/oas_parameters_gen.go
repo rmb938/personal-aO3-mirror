@@ -37,6 +37,16 @@ type GetSourceAddParams struct {
 	JobID ID
 }
 
+// GetWorkParams is parameters of getWork operation.
+type GetWorkParams struct {
+	ID ID
+}
+
+// GetWorkSkinParams is parameters of getWorkSkin operation.
+type GetWorkSkinParams struct {
+	ID ID
+}
+
 // ListJobsParams is parameters of listJobs operation.
 type ListJobsParams struct {
 	State    OptJobState `json:",omitempty,omitzero"`

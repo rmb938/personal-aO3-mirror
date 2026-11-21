@@ -153,6 +153,20 @@ type Invoker interface {
 	//
 	// GET /api/v1/version
 	GetVersion(ctx context.Context, options ...RequestOption) (*Version, error)
+	// GetWork invokes getWork operation.
+	//
+	// Content strings are hashed unless revealed. HTML fields hold AO3's markup as stored (untrusted:
+	// sanitize before display). A work known only from listing blurbs has no chapters, notes, published
+	// date or `last_fetched_at`.
+	//
+	// GET /api/v1/works/{id}
+	GetWork(ctx context.Context, params GetWorkParams, options ...RequestOption) (*Work, error)
+	// GetWorkSkin invokes getWorkSkin operation.
+	//
+	// Untrusted CSS (hashed unless revealed); sanitize and scope it before use.
+	//
+	// GET /api/v1/works/{id}/skin
+	GetWorkSkin(ctx context.Context, params GetWorkSkinParams, options ...RequestOption) (*WorkSkin, error)
 	// ListJobs invokes listJobs operation.
 	//
 	// One page of jobs, newest first (state=queued lists them in queue order).
@@ -1048,6 +1062,173 @@ func (c *Client) sendGetVersion(ctx context.Context, requestOptions ...RequestOp
 	}
 
 	result, err := decodeGetVersionResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetWork invokes getWork operation.
+//
+// Content strings are hashed unless revealed. HTML fields hold AO3's markup as stored (untrusted:
+// sanitize before display). A work known only from listing blurbs has no chapters, notes, published
+// date or `last_fetched_at`.
+//
+// GET /api/v1/works/{id}
+func (c *Client) GetWork(ctx context.Context, params GetWorkParams, options ...RequestOption) (*Work, error) {
+	res, err := c.sendGetWork(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetWork(ctx context.Context, params GetWorkParams, requestOptions ...RequestOption) (res *Work, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/works/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetWorkResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetWorkSkin invokes getWorkSkin operation.
+//
+// Untrusted CSS (hashed unless revealed); sanitize and scope it before use.
+//
+// GET /api/v1/works/{id}/skin
+func (c *Client) GetWorkSkin(ctx context.Context, params GetWorkSkinParams, options ...RequestOption) (*WorkSkin, error) {
+	res, err := c.sendGetWorkSkin(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendGetWorkSkin(ctx context.Context, params GetWorkSkinParams, requestOptions ...RequestOption) (res *WorkSkin, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/works/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/skin"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetWorkSkinResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

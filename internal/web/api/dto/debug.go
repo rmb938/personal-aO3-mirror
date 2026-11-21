@@ -212,14 +212,6 @@ type WorkDiag struct {
 	Rows          WorkRows  `json:"rows"`
 }
 
-// WorkStats are a work's AO3 counters.
-type WorkStats struct {
-	Kudos     int `json:"kudos"`
-	Hits      int `json:"hits"`
-	Comments  int `json:"comments"`
-	Bookmarks int `json:"bookmarks"`
-}
-
 // WorkRows counts the stored rows that belong to a work.
 type WorkRows struct {
 	Tags     int `json:"tags"`

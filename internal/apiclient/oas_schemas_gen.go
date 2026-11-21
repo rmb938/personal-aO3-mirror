@@ -319,6 +319,55 @@ func (s *BackfillDetail) SetRetryAt(val NilTimestamp) {
 	s.RetryAt = val
 }
 
+// Ref: #/components/schemas/ChapterRef
+type ChapterRef struct {
+	// AO3 chapter id; omitted when unknown.
+	ID          OptID     `json:"id"`
+	Position    int       `json:"position"`
+	Title       OptString `json:"title"`
+	PublishedOn OptDate   `json:"published_on"`
+}
+
+// GetID returns the value of ID.
+func (s *ChapterRef) GetID() OptID {
+	return s.ID
+}
+
+// GetPosition returns the value of Position.
+func (s *ChapterRef) GetPosition() int {
+	return s.Position
+}
+
+// GetTitle returns the value of Title.
+func (s *ChapterRef) GetTitle() OptString {
+	return s.Title
+}
+
+// GetPublishedOn returns the value of PublishedOn.
+func (s *ChapterRef) GetPublishedOn() OptDate {
+	return s.PublishedOn
+}
+
+// SetID sets the value of ID.
+func (s *ChapterRef) SetID(val OptID) {
+	s.ID = val
+}
+
+// SetPosition sets the value of Position.
+func (s *ChapterRef) SetPosition(val int) {
+	s.Position = val
+}
+
+// SetTitle sets the value of Title.
+func (s *ChapterRef) SetTitle(val OptString) {
+	s.Title = val
+}
+
+// SetPublishedOn sets the value of PublishedOn.
+func (s *ChapterRef) SetPublishedOn(val OptDate) {
+	s.PublishedOn = val
+}
+
 // ConfirmSourceNoContent is response for ConfirmSource operation.
 type ConfirmSourceNoContent struct{}
 
@@ -5785,6 +5834,337 @@ func (s *Version) SetParserVersion(val int) {
 	s.ParserVersion = val
 }
 
+// A stored work. Strings other than `status`, tag `type` and the `_on`/`_at` dates are content, hashed
+// unless revealed. Lists are `[]` when empty; optional fields are omitted when unset.
+// Ref: #/components/schemas/Work
+type Work struct {
+	ID     ID         `json:"id"`
+	Status WorkStatus `json:"status"`
+	Title  string     `json:"title"`
+	// Byline order.
+	Creators       []WorkCreator `json:"creators"`
+	Anonymous      bool          `json:"anonymous"`
+	Restricted     bool          `json:"restricted"`
+	SummaryHTML    OptString     `json:"summary_html"`
+	NotesHTML      OptString     `json:"notes_html"`
+	EndNotesHTML   OptString     `json:"end_notes_html"`
+	Language       OptString     `json:"language"`
+	Words          int           `json:"words"`
+	ChaptersPosted int           `json:"chapters_posted"`
+	// Omitted when unknown.
+	ChaptersExpected OptInt `json:"chapters_expected"`
+	Complete         bool   `json:"complete"`
+	// Known only from the work page.
+	PublishedOn OptDate   `json:"published_on"`
+	RevisedOn   OptDate   `json:"revised_on"`
+	Stats       WorkStats `json:"stats"`
+	// Page order (grouped by type).
+	Tags        []WorkTag        `json:"tags"`
+	Series      []WorkSeries     `json:"series"`
+	Collections []WorkCollection `json:"collections"`
+	// The chapter list in order, without bodies.
+	Chapters []ChapterRef `json:"chapters"`
+	// The last full fetch; omitted for a blurb-only work.
+	LastFetchedAt OptTimestamp `json:"last_fetched_at"`
+}
+
+// GetID returns the value of ID.
+func (s *Work) GetID() ID {
+	return s.ID
+}
+
+// GetStatus returns the value of Status.
+func (s *Work) GetStatus() WorkStatus {
+	return s.Status
+}
+
+// GetTitle returns the value of Title.
+func (s *Work) GetTitle() string {
+	return s.Title
+}
+
+// GetCreators returns the value of Creators.
+func (s *Work) GetCreators() []WorkCreator {
+	return s.Creators
+}
+
+// GetAnonymous returns the value of Anonymous.
+func (s *Work) GetAnonymous() bool {
+	return s.Anonymous
+}
+
+// GetRestricted returns the value of Restricted.
+func (s *Work) GetRestricted() bool {
+	return s.Restricted
+}
+
+// GetSummaryHTML returns the value of SummaryHTML.
+func (s *Work) GetSummaryHTML() OptString {
+	return s.SummaryHTML
+}
+
+// GetNotesHTML returns the value of NotesHTML.
+func (s *Work) GetNotesHTML() OptString {
+	return s.NotesHTML
+}
+
+// GetEndNotesHTML returns the value of EndNotesHTML.
+func (s *Work) GetEndNotesHTML() OptString {
+	return s.EndNotesHTML
+}
+
+// GetLanguage returns the value of Language.
+func (s *Work) GetLanguage() OptString {
+	return s.Language
+}
+
+// GetWords returns the value of Words.
+func (s *Work) GetWords() int {
+	return s.Words
+}
+
+// GetChaptersPosted returns the value of ChaptersPosted.
+func (s *Work) GetChaptersPosted() int {
+	return s.ChaptersPosted
+}
+
+// GetChaptersExpected returns the value of ChaptersExpected.
+func (s *Work) GetChaptersExpected() OptInt {
+	return s.ChaptersExpected
+}
+
+// GetComplete returns the value of Complete.
+func (s *Work) GetComplete() bool {
+	return s.Complete
+}
+
+// GetPublishedOn returns the value of PublishedOn.
+func (s *Work) GetPublishedOn() OptDate {
+	return s.PublishedOn
+}
+
+// GetRevisedOn returns the value of RevisedOn.
+func (s *Work) GetRevisedOn() OptDate {
+	return s.RevisedOn
+}
+
+// GetStats returns the value of Stats.
+func (s *Work) GetStats() WorkStats {
+	return s.Stats
+}
+
+// GetTags returns the value of Tags.
+func (s *Work) GetTags() []WorkTag {
+	return s.Tags
+}
+
+// GetSeries returns the value of Series.
+func (s *Work) GetSeries() []WorkSeries {
+	return s.Series
+}
+
+// GetCollections returns the value of Collections.
+func (s *Work) GetCollections() []WorkCollection {
+	return s.Collections
+}
+
+// GetChapters returns the value of Chapters.
+func (s *Work) GetChapters() []ChapterRef {
+	return s.Chapters
+}
+
+// GetLastFetchedAt returns the value of LastFetchedAt.
+func (s *Work) GetLastFetchedAt() OptTimestamp {
+	return s.LastFetchedAt
+}
+
+// SetID sets the value of ID.
+func (s *Work) SetID(val ID) {
+	s.ID = val
+}
+
+// SetStatus sets the value of Status.
+func (s *Work) SetStatus(val WorkStatus) {
+	s.Status = val
+}
+
+// SetTitle sets the value of Title.
+func (s *Work) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCreators sets the value of Creators.
+func (s *Work) SetCreators(val []WorkCreator) {
+	s.Creators = val
+}
+
+// SetAnonymous sets the value of Anonymous.
+func (s *Work) SetAnonymous(val bool) {
+	s.Anonymous = val
+}
+
+// SetRestricted sets the value of Restricted.
+func (s *Work) SetRestricted(val bool) {
+	s.Restricted = val
+}
+
+// SetSummaryHTML sets the value of SummaryHTML.
+func (s *Work) SetSummaryHTML(val OptString) {
+	s.SummaryHTML = val
+}
+
+// SetNotesHTML sets the value of NotesHTML.
+func (s *Work) SetNotesHTML(val OptString) {
+	s.NotesHTML = val
+}
+
+// SetEndNotesHTML sets the value of EndNotesHTML.
+func (s *Work) SetEndNotesHTML(val OptString) {
+	s.EndNotesHTML = val
+}
+
+// SetLanguage sets the value of Language.
+func (s *Work) SetLanguage(val OptString) {
+	s.Language = val
+}
+
+// SetWords sets the value of Words.
+func (s *Work) SetWords(val int) {
+	s.Words = val
+}
+
+// SetChaptersPosted sets the value of ChaptersPosted.
+func (s *Work) SetChaptersPosted(val int) {
+	s.ChaptersPosted = val
+}
+
+// SetChaptersExpected sets the value of ChaptersExpected.
+func (s *Work) SetChaptersExpected(val OptInt) {
+	s.ChaptersExpected = val
+}
+
+// SetComplete sets the value of Complete.
+func (s *Work) SetComplete(val bool) {
+	s.Complete = val
+}
+
+// SetPublishedOn sets the value of PublishedOn.
+func (s *Work) SetPublishedOn(val OptDate) {
+	s.PublishedOn = val
+}
+
+// SetRevisedOn sets the value of RevisedOn.
+func (s *Work) SetRevisedOn(val OptDate) {
+	s.RevisedOn = val
+}
+
+// SetStats sets the value of Stats.
+func (s *Work) SetStats(val WorkStats) {
+	s.Stats = val
+}
+
+// SetTags sets the value of Tags.
+func (s *Work) SetTags(val []WorkTag) {
+	s.Tags = val
+}
+
+// SetSeries sets the value of Series.
+func (s *Work) SetSeries(val []WorkSeries) {
+	s.Series = val
+}
+
+// SetCollections sets the value of Collections.
+func (s *Work) SetCollections(val []WorkCollection) {
+	s.Collections = val
+}
+
+// SetChapters sets the value of Chapters.
+func (s *Work) SetChapters(val []ChapterRef) {
+	s.Chapters = val
+}
+
+// SetLastFetchedAt sets the value of LastFetchedAt.
+func (s *Work) SetLastFetchedAt(val OptTimestamp) {
+	s.LastFetchedAt = val
+}
+
+// Ref: #/components/schemas/WorkCollection
+type WorkCollection struct {
+	ID ID `json:"id"`
+	// URL name (hashed).
+	Name  string `json:"name"`
+	Title string `json:"title"`
+}
+
+// GetID returns the value of ID.
+func (s *WorkCollection) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *WorkCollection) GetName() string {
+	return s.Name
+}
+
+// GetTitle returns the value of Title.
+func (s *WorkCollection) GetTitle() string {
+	return s.Title
+}
+
+// SetID sets the value of ID.
+func (s *WorkCollection) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *WorkCollection) SetName(val string) {
+	s.Name = val
+}
+
+// SetTitle sets the value of Title.
+func (s *WorkCollection) SetTitle(val string) {
+	s.Title = val
+}
+
+// Ref: #/components/schemas/WorkCreator
+type WorkCreator struct {
+	ID ID `json:"id"`
+	// AO3 login (hashed).
+	User string `json:"user"`
+	// Byline name (hashed).
+	Pseud string `json:"pseud"`
+}
+
+// GetID returns the value of ID.
+func (s *WorkCreator) GetID() ID {
+	return s.ID
+}
+
+// GetUser returns the value of User.
+func (s *WorkCreator) GetUser() string {
+	return s.User
+}
+
+// GetPseud returns the value of Pseud.
+func (s *WorkCreator) GetPseud() string {
+	return s.Pseud
+}
+
+// SetID sets the value of ID.
+func (s *WorkCreator) SetID(val ID) {
+	s.ID = val
+}
+
+// SetUser sets the value of User.
+func (s *WorkCreator) SetUser(val string) {
+	s.User = val
+}
+
+// SetPseud sets the value of Pseud.
+func (s *WorkCreator) SetPseud(val string) {
+	s.Pseud = val
+}
+
 // Ref: #/components/schemas/WorkDebug
 type WorkDebug struct {
 	Work WorkDiag `json:"work"`
@@ -6101,10 +6481,10 @@ type WorkDiag struct {
 	Words            int     `json:"words"`
 	ChaptersPosted   int     `json:"chapters_posted"`
 	// Omitted when unknown.
-	ChaptersExpected OptInt        `json:"chapters_expected"`
-	Stats            WorkDiagStats `json:"stats"`
-	Restricted       bool          `json:"restricted"`
-	Anonymous        bool          `json:"anonymous"`
+	ChaptersExpected OptInt    `json:"chapters_expected"`
+	Stats            WorkStats `json:"stats"`
+	Restricted       bool      `json:"restricted"`
+	Anonymous        bool      `json:"anonymous"`
 	// The parser that last parsed it (0: never, or it failed).
 	ParserVersion int          `json:"parser_version"`
 	FirstSeenAt   OptTimestamp `json:"first_seen_at"`
@@ -6158,7 +6538,7 @@ func (s *WorkDiag) GetChaptersExpected() OptInt {
 }
 
 // GetStats returns the value of Stats.
-func (s *WorkDiag) GetStats() WorkDiagStats {
+func (s *WorkDiag) GetStats() WorkStats {
 	return s.Stats
 }
 
@@ -6248,7 +6628,7 @@ func (s *WorkDiag) SetChaptersExpected(val OptInt) {
 }
 
 // SetStats sets the value of Stats.
-func (s *WorkDiag) SetStats(val WorkDiagStats) {
+func (s *WorkDiag) SetStats(val WorkStats) {
 	s.Stats = val
 }
 
@@ -6392,53 +6772,6 @@ func (s *WorkDiagRows) SetChapterBodies(val int) {
 	s.ChapterBodies = val
 }
 
-type WorkDiagStats struct {
-	Kudos     int `json:"kudos"`
-	Hits      int `json:"hits"`
-	Comments  int `json:"comments"`
-	Bookmarks int `json:"bookmarks"`
-}
-
-// GetKudos returns the value of Kudos.
-func (s *WorkDiagStats) GetKudos() int {
-	return s.Kudos
-}
-
-// GetHits returns the value of Hits.
-func (s *WorkDiagStats) GetHits() int {
-	return s.Hits
-}
-
-// GetComments returns the value of Comments.
-func (s *WorkDiagStats) GetComments() int {
-	return s.Comments
-}
-
-// GetBookmarks returns the value of Bookmarks.
-func (s *WorkDiagStats) GetBookmarks() int {
-	return s.Bookmarks
-}
-
-// SetKudos sets the value of Kudos.
-func (s *WorkDiagStats) SetKudos(val int) {
-	s.Kudos = val
-}
-
-// SetHits sets the value of Hits.
-func (s *WorkDiagStats) SetHits(val int) {
-	s.Hits = val
-}
-
-// SetComments sets the value of Comments.
-func (s *WorkDiagStats) SetComments(val int) {
-	s.Comments = val
-}
-
-// SetBookmarks sets the value of Bookmarks.
-func (s *WorkDiagStats) SetBookmarks(val int) {
-	s.Bookmarks = val
-}
-
 type WorkDiagStatus string
 
 const (
@@ -6499,4 +6832,266 @@ func (s *WorkDiagStatus) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// A series the work is in, with how much of it is mirrored. `complete_locally` is false for a partial
+// series: not a source, with fewer mirrored works than AO3 lists. A series whose page was never
+// fetched has `works_total` null and is not partial.
+// Ref: #/components/schemas/WorkSeries
+type WorkSeries struct {
+	ID    ID     `json:"id"`
+	Title string `json:"title"`
+	// The work's part number; omitted when unknown.
+	Position        OptInt `json:"position"`
+	CompleteLocally bool   `json:"complete_locally"`
+	// AO3's count.
+	WorksTotal    NilInt `json:"works_total"`
+	WorksMirrored int    `json:"works_mirrored"`
+	// Part numbers none of our works has.
+	MissingPositions []int `json:"missing_positions"`
+	// Known member works we have not fetched.
+	MissingWorkIds []ID `json:"missing_work_ids"`
+}
+
+// GetID returns the value of ID.
+func (s *WorkSeries) GetID() ID {
+	return s.ID
+}
+
+// GetTitle returns the value of Title.
+func (s *WorkSeries) GetTitle() string {
+	return s.Title
+}
+
+// GetPosition returns the value of Position.
+func (s *WorkSeries) GetPosition() OptInt {
+	return s.Position
+}
+
+// GetCompleteLocally returns the value of CompleteLocally.
+func (s *WorkSeries) GetCompleteLocally() bool {
+	return s.CompleteLocally
+}
+
+// GetWorksTotal returns the value of WorksTotal.
+func (s *WorkSeries) GetWorksTotal() NilInt {
+	return s.WorksTotal
+}
+
+// GetWorksMirrored returns the value of WorksMirrored.
+func (s *WorkSeries) GetWorksMirrored() int {
+	return s.WorksMirrored
+}
+
+// GetMissingPositions returns the value of MissingPositions.
+func (s *WorkSeries) GetMissingPositions() []int {
+	return s.MissingPositions
+}
+
+// GetMissingWorkIds returns the value of MissingWorkIds.
+func (s *WorkSeries) GetMissingWorkIds() []ID {
+	return s.MissingWorkIds
+}
+
+// SetID sets the value of ID.
+func (s *WorkSeries) SetID(val ID) {
+	s.ID = val
+}
+
+// SetTitle sets the value of Title.
+func (s *WorkSeries) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetPosition sets the value of Position.
+func (s *WorkSeries) SetPosition(val OptInt) {
+	s.Position = val
+}
+
+// SetCompleteLocally sets the value of CompleteLocally.
+func (s *WorkSeries) SetCompleteLocally(val bool) {
+	s.CompleteLocally = val
+}
+
+// SetWorksTotal sets the value of WorksTotal.
+func (s *WorkSeries) SetWorksTotal(val NilInt) {
+	s.WorksTotal = val
+}
+
+// SetWorksMirrored sets the value of WorksMirrored.
+func (s *WorkSeries) SetWorksMirrored(val int) {
+	s.WorksMirrored = val
+}
+
+// SetMissingPositions sets the value of MissingPositions.
+func (s *WorkSeries) SetMissingPositions(val []int) {
+	s.MissingPositions = val
+}
+
+// SetMissingWorkIds sets the value of MissingWorkIds.
+func (s *WorkSeries) SetMissingWorkIds(val []ID) {
+	s.MissingWorkIds = val
+}
+
+// Ref: #/components/schemas/WorkSkin
+type WorkSkin struct {
+	// Untrusted CSS (hashed); omitted when the work has none.
+	CSS OptString `json:"css"`
+}
+
+// GetCSS returns the value of CSS.
+func (s *WorkSkin) GetCSS() OptString {
+	return s.CSS
+}
+
+// SetCSS sets the value of CSS.
+func (s *WorkSkin) SetCSS(val OptString) {
+	s.CSS = val
+}
+
+// Ref: #/components/schemas/WorkStats
+type WorkStats struct {
+	Kudos     int `json:"kudos"`
+	Hits      int `json:"hits"`
+	Comments  int `json:"comments"`
+	Bookmarks int `json:"bookmarks"`
+}
+
+// GetKudos returns the value of Kudos.
+func (s *WorkStats) GetKudos() int {
+	return s.Kudos
+}
+
+// GetHits returns the value of Hits.
+func (s *WorkStats) GetHits() int {
+	return s.Hits
+}
+
+// GetComments returns the value of Comments.
+func (s *WorkStats) GetComments() int {
+	return s.Comments
+}
+
+// GetBookmarks returns the value of Bookmarks.
+func (s *WorkStats) GetBookmarks() int {
+	return s.Bookmarks
+}
+
+// SetKudos sets the value of Kudos.
+func (s *WorkStats) SetKudos(val int) {
+	s.Kudos = val
+}
+
+// SetHits sets the value of Hits.
+func (s *WorkStats) SetHits(val int) {
+	s.Hits = val
+}
+
+// SetComments sets the value of Comments.
+func (s *WorkStats) SetComments(val int) {
+	s.Comments = val
+}
+
+// SetBookmarks sets the value of Bookmarks.
+func (s *WorkStats) SetBookmarks(val int) {
+	s.Bookmarks = val
+}
+
+type WorkStatus string
+
+const (
+	WorkStatusOk         WorkStatus = "ok"
+	WorkStatusDeleted    WorkStatus = "deleted"
+	WorkStatusHidden     WorkStatus = "hidden"
+	WorkStatusRestricted WorkStatus = "restricted"
+	WorkStatusUnrevealed WorkStatus = "unrevealed"
+)
+
+// AllValues returns all WorkStatus values.
+func (WorkStatus) AllValues() []WorkStatus {
+	return []WorkStatus{
+		WorkStatusOk,
+		WorkStatusDeleted,
+		WorkStatusHidden,
+		WorkStatusRestricted,
+		WorkStatusUnrevealed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WorkStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case WorkStatusOk:
+		return []byte(s), nil
+	case WorkStatusDeleted:
+		return []byte(s), nil
+	case WorkStatusHidden:
+		return []byte(s), nil
+	case WorkStatusRestricted:
+		return []byte(s), nil
+	case WorkStatusUnrevealed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WorkStatus) UnmarshalText(data []byte) error {
+	switch WorkStatus(data) {
+	case WorkStatusOk:
+		*s = WorkStatusOk
+		return nil
+	case WorkStatusDeleted:
+		*s = WorkStatusDeleted
+		return nil
+	case WorkStatusHidden:
+		*s = WorkStatusHidden
+		return nil
+	case WorkStatusRestricted:
+		*s = WorkStatusRestricted
+		return nil
+	case WorkStatusUnrevealed:
+		*s = WorkStatusUnrevealed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/WorkTag
+type WorkTag struct {
+	ID   ID      `json:"id"`
+	Name string  `json:"name"`
+	Type TagType `json:"type"`
+}
+
+// GetID returns the value of ID.
+func (s *WorkTag) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *WorkTag) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *WorkTag) GetType() TagType {
+	return s.Type
+}
+
+// SetID sets the value of ID.
+func (s *WorkTag) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *WorkTag) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *WorkTag) SetType(val TagType) {
+	s.Type = val
 }

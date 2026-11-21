@@ -142,6 +142,8 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/jobs":                 {target: "/api/v1/jobs?state=failed&kind=source_add", status: http.StatusOK, content: true},
 	"GET /api/v1/jobs/{id}":            {target: "/api/v1/jobs/2", status: http.StatusOK, content: true},
 	"GET /api/v1/status":               {target: "/api/v1/status", status: http.StatusOK, content: true},
+	"GET /api/v1/works/{id}":           {target: "/api/v1/works/9", status: http.StatusOK, content: true},
+	"GET /api/v1/works/{id}/skin":      {target: "/api/v1/works/9/skin", status: http.StatusOK, content: true},
 
 	// Admin socket only.
 	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},
