@@ -50,7 +50,7 @@ func (c *Controllers) FetchWork(ctx context.Context, id, sourceID int64, final b
 	if err == nil || id <= 0 || IsParseFailure(err) || isTooLarge(err) {
 		return detail, err // parse failures and too-large pages are recorded with their own marks
 	}
-	return detail, giveUpInfo(ctx, err, final, func() error {
+	return detail, markIfGivingUp(ctx, err, final, func() error {
 		return c.store.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 			return tx.MarkWorkFetchFailed(ctx, id)
 		})
