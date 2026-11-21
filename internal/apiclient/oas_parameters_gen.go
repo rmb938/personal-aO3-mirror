@@ -88,6 +88,18 @@ type ListSourcesParams struct {
 	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
+// ListTagWorksParams is parameters of listTagWorks operation.
+type ListTagWorksParams struct {
+	ID ID
+	// `best_match` needs a search query, which only `QUERY` takes: 422 here.
+	Sort OptWorkSort `json:",omitempty,omitzero"`
+	// Omitted, ascending for `title` and `creator` and descending for the rest.
+	Direction OptSortDirection `json:",omitempty,omitzero"`
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
 // ListWorksParams is parameters of listWorks operation.
 type ListWorksParams struct {
 	// `best_match` needs a search query, which only `QUERY` takes: 422 here.
@@ -102,6 +114,14 @@ type ListWorksParams struct {
 // PauseSourceParams is parameters of pauseSource operation.
 type PauseSourceParams struct {
 	ID ID
+}
+
+// QueryTagWorksParams is parameters of queryTagWorks operation.
+type QueryTagWorksParams struct {
+	ID ID
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
 // QueryWorksParams is parameters of queryWorks operation.

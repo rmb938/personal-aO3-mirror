@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
@@ -14,11 +15,24 @@ import (
 // ListWorks is GET /api/v1/works (sort, direction, page, per_page): one page of every stored
 // work, by default most recently revised first.
 func (a *Handlers) ListWorks(r *http.Request) (any, error) {
+	return a.listWorks(r, false)
+}
+
+// QueryWorks is QUERY /api/v1/works (page, per_page; body request.WorkQuery): one page of the
+// works matching the body's filters. A free-text member needs the reveal parameter.
+func (a *Handlers) QueryWorks(r *http.Request) (any, error) {
+	return a.queryWorks(r, false)
+}
+
+// listWorks serves a GET works list: every stored work, or with tagPath those matching the
+// path's tag id.
+func (a *Handlers) listWorks(r *http.Request, tagPath bool) (any, error) {
 	q, err := runtime.ParseParams(r, string(dto.ParamSort), string(dto.ParamDirection),
 		string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
+	tagID := pathTagID(q, tagPath)
 	f := model.WorkFilter{
 		Sort:      model.WorkSort(q.Enum(string(dto.ParamSort), dto.WorkSort(""), runtime.DetailWorkSort)),
 		Direction: model.SortDirection(q.Enum(string(dto.ParamDirection), dto.SortDirection(""), runtime.DetailDirection)),
@@ -30,21 +44,17 @@ func (a *Handlers) ListWorks(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
-	items, total, err := a.ctl.ListWorks(r.Context(), f)
-	if err != nil {
-		return nil, err
-	}
-	return convert.WorkBlurbList(items, total, p.Page, p.PerPage), nil
+	return a.worksPage(r, tagID, f, p)
 }
 
-// QueryWorks is QUERY /api/v1/works (page, per_page; body request.WorkQuery): one page of the
-// works matching the body's filters. A free-text member needs the reveal parameter.
-func (a *Handlers) QueryWorks(r *http.Request) (any, error) {
+// queryWorks serves a QUERY works search: over every stored work, or with tagPath those
+// matching the path's tag id.
+func (a *Handlers) queryWorks(r *http.Request, tagPath bool) (any, error) {
 	q, err := runtime.ParseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
 	if err != nil {
 		return nil, err
 	}
+	tagID := pathTagID(q, tagPath)
 	p := q.Page()
 	var req request.WorkQuery
 	if err := runtime.DecodeJSON(r, &req, &q.Validation); err != nil {
@@ -56,9 +66,28 @@ func (a *Handlers) QueryWorks(r *http.Request) (any, error) {
 	if req.NeedsReveal() && !runtime.Revealed(r) {
 		return nil, problem.WithDetail(dto.TypeRevealRequired, runtime.DetailFreeText)
 	}
-	f := convert.WorkFilter(req)
+	return a.worksPage(r, tagID, convert.WorkFilter(req), p)
+}
+
+// pathTagID reads the {id} path param when tagPath is set (recording a bad one in q), else 0.
+func pathTagID(q *runtime.Params, tagPath bool) int64 {
+	if !tagPath {
+		return 0
+	}
+	return q.PathID(dto.ParamID)
+}
+
+// worksPage reads page p of the works matching f, scoped to tagID unless it is 0.
+func (a *Handlers) worksPage(r *http.Request, tagID int64, f model.WorkFilter, p runtime.Page) (any, error) {
 	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
-	items, total, err := a.ctl.ListWorks(r.Context(), f)
+	var items []controllers.WorkBlurb
+	var total int
+	var err error
+	if tagID != 0 {
+		items, total, err = a.ctl.ListTagWorks(r.Context(), tagID, f)
+	} else {
+		items, total, err = a.ctl.ListWorks(r.Context(), f)
+	}
 	if err != nil {
 		return nil, err
 	}

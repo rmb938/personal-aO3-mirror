@@ -59,8 +59,9 @@ type DateRange struct {
 // MaxWorkStatuses bounds WorkFilter.Statuses (one of each status).
 var MaxWorkStatuses = len(WorkStatuses())
 
-// MaxWorkFilterTags bounds WorkFilter.Tags and WorkFilter.ExcludeTags (each).
-const MaxWorkFilterTags = 20
+// MaxWorkFilterTags bounds WorkFilter.Tags and WorkFilter.ExcludeTags (each): the API's 20 per
+// list plus the path tag of a tag's works route.
+const MaxWorkFilterTags = 21
 
 // WorkFilter selects and orders works, after AO3's work_search filters; zero fields match
 // everything. Offset and Limit only apply to store.FindWorks (CountWorks ignores them).

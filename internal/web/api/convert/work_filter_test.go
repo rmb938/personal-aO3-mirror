@@ -40,10 +40,10 @@ func TestWorkFilter(t *testing.T) {
 	assert.Equal(t, int64(1), in.TagIDs[0], "the filter owns its id lists")
 }
 
-// The request's tag cap is the store's, so a valid body never makes FindWorks fail (statuses
-// are checked by TestEnumSetsMatchModel).
+// The store's tag cap is the request's plus the path tag of /tags/{id}/works, so a valid body
+// never makes FindWorks fail (statuses are checked by TestEnumSetsMatchModel).
 func TestWorkQueryBoundsMatchModel(t *testing.T) {
-	assert.Equal(t, model.MaxWorkFilterTags, request.MaxWorkQueryTags)
+	assert.Equal(t, model.MaxWorkFilterTags, request.MaxWorkQueryTags+1)
 }
 
 func TestWorkFilterQuery(t *testing.T) {
