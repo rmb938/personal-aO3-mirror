@@ -162,6 +162,7 @@ func TestEnforceRevealed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, res.Epoch, "no epoch header in revealed mode")
 	assert.JSONEq(t, in, string(res.Body))
+	assert.Contains(t, string(res.Body), `"SENTINEL <b>&</b>`, "HTML characters are not escaped")
 
 	_, err = e.Enforce(Revealed, workType, []byte(`{"SENTINEL_key":"x"}`))
 	var uk *UnknownKeyError

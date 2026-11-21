@@ -3,6 +3,7 @@ package redact
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -284,8 +285,11 @@ func (w *walker) closing(dec *json.Decoder, want byte) error {
 	return nil
 }
 
+// writeString writes s quoted with minimal escaping (RFC 8785): '<', '>' and '&' are kept as
+// they are, as respond (encoding/json/v2) wrote them, so HTML content does not grow up to
+// sixfold. The decoder already replaced any invalid UTF-8, so AppendQuote cannot fail.
 func (w *walker) writeString(s string) {
-	b, _ := json.Marshal(s) // marshaling a string never fails
+	b, _ := jsontext.AppendQuote(w.out.AvailableBuffer(), s)
 	w.out.Write(b)
 }
 
