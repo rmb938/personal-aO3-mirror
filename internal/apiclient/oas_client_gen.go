@@ -204,6 +204,23 @@ type Invoker interface {
 	//
 	// GET /api/v1/jobs
 	ListJobs(ctx context.Context, params ListJobsParams, options ...RequestOption) (*JobList, error)
+	// ListMedia invokes listMedia operation.
+	//
+	// The media tags by name (then id), each with its five most used fandoms. AO3 lists only canonical
+	// media; the mirror never reads a medium's tag page, so it lists every medium a stored fandom's tag
+	// page named. Names are hashed unless revealed; in hashed mode the name order still says a little
+	// about the hidden text.
+	//
+	// GET /api/v1/media
+	ListMedia(ctx context.Context, params ListMediaParams, options ...RequestOption) (*MediumList, error)
+	// ListMediumFandoms invokes listMediumFandoms operation.
+	//
+	// The fandoms listing the medium as a parent. AO3 lists only canonical fandoms (but in Uncategorized
+	// Fandoms); this lists every stored fandom, and `canonical` tells them apart. 404 `not-found` when no
+	// stored media tag has the id.
+	//
+	// GET /api/v1/media/{id}/fandoms
+	ListMediumFandoms(ctx context.Context, params ListMediumFandomsParams, options ...RequestOption) (*TagList, error)
 	// ListSources invokes listSources operation.
 	//
 	// One page of sources, ordered by id.
@@ -1807,6 +1824,263 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams, reques
 	}
 
 	result, err := decodeListJobsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListMedia invokes listMedia operation.
+//
+// The media tags by name (then id), each with its five most used fandoms. AO3 lists only canonical
+// media; the mirror never reads a medium's tag page, so it lists every medium a stored fandom's tag
+// page named. Names are hashed unless revealed; in hashed mode the name order still says a little
+// about the hidden text.
+//
+// GET /api/v1/media
+func (c *Client) ListMedia(ctx context.Context, params ListMediaParams, options ...RequestOption) (*MediumList, error) {
+	res, err := c.sendListMedia(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendListMedia(ctx context.Context, params ListMediaParams, requestOptions ...RequestOption) (res *MediumList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/media"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListMediaResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListMediumFandoms invokes listMediumFandoms operation.
+//
+// The fandoms listing the medium as a parent. AO3 lists only canonical fandoms (but in Uncategorized
+// Fandoms); this lists every stored fandom, and `canonical` tells them apart. 404 `not-found` when no
+// stored media tag has the id.
+//
+// GET /api/v1/media/{id}/fandoms
+func (c *Client) ListMediumFandoms(ctx context.Context, params ListMediumFandomsParams, options ...RequestOption) (*TagList, error) {
+	res, err := c.sendListMediumFandoms(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendListMediumFandoms(ctx context.Context, params ListMediumFandomsParams, requestOptions ...RequestOption) (res *TagList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/media/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/fandoms"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "sort" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "sort",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Sort.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "direction" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "direction",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Direction.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListMediumFandomsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

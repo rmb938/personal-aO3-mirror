@@ -522,6 +522,51 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Tag" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/media:
+    get:
+      operationId: listMedia
+      summary: One page of the stored media tags, as AO3's /media page.
+      description: |
+        The media tags by name (then id), each with its five most used fandoms. AO3 lists only
+        canonical media; the mirror never reads a medium's tag page, so it lists every medium a
+        stored fandom's tag page named. Names are hashed unless revealed; in hashed mode the
+        name order still says a little about the hidden text.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the media tags.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediumList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/media/{id}/fandoms:
+    get:
+      operationId: listMediumFandoms
+      summary: One page of a media tag's stored fandoms, as AO3's /media/{name}/fandoms page.
+      description: |
+        The fandoms listing the medium as a parent. AO3 lists only canonical fandoms (but in
+        Uncategorized Fandoms); this lists every stored fandom, and `canonical` tells them
+        apart. 404 `not-found` when no stored media tag has the id.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: sort
+          in: query
+          schema: { $ref: "#/components/schemas/TagSort" }
+        - name: direction
+          in: query
+          description: Omitted, ascending for `name` and descending for `uses`.
+          schema: { $ref: "#/components/schemas/SortDirection" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the medium's fandoms.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/debug/jobs/{id}:
     get:
       operationId: debugJob
@@ -1689,6 +1734,36 @@ components:
             `works_count`, synonyms and sub tags do not count.
         # The last tag page fetch; omitted when never fetched.
         info_fetched_at: { $ref: "#/components/schemas/Timestamp" }
+    MediumList:
+      type: object
+      required: [items, page, per_page, total]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Medium" } }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: "Stored media tags over all pages." }
+    Medium:
+      type: object
+      description: A stored media tag on the media page. Names are content, hashed unless revealed.
+      required: [id, name, canonical, fandoms, fandoms_total]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        canonical:
+          type: [boolean, "null"]
+          description: Null until the tag page was read, which the mirror does not do for media.
+        fandoms:
+          type: array
+          maxItems: 5
+          items: { $ref: "#/components/schemas/TagListItem" }
+          description: |
+            The medium's most used fandoms (a tie by name), as `GET
+            /api/v1/media/{id}/fandoms?sort=uses` lists them.
+        fandoms_total:
+          type: integer
+          description: Every stored fandom listing the medium as a parent.
     TagInfoDetail:
       type: object
       required: [tag_id, class, req_id, type, canonical, parents]

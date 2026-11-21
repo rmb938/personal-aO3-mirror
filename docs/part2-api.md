@@ -1204,7 +1204,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `info_fetched_at`. `convert.TagFilter` and `convert.TagList` map it.
       - QUERY only (no `GET /tags`): `Accept-Query`, the search rate limit, paging in the query
         string. The leak sample filters by type and sorts by uses.
-  - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d, after AO3's `MediaController`
+  - [x] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d, after AO3's `MediaController`
     and `FandomsController#index`. In two PRs:
     - [x] **12e1. Store + controller: media.** As built:
       - Media tags were never typed: tag pages stored parents as `Unknown` until seen on a work,
@@ -1220,9 +1220,19 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         medium as the parent, or `ErrNoMedium` (no tag, or not a media tag). AO3 lists canonical
         fandoms (all in use for Uncategorized Fandoms); this lists every fandom, and `canonical`
         tells them apart.
-    - [ ] **12e2. Routes**: `GET /media` (page, per_page) and `GET /media/{id}/fandoms` (sort,
+    - [x] **12e2. Routes**: `GET /media` (page, per_page) and `GET /media/{id}/fandoms` (sort,
       direction, page, per_page), DTOs, convert, `ErrNoMedium` as 404, leak samples, OpenAPI and
-      the client.
+      the client. As built:
+      - `GET /media` answers `dto.List[dto.Medium]` (OpenAPI `MediumList`): `id`, `name`,
+        `canonical` (null until recorded, so in practice always null), `fandoms` (at most 5
+        `TagListItem`s, most used first) and `fandoms_total`. `convert.MediumList` maps it.
+      - `GET /media/{id}/fandoms` answers the `TagList` of `QUERY /tags`, through
+        `convert.TagList`. `sort` is a `dto.TagSort` (`DetailTagSort`), `direction` a
+        `SortDirection`; a bad id is reported with the other invalid params.
+      - `controllers.ErrNoMedium` is 404 with `DetailNoMedium` (an unknown tag, or one of
+        another type). Plain GETs: no QUERY form, so no `Accept-Query` and no search rate limit.
+      - The seed's `seedMedium` (4) is `seedTag`'s parent, checked while seeding; both routes
+        have leak samples.
 - [ ] **13. Series, creators, collections**
   - `GET /series/{id}` (with `complete_locally`, `works_total`, `works_mirrored`,
     `missing_positions`, `missing_work_ids`, `mirror_source_url`) and `/series/{id}/works`.

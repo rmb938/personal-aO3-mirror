@@ -81,6 +81,24 @@ type ListJobsParams struct {
 	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
+// ListMediaParams is parameters of listMedia operation.
+type ListMediaParams struct {
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
+// ListMediumFandomsParams is parameters of listMediumFandoms operation.
+type ListMediumFandomsParams struct {
+	ID   ID
+	Sort OptTagSort `json:",omitempty,omitzero"`
+	// Omitted, ascending for `name` and descending for `uses`.
+	Direction OptSortDirection `json:",omitempty,omitzero"`
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
 // ListSourcesParams is parameters of listSources operation.
 type ListSourcesParams struct {
 	// 1-based page number; (page-1)*per_page is at most 100000.

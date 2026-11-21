@@ -165,6 +165,9 @@ var routeSamples = map[string]routeSample{
 	// The name is free text: refused hashed (it never reaches the store), served revealed.
 	"GET /api/v1/tags/by-name/{name}": {target: "/api/v1/tags/by-name/" + sentinel + "fandom",
 		status: http.StatusBadRequest, revealStatus: http.StatusOK, content: true},
+	"GET /api/v1/media": {target: "/api/v1/media", status: http.StatusOK, content: true},
+	"GET /api/v1/media/{id}/fandoms": {target: "/api/v1/media/4/fandoms?sort=uses", status: http.StatusOK,
+		content: true},
 
 	// Admin socket only.
 	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},
