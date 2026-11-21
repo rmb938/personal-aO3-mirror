@@ -123,6 +123,10 @@ func workWhere(f model.WorkFilter) (string, []any, error) {
 		}
 		cond(`id NOT IN (`+tagFilterWorks(n)+`)`, ids...)
 	}
+	if f.CreatorID != 0 {
+		// The covering work_creators (creator_id, work_id) index (meta migration 0010).
+		cond(`id IN (SELECT wc.work_id FROM work_creators wc WHERE wc.creator_id = ?)`, f.CreatorID)
+	}
 	if f.Complete != nil {
 		cond(`complete = ?`, boolInt(*f.Complete))
 	}

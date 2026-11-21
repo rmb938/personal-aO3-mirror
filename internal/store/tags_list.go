@@ -108,7 +108,7 @@ func tagWhere(f model.TagFilter) (string, []any, error) {
 		args = append(args, a...)
 	}
 	if f.Name != "" {
-		words := model.TagNameWords(f.Name)
+		words := model.NameWords(f.Name)
 		if len(words) == 0 || len(words) > model.MaxTagNameWords {
 			return "", nil, fmt.Errorf("store: tags: %d name words (1..%d)", len(words), model.MaxTagNameWords)
 		}

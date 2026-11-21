@@ -37,7 +37,7 @@ var MaxTagFilterTypes = len(TagTypes())
 // TagFilter selects and orders stored tags, after AO3's tag search (tag_search); zero fields
 // match everything. Offset and Limit only apply to store.FindTags (CountTags ignores them).
 type TagFilter struct {
-	// Name is words (TagNameWords) that must each appear in the tag's name, ignoring ASCII
+	// Name is words (NameWords) that must each appear in the tag's name, ignoring ASCII
 	// case, like AO3's name field with its words ANDed. A word matches anywhere in the name,
 	// not only a whole word. It holds fanwork content: never log it.
 	Name string
@@ -63,6 +63,6 @@ func (f TagFilter) SortOrDefault() TagSort {
 	return f.Sort
 }
 
-// TagNameWords splits a tag name filter into the words that must each match: runs of
+// NameWords splits a tag or creator name filter into the words that must each match: runs of
 // non-space characters.
-func TagNameWords(name string) []string { return strings.Fields(name) }
+func NameWords(name string) []string { return strings.Fields(name) }
