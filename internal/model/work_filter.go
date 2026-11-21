@@ -70,7 +70,7 @@ const MaxWorkFilterTags = 20
 // id lists (rating_ids, fandom_ids, …) into one filter_ids list, so the type grouping belongs to
 // the API, not here.
 type WorkFilter struct {
-	// Query is search text (see SearchTerms) matched against titles, summaries, creators and
+	// Query is search text (see searchquery.Terms) matched against titles, summaries, creators and
 	// tags, like AO3's query field. It holds fanwork content: never log it.
 	Query         string
 	Tags          []int64      // every one must match (AO3 filter_ids; at most MaxWorkFilterTags)

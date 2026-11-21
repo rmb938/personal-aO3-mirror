@@ -1,31 +1,34 @@
-package model
+// Package searchquery splits work search text into terms. It imports only the standard library,
+// so both the store (which builds the FTS5 MATCH from the terms) and the API's request
+// validation (which bounds them) use the same rules.
+package searchquery
 
 import (
 	"strings"
 	"unicode"
 )
 
-// MaxSearchTerms bounds the terms of a WorkFilter.Query (SearchTerms).
-const MaxSearchTerms = 16
+// MaxTerms bounds the terms of a search query (Terms).
+const MaxTerms = 16
 
-// SearchTerm is one word or quoted phrase of a search query.
-type SearchTerm struct {
+// Term is one word or quoted phrase of a search query.
+type Term struct {
 	Text    string // the word, or the phrase's words joined by single spaces
 	Exclude bool   // a leading '-': no match may contain it (AO3's NOT)
 }
 
-// SearchTerms splits a search query into terms, a subset of AO3's query syntax: words, "quoted
+// Terms splits a search query into terms, a subset of AO3's query syntax: words, "quoted
 // phrases" (an unclosed quote runs to the end) and a leading '-' to exclude a word or phrase.
 // Every other term must match (AO3's default_operator AND). Nothing else is syntax: AND, OR,
 // field:value, wildcards and the like are plain words.
 //
 // A term with no letter or digit is dropped, since the search index has nothing to match it with.
-func SearchTerms(q string) []SearchTerm {
-	var out []SearchTerm
+func Terms(q string) []Term {
+	var out []Term
 	add := func(text string, exclude bool) {
 		text = strings.Join(strings.Fields(text), " ")
 		if strings.IndexFunc(text, isTokenRune) >= 0 {
-			out = append(out, SearchTerm{Text: text, Exclude: exclude})
+			out = append(out, Term{Text: text, Exclude: exclude})
 		}
 	}
 	for q != "" {
