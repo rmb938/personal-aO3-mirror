@@ -25,5 +25,6 @@ func Types() []any {
 		SourceAdd{},
 		SourceRefresh{},
 		SourceSettings{},
+		WorkQuery{},
 	}
 }

@@ -202,13 +202,22 @@ type Invoker interface {
 	// mode the order still says a little about the hidden text.
 	//
 	// GET /api/v1/works
-	ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkList, error)
+	ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkListHeaders, error)
 	// PauseSource invokes pauseSource operation.
 	//
 	// Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
 	//
 	// POST /api/v1/sources/{id}/pause
 	PauseSource(ctx context.Context, params PauseSourceParams, options ...RequestOption) error
+	// QueryWorks invokes queryWorks operation.
+	//
+	// The body holds the filters, sort and direction (absent members match everything, so `{}` is the
+	// `GET` listing); paging stays in the query string. `language` is free text, so in hashed mode it is
+	// refused with `reveal-required`. Every QUERY search route shares the per-client search rate limit
+	// (`api.rate.search_per_min`) on top of the general one.
+	//
+	// QUERY /api/v1/works
+	QueryWorks(ctx context.Context, request *WorkQueryRequest, params QueryWorksParams, options ...RequestOption) (*WorkListHeaders, error)
 	// RefreshSource invokes refreshSource operation.
 	//
 	// Its next update poll is due now and its failed work fetches are queued again. With `full`, the whole
@@ -1705,12 +1714,12 @@ func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams, 
 // mode the order still says a little about the hidden text.
 //
 // GET /api/v1/works
-func (c *Client) ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkList, error) {
+func (c *Client) ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkListHeaders, error) {
 	res, err := c.sendListWorks(ctx, params, options...)
 	return res, err
 }
 
-func (c *Client) sendListWorks(ctx context.Context, params ListWorksParams, requestOptions ...RequestOption) (res *WorkList, err error) {
+func (c *Client) sendListWorks(ctx context.Context, params ListWorksParams, requestOptions ...RequestOption) (res *WorkListHeaders, err error) {
 
 	var reqCfg requestConfig
 	reqCfg.setDefaults(c.baseClient)
@@ -1908,6 +1917,110 @@ func (c *Client) sendPauseSource(ctx context.Context, params PauseSourceParams, 
 	}
 
 	result, err := decodePauseSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// QueryWorks invokes queryWorks operation.
+//
+// The body holds the filters, sort and direction (absent members match everything, so `{}` is the
+// `GET` listing); paging stays in the query string. `language` is free text, so in hashed mode it is
+// refused with `reveal-required`. Every QUERY search route shares the per-client search rate limit
+// (`api.rate.search_per_min`) on top of the general one.
+//
+// QUERY /api/v1/works
+func (c *Client) QueryWorks(ctx context.Context, request *WorkQueryRequest, params QueryWorksParams, options ...RequestOption) (*WorkListHeaders, error) {
+	res, err := c.sendQueryWorks(ctx, request, params, options...)
+	return res, err
+}
+
+func (c *Client) sendQueryWorks(ctx context.Context, request *WorkQueryRequest, params QueryWorksParams, requestOptions ...RequestOption) (res *WorkListHeaders, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/works"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "QUERY", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeQueryWorksRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeQueryWorksResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

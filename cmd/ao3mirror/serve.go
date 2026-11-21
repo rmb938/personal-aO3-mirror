@@ -96,6 +96,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		HashKeyRotation:  cfg.API.HashKeyRotation,
 		GeneralPerMin:    cfg.API.Rate.GeneralPerMin,
 		SourceAddPerHour: cfg.API.Rate.SourceAddPerHour,
+		SearchPerMin:     cfg.API.Rate.SearchPerMin,
 	}, log, newControllers(cfg, log, st, nil))
 	if err != nil {
 		return nil, err
@@ -191,7 +192,8 @@ func (s *server) serve(ctx context.Context) (err error) {
 		"listen", s.tcp.Addr().String(), "admin_socket", s.sock.Addr().String(),
 		"trusted_proxies", s.cfg.TrustedProxies, "no_reveal", s.noReveal,
 		"request_timeout", s.cfg.RequestTimeout.String(), "hash_key_rotation", s.cfg.HashKeyRotation.String(),
-		"general_per_min", s.cfg.Rate.GeneralPerMin, "source_add_per_hour", s.cfg.Rate.SourceAddPerHour,
+		"general_per_min", s.cfg.Rate.GeneralPerMin, "search_per_min", s.cfg.Rate.SearchPerMin,
+		"source_add_per_hour", s.cfg.Rate.SourceAddPerHour,
 	}
 	s.log.Info("api serving", attrs...)
 	if ap, err := netip.ParseAddrPort(s.tcp.Addr().String()); err == nil && !ap.Addr().IsLoopback() {

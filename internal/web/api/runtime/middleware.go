@@ -378,6 +378,10 @@ func (a *API) crossOrigin() func(http.Handler) http.Handler {
 	return c.Handler
 }
 
+// Revealed reports whether r asked for (and was allowed) revealed content. A handler checks it
+// before acting on a free-text input, which hashed mode refuses (reveal-required).
+func Revealed(r *http.Request) bool { return state(r.Context()).reveal }
+
 // reveal parses the reveal param once per request. Only the exact value "1", once, is
 // accepted; with NoReveal it is refused (403). On success the enforcer runs in revealed mode.
 func (a *API) reveal(next http.Handler) http.Handler {

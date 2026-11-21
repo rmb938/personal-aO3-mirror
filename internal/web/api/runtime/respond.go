@@ -70,7 +70,7 @@ func respondError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err 
 			slog.String("route", r.Pattern), slog.String("err", err.Error()))
 	}
 	if p.Type == dto.TypeUnsupportedMediaType && r.Method == MethodQuery {
-		w.Header().Set("Accept-Query", ContentTypeJSON)
+		w.Header().Set(HeaderAcceptQuery, ContentTypeJSON)
 	}
 	if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
 		w.Header().Set("Location", route.Path(route.Source, ex.ID)) // the source that already exists
@@ -100,3 +100,15 @@ func Respond(w http.ResponseWriter, r *http.Request, log *slog.Logger, status in
 
 // MethodQuery is the QUERY method (RFC 10008).
 const MethodQuery = "QUERY"
+
+// HeaderAcceptQuery lists the media types a resource accepts in QUERY bodies (RFC 10008).
+const HeaderAcceptQuery = "Accept-Query"
+
+// AcceptQuery advertises QUERY support (Accept-Query: application/json) on every response of a
+// resource that accepts it, whatever the method.
+func AcceptQuery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(HeaderAcceptQuery, ContentTypeJSON)
+		next.ServeHTTP(w, r)
+	})
+}

@@ -25,6 +25,7 @@ const (
 	ListSourcesOperation       OperationName = "ListSources"
 	ListWorksOperation         OperationName = "ListWorks"
 	PauseSourceOperation       OperationName = "PauseSource"
+	QueryWorksOperation        OperationName = "QueryWorks"
 	RefreshSourceOperation     OperationName = "RefreshSource"
 	RemoveSourceOperation      OperationName = "RemoveSource"
 	ResumeSourceOperation      OperationName = "ResumeSource"

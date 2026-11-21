@@ -66,5 +66,5 @@ api:
   hash_key_rotation: 24h        # in-memory random hash key; 0 = once per process; min 1h
   rate:                         # per client IP, public listener (the admin socket allows 10x)
     general_per_min: 120
-    search_per_min: 30          # takes effect with search (stage 10)
+    search_per_min: 30          # QUERY search routes together (QUERY /works, ...)
     source_add_per_hour: 10     # takes effect with POST /sources (stage 4)

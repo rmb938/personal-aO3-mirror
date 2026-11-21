@@ -91,6 +91,13 @@ type PauseSourceParams struct {
 	ID ID
 }
 
+// QueryWorksParams is parameters of queryWorks operation.
+type QueryWorksParams struct {
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
 // RefreshSourceParams is parameters of refreshSource operation.
 type RefreshSourceParams struct {
 	ID ID

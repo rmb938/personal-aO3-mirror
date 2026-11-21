@@ -299,6 +299,33 @@ paths:
       responses:
         "200":
           description: A page of the works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
+    query:
+      operationId: queryWorks
+      summary: One page of the stored works matching AO3-style filters.
+      description: |
+        The body holds the filters, sort and direction (absent members match everything, so
+        `{}` is the `GET` listing); paging stays in the query string. `language` is free text, so
+        in hashed mode it is refused with `reveal-required`. Every QUERY search route shares the
+        per-client search rate limit (`api.rate.search_per_min`) on top of the general one.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkQueryRequest" }
+      responses:
+        "200":
+          description: A page of the matching works.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkList" }
@@ -417,6 +444,10 @@ components:
       name: per_page
       in: query
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+  headers:
+    AcceptQuery:
+      description: The resource accepts QUERY with these body media types (RFC 10008).
+      schema: { type: string, enum: [application/json] }
   responses:
     Problem:
       description: An RFC 9457 problem. Every field is an enumerable value.
@@ -1638,6 +1669,78 @@ components:
     SortDirection:
       type: string
       enum: [asc, desc]
+    WorkQueryRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        AO3 work_search filters. Every member is optional; absent members match everything.
+        Invalid members are all listed in one `validation-error` (by JSON Pointer).
+      properties:
+        tag_ids:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/ID" }
+          description: >-
+            Every one must match (AO3 `filter_ids`, every tag type in one list). A tag id
+            matches works tagged with it, a synonym of it, or any of its sub tags (transitively)
+            or their synonyms.
+        exclude_tag_ids:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/ID" }
+          description: None may match (AO3 `excluded_tag_ids`), matched like `tag_ids`.
+        complete: { type: boolean, description: "AO3 `complete`." }
+        crossover:
+          type: boolean
+          description: AO3 `crossover`; a crossover has no fandom related to all its others.
+        single_chapter: { type: boolean, description: "true keeps works expecting one chapter." }
+        language:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: >-
+            The stored language name, matched exactly. Free text: refused with
+            `reveal-required` unless the request is revealed.
+        statuses:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
+          description: Any of these local availability states.
+        fetched:
+          type: boolean
+          description: true keeps works whose page was fetched; false, works known only from listing blurbs.
+        words: { $ref: "#/components/schemas/CountRange" }
+        kudos: { $ref: "#/components/schemas/CountRange" }
+        hits: { $ref: "#/components/schemas/CountRange" }
+        comments: { $ref: "#/components/schemas/CountRange" }
+        bookmarks: { $ref: "#/components/schemas/CountRange" }
+        revised:
+          allOf: [{ $ref: "#/components/schemas/DateRange" }]
+          description: The last update (AO3 `date_from` / `date_to`).
+        published:
+          allOf: [{ $ref: "#/components/schemas/DateRange" }]
+          description: The first publication; excludes works with no known date (blurb-only).
+        sort: { $ref: "#/components/schemas/WorkSort" }
+        direction:
+          allOf: [{ $ref: "#/components/schemas/SortDirection" }]
+          description: Omitted, ascending for `title` and `creator` and descending for the rest.
+    CountRange:
+      type: object
+      additionalProperties: false
+      description: An inclusive counter range; an absent end is open, and min must not be above max.
+      properties:
+        min: { type: integer, minimum: 0, maximum: 2147483647 }
+        max: { type: integer, minimum: 0, maximum: 2147483647 }
+    DateRange:
+      type: object
+      additionalProperties: false
+      description: An inclusive range of days; an absent end is open, and from must not be after to.
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
     WorkList:
       type: object
       required: [items, page, per_page, total]

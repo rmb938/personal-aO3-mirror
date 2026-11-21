@@ -35,6 +35,10 @@ type Options struct {
 	// SourceAddPerHour is the per-client limit on POST /api/v1/sources (public listener; the
 	// admin socket allows adminRateFactor times as many), on top of the general limit.
 	SourceAddPerHour int
+	// SearchPerMin is the per-client limit on the QUERY search routes together (public
+	// listener; the admin socket allows adminRateFactor times as many), on top of the general
+	// limit.
+	SearchPerMin int
 	// Now is the hasher's clock (nil: time.Now). Tests use it to drive key rotation.
 	Now func() time.Time
 }
@@ -80,7 +84,7 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 	if opts.RequestTimeout <= 0 {
 		return nil, errors.New("api: request timeout must be positive")
 	}
-	if opts.GeneralPerMin <= 0 || opts.SourceAddPerHour <= 0 {
+	if opts.GeneralPerMin <= 0 || opts.SourceAddPerHour <= 0 || opts.SearchPerMin <= 0 {
 		return nil, errors.New("api: rate limits must be positive")
 	}
 	h, err := redact.NewHasher(opts.HashKeyRotation, opts.Now)
@@ -118,6 +122,16 @@ func (a *API) SourceAddRateLimit(listener string, admin bool) func(http.Handler)
 		n *= adminRateFactor
 	}
 	return a.rateLimit(n, time.Hour, listener)
+}
+
+// SearchRateLimit is the search limit (SearchPerMin a minute). Build it once per listener and
+// put it on every QUERY search route, so they share one budget.
+func (a *API) SearchRateLimit(listener string, admin bool) func(http.Handler) http.Handler {
+	n := a.opts.SearchPerMin
+	if admin {
+		n *= adminRateFactor
+	}
+	return a.rateLimit(n, time.Minute, listener)
 }
 
 // router builds one listener's router with the full middleware chain (docs/part2-api.md, "HTTP

@@ -42,6 +42,7 @@ var (
 	DetailBodyTooLarge     = problem.NewDetail("the body must be at most " + itoa(MaxBodyBytes) + " bytes")
 	DetailMediaType        = problem.NewDetail("Content-Type must be " + ContentTypeJSON)
 	DetailNotJSON          = problem.NewDetail("this response is not JSON; it is served only with the " + RevealParam + " parameter")
+	DetailFreeText         = problem.NewDetail("a free-text member matches hidden text, so it needs the " + RevealParam + " parameter")
 	DetailRevealDisabled   = problem.NewDetail("this server was started with --no-reveal and never returns real content")
 	DetailCrossOrigin      = problem.NewDetail("cross-origin requests with unsafe methods are refused")
 	DetailNoRoute          = problem.NewDetail("no route matches this path")

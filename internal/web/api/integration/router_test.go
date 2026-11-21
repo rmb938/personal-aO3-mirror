@@ -33,6 +33,7 @@ func testOptions(t *testing.T) runtime.Options {
 		RequestTimeout:   10 * time.Second,
 		GeneralPerMin:    1000,
 		SourceAddPerHour: 1000,
+		SearchPerMin:     1000,
 	}
 }
 
@@ -54,6 +55,7 @@ func TestNewValidatesOptions(t *testing.T) {
 		"short rotate":  func(o *runtime.Options) { o.HashKeyRotation = time.Minute },
 		"negative rate": func(o *runtime.Options) { o.GeneralPerMin = -1 },
 		"no add rate":   func(o *runtime.Options) { o.SourceAddPerHour = 0 },
+		"no search":     func(o *runtime.Options) { o.SearchPerMin = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -143,9 +145,11 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/jobs/{id}":            {target: "/api/v1/jobs/2", status: http.StatusOK, content: true},
 	"GET /api/v1/status":               {target: "/api/v1/status", status: http.StatusOK, content: true},
 	"GET /api/v1/works":                {target: "/api/v1/works?sort=title", status: http.StatusOK, content: true},
-	"GET /api/v1/works/{id}":           {target: "/api/v1/works/9", status: http.StatusOK, content: true},
-	"GET /api/v1/works/{id}/skin":      {target: "/api/v1/works/9/skin", status: http.StatusOK, content: true},
-	"GET /api/v1/works/{id}/chapters":  {target: "/api/v1/works/9/chapters", status: http.StatusOK, content: true},
+	"QUERY /api/v1/works": {target: "/api/v1/works?per_page=5", status: http.StatusOK, content: true,
+		body: `{"fetched":true,"words":{"min":1},"sort":"title"}`},
+	"GET /api/v1/works/{id}":          {target: "/api/v1/works/9", status: http.StatusOK, content: true},
+	"GET /api/v1/works/{id}/skin":     {target: "/api/v1/works/9/skin", status: http.StatusOK, content: true},
+	"GET /api/v1/works/{id}/chapters": {target: "/api/v1/works/9/chapters", status: http.StatusOK, content: true},
 	"GET /api/v1/works/{id}/chapters/{position}": {target: "/api/v1/works/9/chapters/2", status: http.StatusOK,
 		content: true},
 

@@ -6,6 +6,8 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
@@ -25,6 +27,33 @@ func (a *Handlers) ListWorks(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
+	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	items, total, err := a.ctl.ListWorks(r.Context(), f)
+	if err != nil {
+		return nil, err
+	}
+	return convert.WorkBlurbList(items, total, p.Page, p.PerPage), nil
+}
+
+// QueryWorks is QUERY /api/v1/works (page, per_page; body request.WorkQuery): one page of the
+// works matching the body's filters. A free-text member needs the reveal parameter.
+func (a *Handlers) QueryWorks(r *http.Request) (any, error) {
+	q, err := runtime.ParseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
+	if err != nil {
+		return nil, err
+	}
+	p := q.Page()
+	var req request.WorkQuery
+	if err := runtime.DecodeJSON(r, &req, &q.Validation); err != nil {
+		return nil, err
+	}
+	if err := q.Err(); err != nil {
+		return nil, err
+	}
+	if req.NeedsReveal() && !runtime.Revealed(r) {
+		return nil, problem.WithDetail(dto.TypeRevealRequired, runtime.DetailFreeText)
+	}
+	f := convert.WorkFilter(req)
 	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
 	items, total, err := a.ctl.ListWorks(r.Context(), f)
 	if err != nil {
