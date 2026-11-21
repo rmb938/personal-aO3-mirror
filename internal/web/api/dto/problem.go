@@ -133,21 +133,23 @@ func (ProblemTitle) EnumValues() []string {
 type ParamName string
 
 const (
-	ParamPage     ParamName = "page"
-	ParamPerPage  ParamName = "per_page"
-	ParamID       ParamName = "id"
-	ParamJobID    ParamName = "job_id"
-	ParamState    ParamName = "state"
-	ParamKind     ParamName = "kind"
-	ParamSourceID ParamName = "source_id"
-	ParamPosition ParamName = "position"
+	ParamPage      ParamName = "page"
+	ParamPerPage   ParamName = "per_page"
+	ParamID        ParamName = "id"
+	ParamJobID     ParamName = "job_id"
+	ParamState     ParamName = "state"
+	ParamKind      ParamName = "kind"
+	ParamSourceID  ParamName = "source_id"
+	ParamPosition  ParamName = "position"
+	ParamSort      ParamName = "sort"
+	ParamDirection ParamName = "direction"
 	// ParamReveal is the query parameter that asks for real fanwork content on one request
 	// (api.RevealParam).
 	ParamReveal ParamName = "reveal_fanwork"
 )
 
 var paramNames = []ParamName{ParamPage, ParamPerPage, ParamID, ParamJobID, ParamState, ParamKind, ParamSourceID, ParamPosition,
-	ParamReveal}
+	ParamSort, ParamDirection, ParamReveal}
 
 // Known reports whether p is a declared name.
 func (p ParamName) Known() bool { return slices.Contains(paramNames, p) }

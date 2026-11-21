@@ -194,6 +194,15 @@ type Invoker interface {
 	//
 	// GET /api/v1/sources
 	ListSources(ctx context.Context, params ListSourcesParams, options ...RequestOption) (*SourceList, error)
+	// ListWorks invokes listWorks operation.
+	//
+	// Each item is a listing blurb: no notes, collections or chapter list (see `GET /api/v1/works/{id}`).
+	// Content strings are hashed unless revealed; HTML is untrusted. Every sort ends with the work id, in
+	// the same direction, so pages are stable. Title and creator sorts follow AO3's sort keys; in hashed
+	// mode the order still says a little about the hidden text.
+	//
+	// GET /api/v1/works
+	ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkList, error)
 	// PauseSource invokes pauseSource operation.
 	//
 	// Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
@@ -1681,6 +1690,141 @@ func (c *Client) sendListSources(ctx context.Context, params ListSourcesParams, 
 	}
 
 	result, err := decodeListSourcesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListWorks invokes listWorks operation.
+//
+// Each item is a listing blurb: no notes, collections or chapter list (see `GET /api/v1/works/{id}`).
+// Content strings are hashed unless revealed; HTML is untrusted. Every sort ends with the work id, in
+// the same direction, so pages are stable. Title and creator sorts follow AO3's sort keys; in hashed
+// mode the order still says a little about the hidden text.
+//
+// GET /api/v1/works
+func (c *Client) ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkList, error) {
+	res, err := c.sendListWorks(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendListWorks(ctx context.Context, params ListWorksParams, requestOptions ...RequestOption) (res *WorkList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/works"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "sort" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "sort",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Sort.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "direction" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "direction",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Direction.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListWorksResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

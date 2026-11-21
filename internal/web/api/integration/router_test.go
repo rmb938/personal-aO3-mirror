@@ -142,6 +142,7 @@ var routeSamples = map[string]routeSample{
 	"GET /api/v1/jobs":                 {target: "/api/v1/jobs?state=failed&kind=source_add", status: http.StatusOK, content: true},
 	"GET /api/v1/jobs/{id}":            {target: "/api/v1/jobs/2", status: http.StatusOK, content: true},
 	"GET /api/v1/status":               {target: "/api/v1/status", status: http.StatusOK, content: true},
+	"GET /api/v1/works":                {target: "/api/v1/works?sort=title", status: http.StatusOK, content: true},
 	"GET /api/v1/works/{id}":           {target: "/api/v1/works/9", status: http.StatusOK, content: true},
 	"GET /api/v1/works/{id}/skin":      {target: "/api/v1/works/9/skin", status: http.StatusOK, content: true},
 	"GET /api/v1/works/{id}/chapters":  {target: "/api/v1/works/9/chapters", status: http.StatusOK, content: true},

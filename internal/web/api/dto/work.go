@@ -126,3 +126,56 @@ type WorkSkin struct {
 	// CSS is omitted when the work has no skin.
 	CSS string `json:"css,omitzero"`
 }
+
+// WorkSort is a work listing's sort column, after AO3's work_search sort_column (an enum).
+type WorkSort string
+
+// EnumValues lists every WorkSort.
+func (WorkSort) EnumValues() []string {
+	return []string{"revised", "published", "words", "hits", "kudos", "comments", "bookmarks", "title", "creator"}
+}
+
+// SortDirection orders a listing (an enum). Omitted, the sort column's default applies:
+// ascending for title and creator, descending for the rest.
+type SortDirection string
+
+// EnumValues lists every SortDirection.
+func (SortDirection) EnumValues() []string { return []string{"asc", "desc"} }
+
+// WorkBlurb is one work in a work listing (GET /api/v1/works): what AO3's listing blurb shows.
+// Every string but the enums and dates is fanwork content, hashed unless revealed.
+type WorkBlurb struct {
+	ID     int64      `json:"id"`
+	Status WorkStatus `json:"status"`
+	Title  string     `json:"title"`
+	// Creators are in byline order ([] for an anonymous work or an orphaned one).
+	Creators   []WorkCreator `json:"creators"`
+	Anonymous  bool          `json:"anonymous"`
+	Restricted bool          `json:"restricted"`
+	// SummaryHTML is omitted when the work has none.
+	SummaryHTML string `json:"summary_html,omitzero"`
+	Language    string `json:"language,omitzero"`
+	Words       int    `json:"words"`
+	// ChaptersPosted is AO3's count; ChaptersExpected is omitted when unknown ("?").
+	ChaptersPosted   int  `json:"chapters_posted"`
+	ChaptersExpected int  `json:"chapters_expected,omitzero"`
+	Complete         bool `json:"complete"`
+	// PublishedOn is known only from the work page; RevisedOn is the last update.
+	PublishedOn string    `json:"published_on,omitzero"`
+	RevisedOn   string    `json:"revised_on,omitzero"`
+	Stats       WorkStats `json:"stats"`
+	// Tags are in page order (AO3 groups them by type).
+	Tags   []WorkTag        `json:"tags"`
+	Series []WorkSeriesPart `json:"series"`
+	// LastFetchedAt is omitted for a work known only from listing blurbs.
+	LastFetchedAt time.Time `json:"last_fetched_at,omitzero"`
+}
+
+// WorkSeriesPart is a series a work in a listing belongs to, without the mirror coverage
+// that GET /api/v1/works/{id} adds (WorkSeries).
+type WorkSeriesPart struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+	// Position is the work's part number in the series (omitted when unknown).
+	Position int `json:"position,omitzero"`
+}
