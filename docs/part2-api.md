@@ -918,7 +918,7 @@ Status: tick when the PR merges.
       transaction before loading bodies: over `controllers.MaxWorkChaptersBytes` (16 MiB) is
       `controllers.ErrWorkTooLarge` → 422 `work-too-large` (`DetailWorkTooLarge`, naming
       `route.Chapter`).
-- [ ] **9. Store: work listing + filters**
+- [x] **9. Store: work listing + filters**
   - One filter struct and query builder covering AO3 work_search equivalents:
     - include/exclude tag IDs (by type), rating/warning/category tag IDs;
     - complete, crossover, language, words/kudos/hits ranges, date ranges, status;
@@ -1002,12 +1002,27 @@ Status: tick when the PR merges.
     - `BenchmarkCrossover` at 200k works: one work ~0.05 ms, a rare tag ~0.5 ms, a meta tag
       over ~10% of works ~55 ms, a fandom on a third of works ~150 ms, the full backfill
       ~0.3 s.
-  - [ ] **9d. Title and creator sorts.** Precomputed sort-key columns with indexes, after AO3's
-    `sorted_title` (lowercase, strip a leading quote/dot/slash, move a leading a/an/the to the
-    end, zero-pad a leading number to 5) and `authors_to_sort_on` (pseud names sorted, joined,
-    lowercased, leading punctuation stripped; "Anonymous" for anonymous works). Default
-    direction ascending. Hashed mode hides the text but the order still says a little about it
-    (accepted).
+  - [x] **9d. Title and creator sorts.** Precomputed sort-key columns with indexes, after AO3's
+    `sorted_title` and `authors_to_sort_on`. Default direction ascending. Hashed mode hides the
+    text but the order still says a little about it (accepted). As built:
+    - `model.WorkSortTitle` ("title") and `WorkSortCreator` ("creator");
+      `WorkSort.DefaultDirection` is ascending for these two and descending for the rest.
+    - The keys are Go (`store/sortkeys.go`), ported from `app/models/work.rb`. Title: lowercase,
+      drop one leading `"`, `'`, `.` or `/`, move a leading "a "/"an " then "the " to the end
+      ("the x" → "x, the"), and a key starting with a digit is left-padded with zeros to 5
+      characters. That is Ruby's `rjust(5, "0")` on the whole key, so "12" → "00012" while
+      "7 days" stays as it is. Creator: "Anonymous" (capitalised, so it sorts first) for an
+      anonymous work, else the pseud names ordered like `Pseud#<=>` (lowercased name, then
+      login), joined by ",  ", lowercased, with one leading `+-=_?!'"./` removed. Compared
+      byte-wise like AO3's Elasticsearch keywords (SQLite BINARY). Go's simple lowercasing differs
+      from Ruby's full case mapping only for a few special casings (accepted).
+    - `updateSortKeys(sel)` recomputes from the stored title, anonymity and creators and writes
+      only changed rows. It runs on every upsert that rewrites listing metadata. Creators are
+      immutable rows (login + pseud), so nothing else can change a key.
+    - Meta migration `0007_work_sort_keys.sql`: `title_sort`, `creator_sort` and an index on
+      each (`TestWorksPagePlans` covers both sorts). Its backfill is a Go step.
+    - `BenchmarkSortKeys` at 200k works: the backfill (clear, compute and write every row in one
+      transaction) ~2.3 s, recomputing with keys current ~0.4 s, one work ~0.09 ms.
 - [ ] **10. Works list + QUERY API**
   - `GET /works?page&per_page&sort` (simple listing).
   - `QUERY /works` with the body filter object (structured fields only in this stage).

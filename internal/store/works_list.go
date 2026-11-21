@@ -20,6 +20,8 @@ var workSortCols = map[model.WorkSort]string{
 	model.WorkSortKudos:     "kudos",
 	model.WorkSortComments:  "comments",
 	model.WorkSortBookmarks: "bookmarks",
+	model.WorkSortTitle:     "title_sort",   // store/sortkeys.go, meta migration 0007
+	model.WorkSortCreator:   "creator_sort", // store/sortkeys.go, meta migration 0007
 }
 
 // workOrder returns f's ORDER BY clause (with a leading space). Every order ends with id in the
@@ -33,9 +35,14 @@ func workOrder(f model.WorkFilter) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("store: works: unknown sort %q", sort)
 	}
-	dir := "DESC"
-	switch f.Direction {
-	case model.SortDefault, model.SortDesc:
+	d := f.Direction
+	if d == model.SortDefault {
+		d = sort.DefaultDirection()
+	}
+	var dir string
+	switch d {
+	case model.SortDesc:
+		dir = "DESC"
 	case model.SortAsc:
 		dir = "ASC"
 	default:

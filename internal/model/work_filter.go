@@ -13,16 +13,27 @@ const (
 	WorkSortKudos     WorkSort = "kudos" // AO3 kudos_count
 	WorkSortComments  WorkSort = "comments"
 	WorkSortBookmarks WorkSort = "bookmarks"
+	WorkSortTitle     WorkSort = "title"   // AO3 title_to_sort_on
+	WorkSortCreator   WorkSort = "creator" // AO3 authors_to_sort_on ("Creator")
 )
 
 // WorkSorts lists every WorkSort.
 func WorkSorts() []WorkSort {
 	return []WorkSort{WorkSortRevised, WorkSortPublished, WorkSortWords, WorkSortHits, WorkSortKudos,
-		WorkSortComments, WorkSortBookmarks}
+		WorkSortComments, WorkSortBookmarks, WorkSortTitle, WorkSortCreator}
 }
 
-// SortDirection orders a listing. The zero value is the sort column's default (descending for
-// every column so far, as on AO3).
+// DefaultDirection is the sort's direction when none is given, as on AO3: ascending for title
+// and creator, descending for the rest.
+func (s WorkSort) DefaultDirection() SortDirection {
+	if s == WorkSortTitle || s == WorkSortCreator {
+		return SortAsc
+	}
+	return SortDesc
+}
+
+// SortDirection orders a listing. The zero value is the sort column's default
+// (WorkSort.DefaultDirection).
 type SortDirection string
 
 const (

@@ -181,6 +181,7 @@ func (c *core) unix() int64 { return c.now().Unix() }
 // SQL, keyed "<db>/<file>". A step runs after its file's SQL, in the same transaction.
 var migrationSteps = map[string]func(ctx context.Context, tx querier) error{
 	"meta/0006_work_crossover.sql": backfillCrossover,
+	"meta/0007_work_sort_keys.sql": backfillSortKeys,
 }
 
 // migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.
