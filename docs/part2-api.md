@@ -933,7 +933,7 @@ Status: tick when the PR merges.
   - Benchmark at a realistic size (synthetic, e.g. 200k works): a deep page up to the offset
     cap, and the filtered `total` count, which may cost more than the offset.
   - In four PRs:
-  - [ ] **9a. Scalar filters, sorts and paging.** As built:
+  - [x] **9a. Scalar filters, sorts and paging.** As built:
     - `model.WorkFilter` (`internal/model/work_filter.go`): `Complete` (tri-state), `SingleChapter`
       (AO3: one chapter expected), `Language` (exact), `Statuses` (any of, at most one each),
       `Fetched` (tri-state: full page fetched vs blurb-only), inclusive `IntRange`s for words,
