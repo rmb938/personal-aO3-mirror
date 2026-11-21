@@ -18,6 +18,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
 
 // fuzzTarget is a route FuzzRoutes sends input to: the method, the path (with "%s" for a
@@ -96,8 +97,7 @@ func FuzzRoutes(f *testing.F) {
 		if tg.admin {
 			h = a.Admin()
 		}
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
+		w := testutil.Do(t, h, r)
 
 		require.Less(t, w.Code, 500, "%s %s?%s %q: %d %s", tg.method, r.URL.RawPath, r.URL.RawQuery, body, w.Code, w.Body.String())
 		if tg.path == "/api/v1/images/%s" && w.Code == http.StatusOK {

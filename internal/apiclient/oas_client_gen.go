@@ -366,7 +366,7 @@ type Invoker interface {
 	RefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams, options ...RequestOption) (*SourceRefreshed, error)
 	// RemoveSource invokes removeSource operation.
 	//
-	// Remove a source and its memberships; mirrored works are kept.
+	// On the public listener it is 405 `method-not-allowed`.
 	//
 	// DELETE /api/v1/sources/{id}
 	RemoveSource(ctx context.Context, params RemoveSourceParams, options ...RequestOption) error
@@ -379,7 +379,8 @@ type Invoker interface {
 	// SetSourceSettings invokes setSourceSettings operation.
 	//
 	// An absent member keeps its current value, so `{}` changes nothing. A shorter poll interval takes
-	// effect at once (the next poll moves earlier if needed). GET the source for the new settings.
+	// effect at once (the next poll moves earlier if needed). GET the source for the new settings. On the
+	// public listener it is 405 `method-not-allowed`.
 	//
 	// PATCH /api/v1/sources/{id}
 	SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams, options ...RequestOption) error
@@ -4182,7 +4183,7 @@ func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRe
 
 // RemoveSource invokes removeSource operation.
 //
-// Remove a source and its memberships; mirrored works are kept.
+// On the public listener it is 405 `method-not-allowed`.
 //
 // DELETE /api/v1/sources/{id}
 func (c *Client) RemoveSource(ctx context.Context, params RemoveSourceParams, options ...RequestOption) error {
@@ -4348,7 +4349,8 @@ func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams
 // SetSourceSettings invokes setSourceSettings operation.
 //
 // An absent member keeps its current value, so `{}` changes nothing. A shorter poll interval takes
-// effect at once (the next poll moves earlier if needed). GET the source for the new settings.
+// effect at once (the next poll moves earlier if needed). GET the source for the new settings. On the
+// public listener it is 405 `method-not-allowed`.
 //
 // PATCH /api/v1/sources/{id}
 func (c *Client) SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams, options ...RequestOption) error {

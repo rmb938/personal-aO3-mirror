@@ -1,14 +1,22 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
+	api "github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
@@ -128,6 +136,30 @@ func TestGetWorkChapters(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, nf.Code)
 	assert.Equal(t, runtime.DetailNoWork.Message(), testutil.DecodeProblem(t, nf).Detail)
 	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/works/9/chapters?verbose=1"), "", "unknown param")
+}
+
+// TestGetWorkChaptersTooLarge: a work over the size cap is refused whole with 422; its chapters
+// still read one at a time.
+func TestGetWorkChaptersTooLarge(t *testing.T) {
+	big := func(ctx context.Context, tx *store.Tx) error {
+		_, err := tx.PutWorkContent(ctx, seedWork, []model.Chapter{
+			{Position: 1, BodyHTML: strings.Repeat("a", controllers.MaxWorkChaptersBytes)},
+			{Position: 2, BodyHTML: "<p>lorem</p>"},
+		}, "")
+		return err
+	}
+	a, _ := testutil.NewAPI(t, testOptions, func(t *testing.T, opts runtime.Options, log *slog.Logger) (*runtime.API, error) {
+		t.Helper()
+		return api.New(opts, log, newTestControllers(t, log, big))
+	}, nil)
+	h := a.Public()
+
+	w := testutil.Get(t, h, route.Path(route.Chapters, seedWork))
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	p := testutil.DecodeProblem(t, w)
+	assert.Equal(t, dto.TypeWorkTooLarge, p.Type)
+	assert.Equal(t, runtime.DetailWorkTooLarge.Message(), p.Detail)
+	assert.Equal(t, http.StatusOK, testutil.Get(t, h, route.Path(route.Chapter, seedWork, 2)).Code, "one chapter reads")
 }
 
 func TestGetWorkSkin(t *testing.T) {

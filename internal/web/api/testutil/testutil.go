@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,10 +54,29 @@ func AccessLine(t *testing.T, logs *bytes.Buffer) map[string]any {
 	return found[0]
 }
 
-func Do(t *testing.T, h http.Handler, req *http.Request) *httptest.ResponseRecorder {
-	t.Helper()
+// Observer sees every request Do sends and its response, after the handler returns. It may run
+// concurrently (Do is called from goroutines) and reports problems through tb.
+type Observer func(tb testing.TB, req *http.Request, w *httptest.ResponseRecorder)
+
+var observer atomic.Pointer[Observer]
+
+// Observe makes f see every request Do sends from now on (the integration package's OpenAPI
+// check). It is meant for TestMain; nil stops observing.
+func Observe(f Observer) {
+	if f == nil {
+		observer.Store(nil)
+		return
+	}
+	observer.Store(&f)
+}
+
+func Do(tb testing.TB, h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	tb.Helper()
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
+	if f := observer.Load(); f != nil {
+		(*f)(tb, req, w)
+	}
 	return w
 }
 

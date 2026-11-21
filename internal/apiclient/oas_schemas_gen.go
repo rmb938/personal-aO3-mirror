@@ -11,7 +11,7 @@ import (
 	"github.com/go-faster/errors"
 )
 
-func (s *ProblemStatusCode) Error() string {
+func (s *ProblemStatusCodeWithHeaders) Error() string {
 	return fmt.Sprintf("code %d: %+v", s.StatusCode, s.Response)
 }
 
@@ -4633,12 +4633,12 @@ func (s *ProblemErrorsItem) SetPointer(val OptString) {
 
 // ProblemHeaders wraps Problem with response headers.
 type ProblemHeaders struct {
-	Location OptString
+	Location string
 	Response Problem
 }
 
 // GetLocation returns the value of Location.
-func (s *ProblemHeaders) GetLocation() OptString {
+func (s *ProblemHeaders) GetLocation() string {
 	return s.Location
 }
 
@@ -4648,7 +4648,7 @@ func (s *ProblemHeaders) GetResponse() Problem {
 }
 
 // SetLocation sets the value of Location.
-func (s *ProblemHeaders) SetLocation(val OptString) {
+func (s *ProblemHeaders) SetLocation(val string) {
 	s.Location = val
 }
 
@@ -4659,29 +4659,40 @@ func (s *ProblemHeaders) SetResponse(val Problem) {
 
 func (*ProblemHeaders) addSourceRes() {}
 
-// ProblemStatusCode wraps Problem with StatusCode.
-type ProblemStatusCode struct {
+// ProblemStatusCodeWithHeaders wraps Problem with status code and response headers.
+type ProblemStatusCodeWithHeaders struct {
 	StatusCode int
+	RetryAfter OptInt
 	Response   Problem
 }
 
 // GetStatusCode returns the value of StatusCode.
-func (s *ProblemStatusCode) GetStatusCode() int {
+func (s *ProblemStatusCodeWithHeaders) GetStatusCode() int {
 	return s.StatusCode
 }
 
+// GetRetryAfter returns the value of RetryAfter.
+func (s *ProblemStatusCodeWithHeaders) GetRetryAfter() OptInt {
+	return s.RetryAfter
+}
+
 // GetResponse returns the value of Response.
-func (s *ProblemStatusCode) GetResponse() Problem {
+func (s *ProblemStatusCodeWithHeaders) GetResponse() Problem {
 	return s.Response
 }
 
 // SetStatusCode sets the value of StatusCode.
-func (s *ProblemStatusCode) SetStatusCode(val int) {
+func (s *ProblemStatusCodeWithHeaders) SetStatusCode(val int) {
 	s.StatusCode = val
 }
 
+// SetRetryAfter sets the value of RetryAfter.
+func (s *ProblemStatusCodeWithHeaders) SetRetryAfter(val OptInt) {
+	s.RetryAfter = val
+}
+
 // SetResponse sets the value of Response.
-func (s *ProblemStatusCode) SetResponse(val Problem) {
+func (s *ProblemStatusCodeWithHeaders) SetResponse(val Problem) {
 	s.Response = val
 }
 
@@ -5726,12 +5737,12 @@ func (s *SourceAddQueued) SetCreated(val bool) {
 
 // SourceAddQueuedHeaders wraps SourceAddQueued with response headers.
 type SourceAddQueuedHeaders struct {
-	Location OptString
+	Location string
 	Response SourceAddQueued
 }
 
 // GetLocation returns the value of Location.
-func (s *SourceAddQueuedHeaders) GetLocation() OptString {
+func (s *SourceAddQueuedHeaders) GetLocation() string {
 	return s.Location
 }
 
@@ -5741,7 +5752,7 @@ func (s *SourceAddQueuedHeaders) GetResponse() SourceAddQueued {
 }
 
 // SetLocation sets the value of Location.
-func (s *SourceAddQueuedHeaders) SetLocation(val OptString) {
+func (s *SourceAddQueuedHeaders) SetLocation(val string) {
 	s.Location = val
 }
 
@@ -5855,12 +5866,12 @@ func (s *SourceAddResult) SetEstimate(val Estimate) {
 
 // SourceAddResultHeaders wraps SourceAddResult with response headers.
 type SourceAddResultHeaders struct {
-	Location OptString
+	Location string
 	Response SourceAddResult
 }
 
 // GetLocation returns the value of Location.
-func (s *SourceAddResultHeaders) GetLocation() OptString {
+func (s *SourceAddResultHeaders) GetLocation() string {
 	return s.Location
 }
 
@@ -5870,7 +5881,7 @@ func (s *SourceAddResultHeaders) GetResponse() SourceAddResult {
 }
 
 // SetLocation sets the value of Location.
-func (s *SourceAddResultHeaders) SetLocation(val OptString) {
+func (s *SourceAddResultHeaders) SetLocation(val string) {
 	s.Location = val
 }
 

@@ -1,8 +1,15 @@
 # Hand-written API description for `ao3mirror serve` (docs/part2-api.md).
 #
-# internal/web/api's route-coverage test checks that the operations here match the routers exactly:
-# every operation without `x-admin-only: true` is on the public listener, and every operation is
-# on the admin socket. OpenAPI 3.2 is used for its native `query` operation (RFC 10008).
+# internal/web/api/integration checks this file against the server (openapi_test.go):
+# - the operations match the routers exactly: every operation without `x-admin-only: true` is on
+#   the public listener, and every operation is on the admin socket;
+# - every response the integration tests get has a declared status, content type and headers,
+#   and a problem's type is one of the Problem response's `x-problems` (any operation) or the
+#   operation's own `x-problems`;
+# - on a full run, every declared status and every operation's own `x-problems` was produced
+#   by some test.
+# Problems stay under `default`, so the generated client (internal/apiclient) returns them as
+# one convenient error type. OpenAPI 3.2 is used for its native `query` operation (RFC 10008).
 openapi: 3.2.0
 info:
   title: ao3mirror API
@@ -12,9 +19,39 @@ info:
     registered enum value, an `_at` RFC 3339 UTC timestamp or an `_on` date. Only the per-request
     reveal query parameter returns real content. Every response carries `X-Fanwork:
     hashed|revealed`; hashed responses carry `X-Fanwork-Key-Epoch`, and hashes are comparable
-    only within one epoch.
+    only within one epoch. Every response also carries `X-Request-Id` and, past the rate
+    limits, `X-RateLimit-Limit`/`-Remaining`/`-Reset`; `x-common-headers` defines them all.
+
+    Errors are RFC 9457 problems (`application/problem+json`, docs/api/problems.md). The
+    Problem response lists the types any operation can return; each operation's `x-problems`
+    lists the others it can.
+
+    Limits: per client IP (IPv6 by /64; behind a trusted proxy, the rightmost untrusted
+    `X-Forwarded-For` entry), `api.rate.general_per_min` requests a minute (default 120) on
+    every route, plus `api.rate.search_per_min` (30) shared by every `QUERY` search route and
+    `api.rate.source_add_per_hour` (10) on `POST /api/v1/sources`. The admin socket allows 10×
+    each. Over a limit is 429 `rate-limited` with `Retry-After` (the window: 60 or 3600 s). At
+    most 64 requests are handled at once and 256 more wait up to 5 s (then 503 `unavailable`
+    with `Retry-After: 1`); a request runs at most `api.request_timeout` (default 10 s, then
+    503). The path plus query string is at most 4096 bytes (414), with at most 32 query
+    parameters (400); a body is at most 16 KiB (413).
 servers:
   - url: /
+# Headers the middleware sets, on any response (Allow only on a 405). OpenAPI has no global
+# response headers, and declaring these on each response would add them to every generated
+# client result, so they are listed once here; the integration tests check every response
+# against this list plus the response's own headers. Responses declare only the headers a
+# client acts on: Location (201/202/409), Accept-Query on 200s, Retry-After on problems.
+x-common-headers:
+  Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+  Allow: { $ref: "#/components/headers/Allow" }
+  X-Fanwork: { $ref: "#/components/headers/XFanwork" }
+  X-Fanwork-Key-Epoch: { $ref: "#/components/headers/XFanworkKeyEpoch" }
+  X-Request-Id: { $ref: "#/components/headers/XRequestID" }
+  X-Client-Request-Id: { $ref: "#/components/headers/XClientRequestID" }
+  X-RateLimit-Limit: { $ref: "#/components/headers/XRateLimitLimit" }
+  X-RateLimit-Remaining: { $ref: "#/components/headers/XRateLimitRemaining" }
+  X-RateLimit-Reset: { $ref: "#/components/headers/XRateLimitReset" }
 paths:
   /api/v1/healthz:
     get:
@@ -64,6 +101,7 @@ paths:
         is accepted only on the admin socket (a validation error at `/confirm` on the public
         listener), so a source over `sources.auto_confirm_max` added publicly waits for
         `source confirm`. Rate limited per client by `api.rate.source_add_per_hour`.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, already-exists]
       requestBody:
         required: true
         content:
@@ -73,7 +111,7 @@ paths:
         "201":
           description: The single-work source was added.
           headers:
-            Location: { description: "The source.", schema: { type: string } }
+            Location: { description: "The source.", required: true, schema: { type: string } }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SourceAddResult" }
@@ -81,18 +119,16 @@ paths:
           description: The add is queued (or the same add already was).
           headers:
             Location:
-              {
-                description: "The source add (`/api/v1/source-adds/{job_id}`).",
-                schema: { type: string },
-              }
+              description: "The source add (`/api/v1/source-adds/{job_id}`)."
+              required: true
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SourceAddQueued" }
         "409":
           description: The source already exists (`already-exists`).
           headers:
-            Location:
-              { description: "The existing source.", schema: { type: string } }
+            Location: { description: "The existing source.", required: true, schema: { type: string } }
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -101,6 +137,7 @@ paths:
     get:
       operationId: getSource
       summary: One source.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -116,8 +153,10 @@ paths:
       description: |
         An absent member keeps its current value, so `{}` changes nothing. A shorter poll
         interval takes effect at once (the next poll moves earlier if needed). GET the source
-        for the new settings.
+        for the new settings. On the public listener it is 405 `method-not-allowed`.
       x-admin-only: true
+      x-problems:
+        [invalid-body, body-too-large, unsupported-media-type, forbidden, not-found, method-not-allowed]
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
@@ -131,7 +170,9 @@ paths:
     delete:
       operationId: removeSource
       summary: Remove a source and its memberships; mirrored works are kept.
+      description: On the public listener it is 405 `method-not-allowed`.
       x-admin-only: true
+      x-problems: [forbidden, not-found, method-not-allowed]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -143,6 +184,7 @@ paths:
       summary: Activate a source waiting for confirmation (pending_confirm → active).
       description: Any other state is 409 `state-conflict`.
       x-admin-only: true
+      x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -155,6 +197,7 @@ paths:
       description: |
         Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
       x-admin-only: true
+      x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -166,6 +209,7 @@ paths:
       summary: Re-activate a paused source (paused → active).
       description: Any other state is 409 `state-conflict`.
       x-admin-only: true
+      x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -177,6 +221,7 @@ paths:
       summary: Stop a source for good and drop its queued jobs; mirrored works are kept.
       description: An already cancelled source is 409 `state-conflict`.
       x-admin-only: true
+      x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -196,6 +241,7 @@ paths:
         Only active and done_backfill sources can be refreshed; any other state is 409
         `state-conflict`. The running daemon picks the change up within seconds.
       x-admin-only: true
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
@@ -217,6 +263,7 @@ paths:
       description: |
         404 when the job does not exist or is not a source add, and when a done add's source
         was removed since.
+      x-problems: [not-found]
       parameters:
         - name: job_id
           in: path
@@ -256,6 +303,7 @@ paths:
     get:
       operationId: getJob
       summary: One job.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -315,6 +363,7 @@ paths:
         `language` are free text, so in hashed mode they are refused with `reveal-required`.
         Every QUERY search route shares the
         per-client search rate limit (`api.rate.search_per_min`) on top of the general one.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, reveal-required]
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PerPage"
@@ -340,6 +389,7 @@ paths:
         Content strings are hashed unless revealed. HTML fields hold AO3's markup as stored
         (untrusted: sanitize before display). A work known only from listing blurbs has no
         chapters, notes, published date or `last_fetched_at`.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -354,6 +404,7 @@ paths:
       operationId: getWorkSkin
       summary: One stored work's skin CSS.
       description: Untrusted CSS (hashed unless revealed); sanitize and scope it before use.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -371,6 +422,7 @@ paths:
         Content strings are hashed unless revealed; HTML is untrusted. A work whose chapters
         are over 16 MiB together (bodies, notes, end notes, summaries) is refused with 422
         `work-too-large`: read it one chapter at a time instead.
+      x-problems: [not-found, work-too-large]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -387,6 +439,7 @@ paths:
       description: |
         Content strings are hashed unless revealed; HTML is untrusted. 404 `not-found` when no
         chapter is stored at the position (a work known only from listing blurbs has none).
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - name: position
@@ -412,6 +465,7 @@ paths:
         `reveal-required`. Every sort ends with the name and then the id, so pages are stable; in
         hashed mode the name order still says a little about the hidden text. It shares the
         search rate limit.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, reveal-required]
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PerPage"
@@ -438,6 +492,7 @@ paths:
         meta and sub tags and synonyms (each grouped by type, at most 100 per type) and how many
         stored works a filter on it matches. Names are hashed unless revealed; hashes match the
         `tags` of `GET /api/v1/works/{id}` in the same key epoch.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -455,6 +510,7 @@ paths:
         `GET /api/v1/works` scoped to the tag: works tagged with it, a synonym of it or any of
         its sub tags (transitively) or their synonyms. `total` equals the tag's `works_count`.
         404 `not-found` for an unknown tag.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - name: sort
@@ -482,6 +538,8 @@ paths:
       description: |
         `QUERY /api/v1/works` with the path tag as one more tag every work must match (on top of
         `tag_ids`). It shares the search rate limit. 404 `not-found` for an unknown tag.
+      x-problems:
+        [invalid-body, body-too-large, unsupported-media-type, forbidden, reveal-required, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - $ref: "#/components/parameters/Page"
@@ -507,6 +565,7 @@ paths:
       description: |
         `GET /api/v1/tags/{id}` for the tag with this name (case-insensitive). The name is free
         text, so in hashed mode it is refused with `reveal-required`.
+      x-problems: [reveal-required, not-found]
       parameters:
         - name: name
           in: path
@@ -549,6 +608,7 @@ paths:
         The fandoms listing the medium as a parent. AO3 lists only canonical fandoms (but in
         Uncategorized Fandoms); this lists every stored fandom, and `canonical` tells them
         apart. 404 `not-found` when no stored media tag has the id.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - name: sort
@@ -575,6 +635,7 @@ paths:
         Content strings are hashed unless revealed; HTML is untrusted. A series named by a work
         page whose series page was never fetched has only its id and title (`works_total` null,
         no `last_fetched_at`). 404 `not-found` for an unknown series.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -593,6 +654,7 @@ paths:
         unknown parts last, then by work id. Members the mirror does not hold are not listed
         (see the series' `missing_work_ids`). `total` equals the series' `works_stored`. 404
         `not-found` for an unknown series.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - $ref: "#/components/parameters/Page"
@@ -615,6 +677,7 @@ paths:
         `reveal-required`. Every sort ends with the name and then the id, so pages are stable;
         in hashed mode the name order still says a little about the hidden text. It shares the
         search rate limit.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, reveal-required]
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PerPage"
@@ -639,6 +702,7 @@ paths:
       description: |
         A creator is a pseud, as AO3's /users/{login}/pseuds/{pseud} page; users grouping pseuds
         are not modelled. 404 `not-found` for an unknown creator.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -655,6 +719,7 @@ paths:
       description: |
         `GET /api/v1/works` scoped to the works with the creator in the byline. `total` equals
         the creator's `works`. 404 `not-found` for an unknown creator.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - name: sort
@@ -682,6 +747,8 @@ paths:
       description: |
         `QUERY /api/v1/works` within the works with the creator in the byline. It shares the
         search rate limit. 404 `not-found` for an unknown creator.
+      x-problems:
+        [invalid-body, body-too-large, unsupported-media-type, forbidden, reveal-required, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - $ref: "#/components/parameters/Page"
@@ -707,6 +774,7 @@ paths:
       description: |
         As AO3's /collections/{name} page. There is no collection listing: AO3's collections
         index is not mirrored. 404 `not-found` for an unknown collection.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -723,6 +791,7 @@ paths:
       description: |
         `GET /api/v1/works` scoped to the works in the collection. `total` equals the
         collection's `works`. 404 `not-found` for an unknown collection.
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - name: sort
@@ -750,6 +819,8 @@ paths:
       description: |
         `QUERY /api/v1/works` within the works in the collection. It shares the search rate
         limit. 404 `not-found` for an unknown collection.
+      x-problems:
+        [invalid-body, body-too-large, unsupported-media-type, forbidden, reveal-required, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
         - $ref: "#/components/parameters/Page"
@@ -779,6 +850,7 @@ paths:
         Content-Security-Policy is `default-src 'none'; style-src 'unsafe-inline';
         frame-ancestors 'none'; sandbox`; clients must still treat the bytes (an SVG) as
         untrusted. 404 `not-found` for a hash no downloaded image has.
+      x-problems: [reveal-required, not-found]
       parameters:
         - name: sha256
           in: path
@@ -787,7 +859,7 @@ paths:
           schema: { type: string, pattern: "^[0-9a-f]{64}$" }
       responses:
         "200":
-          description: The image.
+          description: The image (only revealed).
           content:
             image/*:
               schema: { type: string, format: binary }
@@ -797,6 +869,7 @@ paths:
       operationId: debugJob
       summary: One job's content-free trace, with its events and requests.
       x-admin-only: true
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -812,6 +885,7 @@ paths:
       summary: One work's numbers, dates and states, with its fetch jobs and requests.
       description: No content (title, names, tags, text) is included, even when revealed.
       x-admin-only: true
+      x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -839,11 +913,53 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
   headers:
     AcceptQuery:
-      description: The resource accepts QUERY with these body media types (RFC 10008).
+      description: |
+        The resource accepts QUERY with these body media types (RFC 10008). On every response of
+        a resource that takes QUERY, and on a QUERY's 415.
       schema: { type: string, enum: [application/json] }
+    Allow:
+      description: On a 405, the methods the path takes.
+      schema: { type: string }
+    XFanwork:
+      description: "`revealed` only for a request with a valid reveal parameter; otherwise `hashed`."
+      required: true
+      schema: { type: string, enum: [hashed, revealed] }
+    XFanworkKeyEpoch:
+      description: The hash key's epoch ID, on every hashed response; hashes compare only within one epoch.
+      schema: { type: string }
+    XRequestID:
+      description: The server's ID for this request (in its logs); never the client's.
+      required: true
+      schema: { type: string, pattern: "^[0-9a-f]{16}$" }
+    XClientRequestID:
+      description: |
+        The request's own `X-Request-Id`, echoed when it was sent once with 1 to 64 characters of
+        `[A-Za-z0-9._:-]`.
+      schema: { type: string, pattern: "^[A-Za-z0-9._:-]{1,64}$" }
+    XRateLimitLimit:
+      description: |
+        The limit of the last rate limit the request passed through (the search or source-add
+        limit on those routes, the general one elsewhere). Absent when the request was refused
+        before the limits (414).
+      schema: { type: integer }
+    XRateLimitRemaining:
+      description: Requests left in that limit's window.
+      schema: { type: integer }
+    XRateLimitReset:
+      description: When that limit's window ends, in Unix seconds.
+      schema: { type: integer }
+    RetryAfter:
+      description: Seconds to wait. On 429 the limit's window (60 or 3600); on a busy 503, 1.
+      schema: { type: integer, minimum: 1 }
   responses:
     Problem:
-      description: An RFC 9457 problem. Every field is an enumerable value.
+      description: |
+        An RFC 9457 problem. Every field is an enumerable value. `x-problems` are the types any
+        operation can return; an operation's own `x-problems` adds the rest.
+      x-problems:
+        [bad-request, validation-error, reveal-disabled, uri-too-long, rate-limited, unavailable, internal-error]
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -1910,6 +2026,7 @@ components:
             refused with `reveal-required` unless the request is revealed.
         types:
           type: array
+          maxItems: 9
           uniqueItems: true
           items: { $ref: "#/components/schemas/TagType" }
           description: Any of these (AO3 `type`).
