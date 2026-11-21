@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// The route patterns the router registers ({param} segments are numeric IDs).
+// The route patterns the router registers ({param} segments are numeric IDs but in TagByName).
 const (
 	Healthz   = "/api/v1/healthz"
 	Version   = "/api/v1/version"
@@ -25,6 +25,10 @@ const (
 	WorkSkin  = "/api/v1/works/{id}/skin"
 	Chapters  = "/api/v1/works/{id}/chapters"
 	Chapter   = "/api/v1/works/{id}/chapters/{position}"
+	Tag       = "/api/v1/tags/{id}"
+	// TagByName's {name} is a free-text tag name (AO3's /tags/ path form), not an id, so Path
+	// cannot build it.
+	TagByName = "/api/v1/tags/by-name/{name}"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

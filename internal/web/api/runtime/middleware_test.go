@@ -107,22 +107,32 @@ func TestClientIPTrust(t *testing.T) {
 
 func TestAccessLogIsContentFree(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	a.Router(false).Get("/items/{id}/parts/{part}", a.Handle(func(*http.Request) (any, error) { return nil, problem.New(dto.TypeNotFound) }))
+	a.Router(false).Get("/items/{id}/parts/{position}", a.Handle(func(*http.Request) (any, error) { return nil, problem.New(dto.TypeNotFound) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/items/42/parts/"+sentinel+"part?page="+sentinel+"v&"+sentinel+"n=1", nil)
 	req.Header.Set(HeaderFunnel, "?1")
 	testutil.Do(t, a.Router(false), req)
 	line := testutil.AccessLine(t, logs)
-	assert.Equal(t, "/items/{id}/parts/{part}", line["route"])
+	assert.Equal(t, "/items/{id}/parts/{position}", line["route"])
 	assert.Equal(t, "public", line["listener"])
 	assert.Equal(t, http.MethodGet, line["method"])
 	assert.InDelta(t, 42, line["path_id"], 0)
-	assert.Equal(t, true, line["path_part_invalid"])
+	assert.Equal(t, true, line["path_position_invalid"])
 	assert.Equal(t, []any{"page"}, line["params"])
 	assert.InDelta(t, 1, line["other_params"], 0)
 	assert.Equal(t, true, line["funnel"])
 	assert.Equal(t, false, line["reveal"])
 	assert.InDelta(t, http.StatusNotFound, line["status"], 0)
+
+	// A free-text path parameter is never logged, even when it parses as an id.
+	a.Router(false).Get("/named/{name}", a.Handle(func(*http.Request) (any, error) { return nil, problem.New(dto.TypeNotFound) }))
+	logs.Reset()
+	testutil.Do(t, a.Router(false), httptest.NewRequest(http.MethodGet, "/named/9876543210123", nil))
+	line = testutil.AccessLine(t, logs)
+	assert.Equal(t, "/named/{name}", line["route"])
+	assert.NotContains(t, line, "path_name")
+	assert.NotContains(t, line, "path_name_invalid")
+	assert.NotContains(t, logs.String(), "9876543210123")
 	assert.NotContains(t, logs.String(), sentinel)
 }
 
@@ -130,12 +140,16 @@ func TestAccessLogIsContentFree(t *testing.T) {
 // numeric path IDs, flagged prerouted. An unmatched path logs no route.
 func TestAccessLogPreroutedRoute(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, func(o *Options) { o.GeneralPerMin = 1 })
-	a.Router(false).Get("/items/{id}/parts/{part}", a.Handle(func(*http.Request) (any, error) {
+	a.Router(false).Get("/items/{id}/parts/{position}", a.Handle(func(*http.Request) (any, error) {
+		return dto.Health{Status: dto.HealthOK}, nil
+	}))
+
+	a.Router(false).Get("/named/{name}", a.Handle(func(*http.Request) (any, error) {
 		return dto.Health{Status: dto.HealthOK}, nil
 	}))
 
 	require.Equal(t, http.StatusOK, testutil.Get(t, a.Router(false), "/items/1/parts/2").Code)
-	for _, target := range []string{"/items/42/parts/" + sentinel + "part", "/" + sentinel + "nope"} {
+	for _, target := range []string{"/items/42/parts/" + sentinel + "part", "/" + sentinel + "nope", "/named/9876543210123"} {
 		require.Equal(t, http.StatusTooManyRequests, testutil.Get(t, a.Router(false), target).Code, target)
 	}
 	var lines []map[string]any
@@ -144,17 +158,23 @@ func TestAccessLogPreroutedRoute(t *testing.T) {
 			lines = append(lines, l)
 		}
 	}
-	require.Len(t, lines, 3)
+	require.Len(t, lines, 4)
 	assert.Nil(t, lines[0]["prerouted"], "routed request")
 
 	limited := lines[1]
-	assert.Equal(t, "/items/{id}/parts/{part}", limited["route"])
+	assert.Equal(t, "/items/{id}/parts/{position}", limited["route"])
 	assert.Equal(t, true, limited["prerouted"])
 	assert.InDelta(t, 42, limited["path_id"], 0)
-	assert.Equal(t, true, limited["path_part_invalid"])
+	assert.Equal(t, true, limited["path_position_invalid"])
 
 	assert.Empty(t, lines[2]["route"], "unmatched path")
 	assert.Nil(t, lines[2]["prerouted"])
+
+	named := lines[3]
+	assert.Equal(t, "/named/{name}", named["route"])
+	assert.Equal(t, true, named["prerouted"])
+	assert.NotContains(t, named, "path_name", "a free-text path param is never logged, prerouted either")
+	assert.NotContains(t, logs.String(), "9876543210123")
 	assert.NotContains(t, logs.String(), sentinel)
 }
 

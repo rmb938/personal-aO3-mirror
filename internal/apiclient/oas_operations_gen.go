@@ -17,6 +17,8 @@ const (
 	GetSourceOperation         OperationName = "GetSource"
 	GetSourceAddOperation      OperationName = "GetSourceAdd"
 	GetStatusOperation         OperationName = "GetStatus"
+	GetTagOperation            OperationName = "GetTag"
+	GetTagByNameOperation      OperationName = "GetTagByName"
 	GetVersionOperation        OperationName = "GetVersion"
 	GetWorkOperation           OperationName = "GetWork"
 	GetWorkChaptersOperation   OperationName = "GetWorkChapters"

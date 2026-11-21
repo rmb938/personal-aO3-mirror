@@ -29,6 +29,7 @@ var responseTypes = []any{
 	dto.WorkSkin{},
 	dto.Chapter{},
 	dto.WorkChapters{},
+	dto.Tag{},
 	dto.JobDebug{},
 	dto.WorkDebug{},
 }

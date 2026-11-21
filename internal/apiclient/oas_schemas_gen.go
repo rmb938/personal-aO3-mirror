@@ -2227,6 +2227,51 @@ func (o NilString) Or(d string) string {
 	return d
 }
 
+// NewNilTagRef returns new NilTagRef with value set to v.
+func NewNilTagRef(v TagRef) NilTagRef {
+	return NilTagRef{
+		Value: v,
+	}
+}
+
+// NilTagRef is nullable TagRef.
+type NilTagRef struct {
+	Value TagRef
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilTagRef) SetTo(v TagRef) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilTagRef) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilTagRef) SetToNull() {
+	o.Null = true
+	var v TagRef
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilTagRef) Get() (v TagRef, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilTagRef) Or(d TagRef) TagRef {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilTagType returns new NilTagType with value set to v.
 func NewNilTagType(v TagType) NilTagType {
 	return NilTagType{
@@ -6100,6 +6145,189 @@ func (s *StatusWorksByStatusItemStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+// A stored tag. Strings other than the `type`s and `info_fetched_at` are content, hashed unless
+// revealed. Lists are `[]` when empty.
+// Ref: #/components/schemas/Tag
+type Tag struct {
+	ID   ID      `json:"id"`
+	Name string  `json:"name"`
+	Type TagType `json:"type"`
+	// Null until the tag page was read; a tag merged as a synonym is not canonical.
+	Canonical NilBool `json:"canonical"`
+	// The tag this one is a synonym of, or null.
+	Merger  NilTagRef  `json:"merger"`
+	Parents []TagGroup `json:"parents"`
+	// Tags listing this one as a parent.
+	Children []TagGroup `json:"children"`
+	// Direct meta tags only.
+	MetaTags []TagGroup `json:"meta_tags"`
+	// Direct sub tags only.
+	SubTags  []TagGroup `json:"sub_tags"`
+	Synonyms []TagGroup `json:"synonyms"`
+	// Stored works (any status) a filter on this tag matches, counting its synonyms and sub tags.
+	WorksCount    int          `json:"works_count"`
+	InfoFetchedAt OptTimestamp `json:"info_fetched_at"`
+}
+
+// GetID returns the value of ID.
+func (s *Tag) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *Tag) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *Tag) GetType() TagType {
+	return s.Type
+}
+
+// GetCanonical returns the value of Canonical.
+func (s *Tag) GetCanonical() NilBool {
+	return s.Canonical
+}
+
+// GetMerger returns the value of Merger.
+func (s *Tag) GetMerger() NilTagRef {
+	return s.Merger
+}
+
+// GetParents returns the value of Parents.
+func (s *Tag) GetParents() []TagGroup {
+	return s.Parents
+}
+
+// GetChildren returns the value of Children.
+func (s *Tag) GetChildren() []TagGroup {
+	return s.Children
+}
+
+// GetMetaTags returns the value of MetaTags.
+func (s *Tag) GetMetaTags() []TagGroup {
+	return s.MetaTags
+}
+
+// GetSubTags returns the value of SubTags.
+func (s *Tag) GetSubTags() []TagGroup {
+	return s.SubTags
+}
+
+// GetSynonyms returns the value of Synonyms.
+func (s *Tag) GetSynonyms() []TagGroup {
+	return s.Synonyms
+}
+
+// GetWorksCount returns the value of WorksCount.
+func (s *Tag) GetWorksCount() int {
+	return s.WorksCount
+}
+
+// GetInfoFetchedAt returns the value of InfoFetchedAt.
+func (s *Tag) GetInfoFetchedAt() OptTimestamp {
+	return s.InfoFetchedAt
+}
+
+// SetID sets the value of ID.
+func (s *Tag) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *Tag) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *Tag) SetType(val TagType) {
+	s.Type = val
+}
+
+// SetCanonical sets the value of Canonical.
+func (s *Tag) SetCanonical(val NilBool) {
+	s.Canonical = val
+}
+
+// SetMerger sets the value of Merger.
+func (s *Tag) SetMerger(val NilTagRef) {
+	s.Merger = val
+}
+
+// SetParents sets the value of Parents.
+func (s *Tag) SetParents(val []TagGroup) {
+	s.Parents = val
+}
+
+// SetChildren sets the value of Children.
+func (s *Tag) SetChildren(val []TagGroup) {
+	s.Children = val
+}
+
+// SetMetaTags sets the value of MetaTags.
+func (s *Tag) SetMetaTags(val []TagGroup) {
+	s.MetaTags = val
+}
+
+// SetSubTags sets the value of SubTags.
+func (s *Tag) SetSubTags(val []TagGroup) {
+	s.SubTags = val
+}
+
+// SetSynonyms sets the value of Synonyms.
+func (s *Tag) SetSynonyms(val []TagGroup) {
+	s.Synonyms = val
+}
+
+// SetWorksCount sets the value of WorksCount.
+func (s *Tag) SetWorksCount(val int) {
+	s.WorksCount = val
+}
+
+// SetInfoFetchedAt sets the value of InfoFetchedAt.
+func (s *Tag) SetInfoFetchedAt(val OptTimestamp) {
+	s.InfoFetchedAt = val
+}
+
+// Related tags of one type: the first 100 by name (case-insensitive) and how many there are. Groups
+// are in AO3's tag type order.
+// Ref: #/components/schemas/TagGroup
+type TagGroup struct {
+	Type  TagType  `json:"type"`
+	Total int      `json:"total"`
+	Tags  []TagRef `json:"tags"`
+}
+
+// GetType returns the value of Type.
+func (s *TagGroup) GetType() TagType {
+	return s.Type
+}
+
+// GetTotal returns the value of Total.
+func (s *TagGroup) GetTotal() int {
+	return s.Total
+}
+
+// GetTags returns the value of Tags.
+func (s *TagGroup) GetTags() []TagRef {
+	return s.Tags
+}
+
+// SetType sets the value of Type.
+func (s *TagGroup) SetType(val TagType) {
+	s.Type = val
+}
+
+// SetTotal sets the value of Total.
+func (s *TagGroup) SetTotal(val int) {
+	s.Total = val
+}
+
+// SetTags sets the value of Tags.
+func (s *TagGroup) SetTags(val []TagRef) {
+	s.Tags = val
+}
+
 // Ref: #/components/schemas/TagInfoDetail
 type TagInfoDetail struct {
 	TagID NilInt          `json:"tag_id"`
@@ -6169,6 +6397,43 @@ func (s *TagInfoDetail) SetCanonical(val NilBool) {
 // SetParents sets the value of Parents.
 func (s *TagInfoDetail) SetParents(val NilInt) {
 	s.Parents = val
+}
+
+// Ref: #/components/schemas/TagRef
+type TagRef struct {
+	ID   ID      `json:"id"`
+	Name string  `json:"name"`
+	Type TagType `json:"type"`
+}
+
+// GetID returns the value of ID.
+func (s *TagRef) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *TagRef) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *TagRef) GetType() TagType {
+	return s.Type
+}
+
+// SetID sets the value of ID.
+func (s *TagRef) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *TagRef) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *TagRef) SetType(val TagType) {
+	s.Type = val
 }
 
 // Ref: #/components/schemas/TagType

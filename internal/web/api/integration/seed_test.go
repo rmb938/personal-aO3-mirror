@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -29,6 +30,9 @@ const (
 	seedFetchedWork int64 = 9
 	seedSeries      int64 = 77
 	seedSeriesOther int64 = 40 // a member of seedSeries we have not fetched (part 3)
+	// seedTag is seedFetchedWork's fandom tag, read from its tag page: canonical, with a parent,
+	// a meta tag and a synonym, every name a sentinel.
+	seedTag int64 = 3
 )
 
 // seedTime is the store clock while seeding.
@@ -70,6 +74,18 @@ func seedFetched(ctx context.Context, tx *store.Tx) error {
 		return err
 	}
 	if _, err := tx.UpsertWork(ctx, w, model.FromPage, 1); err != nil {
+		return err
+	}
+	tag, err := tx.TagByName(ctx, sentinel+"fandom")
+	if err != nil {
+		return err
+	}
+	if tag.ID != seedTag {
+		return fmt.Errorf("seed: fandom tag id %d, want seedTag %d", tag.ID, seedTag)
+	}
+	if err := tx.UpdateTagInfo(ctx, tag.ID, store.TagInfoUpdate{Type: model.TagFandom, Canonical: true,
+		Parents: []string{sentinel + "parent"}, MetaTags: []string{sentinel + "meta"},
+		Synonyms: []string{sentinel + "synonym"}}); err != nil {
 		return err
 	}
 	if err := tx.UpsertSeries(ctx, model.Series{ID: seedSeries, Title: sentinel + "series", WorksCount: 3}); err != nil {

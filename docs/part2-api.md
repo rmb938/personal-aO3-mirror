@@ -1144,10 +1144,25 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - `controllers.GetTag` / `GetTagByName` return a `TagView`: the tag, its merger (`TagRef`),
       the five relations, and `Works`, the stored works (any status) a stage 9 filter on the tag
       matches (`CountWorks`), so it equals the `/tags/{id}/works` total. One read transaction.
-  - [ ] **12b. `GET /tags/{id}` and `GET /tags/by-name/{name}`**: `dto.Tag`, `convert.Tag`, leak
+  - [x] **12b. `GET /tags/{id}` and `GET /tags/by-name/{name}`**: `dto.Tag`, `convert.Tag`, leak
     samples, OpenAPI and the client. `{name}` is AO3's path form (`*s*` for `/` and so on,
     `ao3url.TagFromParam`); it is free text, so reveal-only (400 `reveal-required` hashed) and
-    bounded in runes.
+    bounded in runes. As built:
+    - `dto.Tag`: `canonical` is null until recorded, `merger` a `TagRef` or null, the five
+      relations as `TagGroup`s (`type`, `total`, `tags`), `works_count`, `info_fetched_at`.
+      `TagType` moved to `dto/tag.go`. `convert.TagView` maps `controllers.TagView`.
+    - `Params.PathTagName` decodes the name: percent escapes only when chi routed on
+      `RawPath` (an escaped `/`), then `ao3url.TagFromParam`; 1 to 256 runes
+      (`MaxTagNameRunes`; AO3 caps new names at 150), no control characters. Validation runs
+      before the reveal check, so a bad name is 422 hashed too.
+    - The access log logs only the path params in `runtime.PathIDParams` (`id`, `job_id`,
+      `position`); any other, like `name`, is never logged, not even as invalid (a numeric tag
+      name would otherwise be logged as an id). `TestPathParamsDeclared` fails on a route
+      param that is neither an id nor a declared free-text name, and the by-name route is
+      checked refused before its handler too (405, 414).
+    - `store.ErrNoTag` is 404 with `DetailNoTag`. The leak test's samples gained
+      `revealStatus` (the by-name sample is 400 hashed, 200 revealed); the seed reads tag info
+      for the fandom tag (`seedTag`: canonical, a parent, a meta tag, a synonym).
   - [ ] **12c. `GET` + `QUERY /tags/{id}/works`**: the works list and query handlers with the
     path tag as one more required tag filter.
   - [ ] **12d. Store + `QUERY /tags`**: `store.FindTags` (type, canonical and parent filters,

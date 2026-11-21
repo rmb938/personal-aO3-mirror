@@ -38,6 +38,8 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.Get(route.WorkSkin, a.Handle(h.GetWorkSkin))
 	r.Get(route.Chapters, a.Handle(h.GetWorkChapters))
 	r.Get(route.Chapter, a.Handle(h.GetChapter))
+	r.Get(route.Tag, a.Handle(h.GetTag))
+	r.Get(route.TagByName, a.Handle(h.GetTagByName))
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.SourceAction(c.PauseSource)))

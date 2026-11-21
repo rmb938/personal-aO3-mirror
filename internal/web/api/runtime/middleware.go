@@ -201,15 +201,21 @@ func routePattern(r *http.Request) string {
 	return ""
 }
 
-// pathIDAttrs logs numeric path parameters as path_<name>; a non-numeric value is logged only
-// as path_<name>_invalid. The names come from our route patterns.
+// PathIDParams are the path parameters that hold ids: the only ones the access log records.
+// Any other path parameter is never logged, not even as invalid, since it may be free text
+// (dto.ParamTagName: a tag may be named "1984"). The all-routes test checks every route's path
+// parameters are either listed here or are free-text names.
+var PathIDParams = []dto.ParamName{dto.ParamID, dto.ParamJobID, dto.ParamPosition}
+
+// pathIDAttrs logs the PathIDParams as path_<name> when numeric, or else only as
+// path_<name>_invalid.
 func pathIDAttrs(rctx *chi.Context) []slog.Attr {
 	if rctx == nil {
 		return nil
 	}
 	var attrs []slog.Attr
 	for i, k := range rctx.URLParams.Keys {
-		if k == "*" {
+		if !slices.Contains(PathIDParams, dto.ParamName(k)) {
 			continue
 		}
 		if id, err := strconv.ParseInt(rctx.URLParams.Values[i], 10, 64); err == nil && id > 0 {

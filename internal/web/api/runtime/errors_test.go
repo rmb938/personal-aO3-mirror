@@ -42,7 +42,7 @@ func TestProblemFor(t *testing.T) {
 		{store.ErrNoChapter, dto.TypeNotFound, http.StatusNotFound, false},
 		{fmt.Errorf("read: %w", controllers.ErrWorkTooLarge), dto.TypeWorkTooLarge, http.StatusUnprocessableEntity, false},
 		{store.ErrNoSeries, dto.TypeNotFound, http.StatusNotFound, false},
-		{store.ErrNoTag, dto.TypeNotFound, http.StatusNotFound, false},
+		{fmt.Errorf("get: %w", store.ErrNoTag), dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoRawPage, dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrStateConflict, dto.TypeStateConflict, http.StatusConflict, false},
 		{store.ErrSourceExists, dto.TypeAlreadyExists, http.StatusConflict, false},
