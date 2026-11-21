@@ -127,6 +127,10 @@ func workWhere(f model.WorkFilter) (string, []any, error) {
 		// The covering work_creators (creator_id, work_id) index (meta migration 0010).
 		cond(`id IN (SELECT wc.work_id FROM work_creators wc WHERE wc.creator_id = ?)`, f.CreatorID)
 	}
+	if f.CollectionID != 0 {
+		// The covering work_collections (collection_id, work_id) index (meta migration 0011).
+		cond(`id IN (SELECT wl.work_id FROM work_collections wl WHERE wl.collection_id = ?)`, f.CollectionID)
+	}
 	if f.Complete != nil {
 		cond(`complete = ?`, boolInt(*f.Complete))
 	}

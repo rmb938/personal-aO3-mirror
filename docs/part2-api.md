@@ -1308,9 +1308,21 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       routes pass `ListTagWorks`) instead of a tag flag. QUERY shares the search rate limit.
     - `store.ErrNoCreator` is 404 with `DetailNoCreator`. The seed's `seedCreator` (1) is the
       byline of both seeded works, checked while seeding; every route has a leak sample.
-  - [ ] **13e. Store + controller: collections**: a meta migration indexing
+  - [x] **13e. Store + controller: collections**: a meta migration indexing
     `work_collections(collection_id)`, a collection scope on `model.WorkFilter`, and
-    `GetCollection` (name, title, works count).
+    `GetCollection` (name, title, works count). As built:
+    - Meta migration 0011 replaces migration 0004's `work_collections_collection` (its entries
+      hold the rowid, not the work id) with a covering `(collection_id, work_id)` index.
+    - `model.WorkFilter.CollectionID` (0 = any, AO3 `collection_ids`) keeps works in the
+      collection.
+    - `store.CollectionByID` returns a `CollectionRef` (`ErrNoCollection`,
+      `store/collections.go`).
+    - `controllers.GetCollection` returns a `CollectionView` (the collection and its works count;
+      a collection whose works all left it keeps its row, with 0) and `ListCollectionWorks(id,
+      f)` the works with the path collection as the scope, or `ErrNoCollection`; each one read
+      transaction. No collection listing: AO3's `/collections` index is not mirrored.
+    - `BenchmarkCollectionWorks` (1000 collections on seedWorks' works): a page ~0.5 ms, a count
+      ~0.1 ms.
   - [ ] **13f. Collection routes**: `GET /collections/{id}` and `GET` + `QUERY
     /collections/{id}/works`.
 - [ ] **14. Images (reveal-only)**
