@@ -51,6 +51,9 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.Get(route.Creator, a.Handle(h.GetCreator))
 	r.With(runtime.AcceptQuery).Get(route.CreatorWorks, a.Handle(h.ListCreatorWorks))
 	r.With(runtime.AcceptQuery, search).Query(route.CreatorWorks, a.Handle(h.QueryCreatorWorks))
+	r.Get(route.Collection, a.Handle(h.GetCollection))
+	r.With(runtime.AcceptQuery).Get(route.CollectionWorks, a.Handle(h.ListCollectionWorks))
+	r.With(runtime.AcceptQuery, search).Query(route.CollectionWorks, a.Handle(h.QueryCollectionWorks))
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.SourceAction(c.PauseSource)))
