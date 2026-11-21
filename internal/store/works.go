@@ -201,6 +201,9 @@ func (s *Tx) upsertWork(ctx context.Context, w model.Work, origin model.Origin, 
 		if err := s.replaceCreators(ctx, tx, w.ID, w.Creators); err != nil {
 			return res, err
 		}
+		if err := updateSortKeys(ctx, tx, `VALUES (?)`, w.ID); err != nil {
+			return res, fmt.Errorf("update sort keys: %w", err)
+		}
 		if err := s.replaceTags(ctx, tx, w.ID, w.Tags); err != nil {
 			return res, err
 		}

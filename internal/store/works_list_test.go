@@ -239,7 +239,7 @@ func TestFindWorksRejectsBadFilters(t *testing.T) {
 	for name, f := range map[string]model.WorkFilter{
 		"negative offset": {Offset: -1, Limit: 1},
 		"zero limit":      {},
-		"sort":            {Sort: "title", Limit: 1},
+		"sort":            {Sort: "fixture_sort", Limit: 1},
 		"direction":       {Direction: "up", Limit: 1},
 	} {
 		_, err := s.FindWorks(ctx, f)
