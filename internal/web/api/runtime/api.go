@@ -30,13 +30,13 @@ type Options struct {
 	// HashKeyRotation is the hash key lifetime (0: one key per process; else >= 1h).
 	HashKeyRotation time.Duration
 	// GeneralPerMin is the general per-client rate limit on the public listener. The admin
-	// socket allows adminRateFactor times as many.
+	// socket allows AdminRateFactor times as many.
 	GeneralPerMin int
 	// SourceAddPerHour is the per-client limit on POST /api/v1/sources (public listener; the
-	// admin socket allows adminRateFactor times as many), on top of the general limit.
+	// admin socket allows AdminRateFactor times as many), on top of the general limit.
 	SourceAddPerHour int
 	// SearchPerMin is the per-client limit on the QUERY search routes together (public
-	// listener; the admin socket allows adminRateFactor times as many), on top of the general
+	// listener; the admin socket allows AdminRateFactor times as many), on top of the general
 	// limit.
 	SearchPerMin int
 	// Now is the hasher's clock (nil: time.Now). Tests use it to drive key rotation.
@@ -45,8 +45,8 @@ type Options struct {
 
 type RouteBuilder func(*API, *controllers.Controllers, *chi.Mux, bool)
 
-// adminRateFactor scales the public rate limits for the admin socket.
-const adminRateFactor = 10
+// AdminRateFactor scales the public rate limits for the admin socket (every limit group).
+const AdminRateFactor = 10
 
 // API holds the two routers (public TCP and admin socket) and the state they share: one hasher,
 // so a string hashes the same on both listeners within an epoch.
@@ -119,7 +119,7 @@ func (a *API) Version() string { return a.opts.Version }
 func (a *API) SourceAddRateLimit(listener string, admin bool) func(http.Handler) http.Handler {
 	n := a.opts.SourceAddPerHour
 	if admin {
-		n *= adminRateFactor
+		n *= AdminRateFactor
 	}
 	return a.rateLimit(n, time.Hour, listener)
 }
@@ -129,7 +129,7 @@ func (a *API) SourceAddRateLimit(listener string, admin bool) func(http.Handler)
 func (a *API) SearchRateLimit(listener string, admin bool) func(http.Handler) http.Handler {
 	n := a.opts.SearchPerMin
 	if admin {
-		n *= adminRateFactor
+		n *= AdminRateFactor
 	}
 	return a.rateLimit(n, time.Minute, listener)
 }
@@ -139,7 +139,7 @@ func (a *API) SearchRateLimit(listener string, admin bool) func(http.Handler) ht
 func (a *API) router(admin bool, registerRoutes RouteBuilder) *chi.Mux {
 	listener, rate := "public", a.opts.GeneralPerMin
 	if admin {
-		listener, rate = "admin", rate*adminRateFactor
+		listener, rate = "admin", rate*AdminRateFactor
 	}
 	r := chi.NewRouter()
 	r.Use(requestID)
