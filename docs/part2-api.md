@@ -851,12 +851,28 @@ Status: tick when the PR merges.
     - The seed's sentinel job targets were already gone in 6d-1 (the store took integers);
       the integration tests now assert the plain numbers.
     - OpenAPI `target` is `integer` (`[integer, "null"]` on the outcome), with no minimum.
-- [ ] **7. Store + controller: work detail**
+- [x] **7. Store + controller: work detail**
   - Loaders for a work's creators, tags (with type), series parts (+ partial-series flag per
     `docs/plan.md`), collections, and chapter metadata (meta `chapters`).
   - Chapter bodies and skin come from content.db and are merged in Go (the two DBs are not
     attached).
   - Add a `work_skins` reader. Controller `GetWork(ctx, id)` with one read transaction.
+  - As built:
+    - `store.Work` returns a `WorkRow` (the works row plus `Status` and `LastFetched`; zero
+      means known from blurbs only). New `ReadTx` readers in `store/workdetail.go`:
+      `WorkCreators` (byline order), `WorkTags` (page order), `WorkCollections`, `WorkSeries`
+      and `WorkChapters` (meta `chapters`); in `content.go`: `ChapterBody` (`ErrNoChapter`) and
+      `WorkSkin` ("" for none). Refs carry local ids (`CreatorRef`, `TagRef`, `CollectionRef`)
+      for the stage 12–13 routes.
+    - Each `WorkSeriesPart` has a `SeriesCoverage` (fetched, source, total, mirrored, missing
+      positions and work ids); `Partial()` is the `PartialSeriesList` rule, and both share
+      `seriesMissing` and the `seriesIsSource` SQL fragment.
+    - Controllers in `controllers/workview.go`, one read transaction each: `GetWork`
+      (`WorkView`: row, relations, chapter list without bodies), `GetChapter(id, position)`,
+      `GetWorkChapters` and `GetWorkSkin`. Unknown work → `store.ErrNoWork`; no body at a
+      position (including blurb-only works) → `store.ErrNoChapter`. Bodies are merged with the
+      chapter list by position, keeping every position in either (content.db commits first, so
+      they can differ after a failed commit). The whole-work size cap is left to stage 8.
 - [ ] **8. Works read API**
   - `GET /works/{id}` (metadata, relations, chapter list).
   - `GET /works/{id}/chapters/{position}` (body, notes, end notes).
@@ -869,7 +885,7 @@ Status: tick when the PR merges.
     - complete, crossover, language, words/kudos/hits ranges, date ranges, status;
     - sort column + direction.
   - Bounded `IN` lists and parameterized SQL only.
-  - A new meta migration (`0003` unless another lands first) adds reverse indexes
+  - A new meta migration (`0004` unless another lands first) adds reverse indexes
     (`tag_parents(parent_id)`, `work_collections(collection_id)`, `series_creators(creator_id)`)
     and any sort indexes.
   - Deep pages use a deferred join: select the page's ids over an index

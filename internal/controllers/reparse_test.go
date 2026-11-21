@@ -59,7 +59,7 @@ func TestReparse(t *testing.T) {
 		t.Helper()
 		w, err := db.Work(ctx, id)
 		require.NoError(t, err)
-		return w
+		return w.Work
 	}
 	lastFetchedBefore := diag(1001).LastFetched
 	clk = clk.Add(time.Hour)

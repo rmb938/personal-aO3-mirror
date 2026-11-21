@@ -77,6 +77,13 @@ func seriesMaxRevised(seriesAlias string) string {
 		WHERE sw.series_id = ` + seriesAlias + `.id AND w.revised_at != '')`
 }
 
+// seriesIsSource is an EXISTS test: the series row seriesAlias is a live series source (one
+// whose polls mirror it in full).
+func seriesIsSource(seriesAlias string) string {
+	return `EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(` + seriesAlias + `.id AS TEXT)
+		AND so.state IN ('pending_confirm','active','paused','done_backfill'))`
+}
+
 // MarkSeriesFetched records a fetch attempt of a series page: now, and the member revision it
 // covered, so the series waits for series.info_ttl or a newer member revision. A successful
 // fetch calls it after storing the page's blurbs; a failed one (404, restricted, unparseable)
@@ -93,8 +100,7 @@ func (s *Tx) MarkSeriesFetched(ctx context.Context, id int64) error {
 // a blurb date can be a day ahead of UTC.
 func (s *ReadTx) SeriesNeedingInfo(ctx context.Context, before time.Time, limit int) ([]int64, error) {
 	return queryInt64s(ctx, s.meta, `SELECT se.id FROM series se
-		WHERE NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
-			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
+		WHERE NOT `+seriesIsSource("se")+`
 		  AND (se.last_fetched = 0 OR se.last_fetched < ?
 		       OR se.fetched_revised < `+seriesMaxRevised("se")+`)
 		ORDER BY se.last_fetched, se.id LIMIT ?`, before.Unix(), limit)
@@ -156,8 +162,7 @@ func (s *ReadTx) partialSeriesRows(ctx context.Context, limit int) (out []Partia
 			 WHERE sw.series_id = se.id AND w.last_fetched > 0) AS mirrored
 		FROM series se
 		WHERE se.last_fetched > 0
-		  AND NOT EXISTS (SELECT 1 FROM sources so WHERE so.kind = 'series' AND so.target = CAST(se.id AS TEXT)
-			AND so.state IN ('pending_confirm','active','paused','done_backfill'))
+		  AND NOT `+seriesIsSource("se")+`
 		  AND se.works_count > (SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
 			 WHERE sw.series_id = se.id AND w.last_fetched > 0)
 		ORDER BY se.works_count - mirrored DESC, se.id LIMIT ?`, limit)
@@ -176,22 +181,72 @@ func (s *ReadTx) partialSeriesRows(ctx context.Context, limit int) (out []Partia
 }
 
 func (s *ReadTx) fillMissing(ctx context.Context, p *PartialSeries) error {
+	var err error
+	p.MissingPositions, p.MissingWorkIDs, err = s.seriesMissing(ctx, p.ID, p.WorksTotal)
+	return err
+}
+
+// seriesMissing returns the part numbers 1..total that none of a series' fetched works has,
+// and the members known from the series page that we have not fetched.
+func (s *ReadTx) seriesMissing(ctx context.Context, seriesID int64, total int) ([]int, []int64, error) {
 	positions, err := queryInt64s(ctx, s.meta, `SELECT sw.position FROM series_works sw JOIN works w ON w.id = sw.work_id
-		WHERE sw.series_id = ? AND w.last_fetched > 0`, p.ID)
+		WHERE sw.series_id = ? AND w.last_fetched > 0`, seriesID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	have := map[int64]bool{}
 	for _, pos := range positions {
 		have[pos] = true
 	}
-	for pos := 1; pos <= p.WorksTotal; pos++ {
+	var missing []int
+	for pos := 1; pos <= total; pos++ {
 		if !have[int64(pos)] {
-			p.MissingPositions = append(p.MissingPositions, pos)
+			missing = append(missing, pos)
 		}
 	}
-	p.MissingWorkIDs, err = queryInt64s(ctx, s.meta, `SELECT sw.work_id FROM series_works sw
+	ids, err := queryInt64s(ctx, s.meta, `SELECT sw.work_id FROM series_works sw
 		WHERE sw.series_id = ? AND NOT EXISTS (SELECT 1 FROM works w WHERE w.id = sw.work_id AND w.last_fetched > 0)
-		ORDER BY sw.position, sw.work_id`, p.ID)
-	return err
+		ORDER BY sw.position, sw.work_id`, seriesID)
+	return missing, ids, err
+}
+
+// SeriesCoverage is how much of a series the mirror holds. Content-free (ids and counts only).
+type SeriesCoverage struct {
+	Fetched          bool    // the series page was fetched, so WorksTotal is AO3's count
+	Source           bool    // the series is itself a source, so its polls mirror it in full
+	WorksTotal       int     // AO3's count (0 until Fetched)
+	Mirrored         int     // works in the series we have fetched
+	MissingPositions []int   // AO3 part numbers (1..WorksTotal) none of our fetched works has
+	MissingWorkIDs   []int64 // series_works members we have not fetched (from the series page)
+}
+
+// Partial reports a partial series (docs/plan.md): not a source, with fewer mirrored works than
+// AO3 lists. A series whose page was never fetched has no known total, so it is not partial.
+// Same rule as PartialSeriesList.
+func (c SeriesCoverage) Partial() bool {
+	return c.Fetched && !c.Source && c.WorksTotal > c.Mirrored
+}
+
+// seriesCoverage returns a series' coverage; a series with no row has the zero value.
+func (s *ReadTx) seriesCoverage(ctx context.Context, seriesID int64) (SeriesCoverage, error) {
+	var c SeriesCoverage
+	var fetched int64
+	var source int
+	err := s.meta.QueryRowContext(ctx, `SELECT se.last_fetched, se.works_count,
+			(SELECT COUNT(*) FROM series_works sw JOIN works w ON w.id = sw.work_id
+			 WHERE sw.series_id = se.id AND w.last_fetched > 0),
+			`+seriesIsSource("se")+`
+		FROM series se WHERE se.id = ?`, seriesID).Scan(&fetched, &c.WorksTotal, &c.Mirrored, &source)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	c.Fetched, c.Source = fetched > 0, source == 1
+	if !c.Fetched {
+		c.WorksTotal = 0
+	}
+	c.MissingPositions, c.MissingWorkIDs, err = s.seriesMissing(ctx, seriesID, c.WorksTotal)
+	return c, err
 }

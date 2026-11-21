@@ -178,9 +178,8 @@ func (s *ReadTx) compareWorkContent(ctx context.Context, workID int64, chs []mod
 	if len(old) == 0 {
 		return ContentNew, nil
 	}
-	var oldSkin string
-	if err := s.content.QueryRowContext(ctx, `SELECT css FROM work_skins WHERE work_id = ?`, workID).Scan(&oldSkin); err != nil &&
-		!errors.Is(err, sql.ErrNoRows) {
+	oldSkin, err := s.WorkSkin(ctx, workID)
+	if err != nil {
 		return "", err
 	}
 	if oldSkin != skinCSS || len(old) != len(chs) {
@@ -196,32 +195,57 @@ func (s *ReadTx) compareWorkContent(ctx context.Context, workID int64, chs []mod
 	return ContentUnchanged, nil
 }
 
-// ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them).
+// chapterBodyCols are the chapter_bodies columns scanChapterBody reads, in its order.
+const chapterBodyCols = `position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd`
+
+// ChapterBodies returns stored chapter bodies in order (for the API/UI; never log them). Only
+// content.db fields are set: titles and published dates are in meta.db (WorkChapters).
 func (s *ReadTx) ChapterBodies(ctx context.Context, workID int64) ([]model.Chapter, error) {
-	rows, err := s.content.QueryContext(ctx, `SELECT position, chapter_id, body_zstd, notes_zstd, endnotes_zstd, summary_zstd
+	return queryRows(ctx, s.content, s.scanChapterBody, `SELECT `+chapterBodyCols+`
 		FROM chapter_bodies WHERE work_id = ? ORDER BY position`, workID)
+}
+
+// ErrNoChapter means no chapter body is stored at the requested position.
+var ErrNoChapter = errors.New("store: no such chapter")
+
+// ChapterBody returns one stored chapter body (content.db fields only, as ChapterBodies), or
+// ErrNoChapter.
+func (s *ReadTx) ChapterBody(ctx context.Context, workID int64, position int) (model.Chapter, error) {
+	out, err := queryRows(ctx, s.content, s.scanChapterBody, `SELECT `+chapterBodyCols+`
+		FROM chapter_bodies WHERE work_id = ? AND position = ?`, workID, position)
 	if err != nil {
-		return nil, err
+		return model.Chapter{}, err
 	}
-	defer rows.Close()
-	var out []model.Chapter
-	for rows.Next() {
-		var c model.Chapter
-		var body, notes, end, summary []byte
-		if err := rows.Scan(&c.Position, &c.ID, &body, &notes, &end, &summary); err != nil {
-			return nil, err
-		}
-		for _, p := range []struct {
-			z   []byte
-			dst *string
-		}{{body, &c.BodyHTML}, {notes, &c.NotesHTML}, {end, &c.EndNotesHTML}, {summary, &c.SummaryHTML}} {
-			b, err := s.decompress(p.z)
-			if err != nil {
-				return nil, err
-			}
-			*p.dst = string(b)
-		}
-		out = append(out, c)
+	if len(out) == 0 {
+		return model.Chapter{}, ErrNoChapter
 	}
-	return out, rows.Err()
+	return out[0], nil
+}
+
+func (s *ReadTx) scanChapterBody(rows *sql.Rows, c *model.Chapter) error {
+	var body, notes, end, summary []byte
+	if err := rows.Scan(&c.Position, &c.ID, &body, &notes, &end, &summary); err != nil {
+		return err
+	}
+	for _, p := range []struct {
+		z   []byte
+		dst *string
+	}{{body, &c.BodyHTML}, {notes, &c.NotesHTML}, {end, &c.EndNotesHTML}, {summary, &c.SummaryHTML}} {
+		b, err := s.decompress(p.z)
+		if err != nil {
+			return err
+		}
+		*p.dst = string(b)
+	}
+	return nil
+}
+
+// WorkSkin returns a work's stored skin CSS, "" if it has none (never log it).
+func (s *ReadTx) WorkSkin(ctx context.Context, workID int64) (string, error) {
+	var css string
+	err := s.content.QueryRowContext(ctx, `SELECT css FROM work_skins WHERE work_id = ?`, workID).Scan(&css)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return css, err
 }
