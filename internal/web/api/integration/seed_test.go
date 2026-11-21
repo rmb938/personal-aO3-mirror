@@ -52,15 +52,15 @@ var seedTime = time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 
 // newTestControllers opens a temp store, seeds it and returns offline controllers over it.
 // The store and controllers log to log, so the leak test sees their lines too.
-func newTestControllers(t *testing.T, log *slog.Logger) *controllers.Controllers {
-	t.Helper()
+func newTestControllers(tb testing.TB, log *slog.Logger) *controllers.Controllers {
+	tb.Helper()
 	ctx := context.Background()
-	st, err := store.Open(ctx, t.TempDir(), store.Options{Logger: log, Now: func() time.Time { return seedTime }})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	seed(t, st)
-	imageDir := t.TempDir()
-	seedImages(t, st, imageDir)
+	st, err := store.Open(ctx, tb.TempDir(), store.Options{Logger: log, Now: func() time.Time { return seedTime }})
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, st.Close()) })
+	seed(tb, st)
+	imageDir := tb.TempDir()
+	seedImages(tb, st, imageDir)
 	cfg := config.Default()
 	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime },
 		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: imageDir})
@@ -81,13 +81,13 @@ const seedImageType = "image/png"
 
 // seedImages makes seedFetchedWork embed two images with sentinel URLs: the first downloaded
 // (seedImageBody, its file written under dir), the second still queued.
-func seedImages(t *testing.T, st *store.Store, dir string) {
-	t.Helper()
+func seedImages(tb testing.TB, st *store.Store, dir string) {
+	tb.Helper()
 	ctx := context.Background()
 	p := imagefetch.Path(dir, seedImageSHA, seedImageType)
-	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
-	require.NoError(t, os.WriteFile(p, seedImageBody, 0o600))
-	require.NoError(t, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	require.NoError(tb, os.MkdirAll(filepath.Dir(p), 0o750))
+	require.NoError(tb, os.WriteFile(p, seedImageBody, 0o600))
+	require.NoError(tb, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		n, err := tx.QueueImages(ctx, seedFetchedWork, []string{"https://img.example.test/" + sentinel + "image.png",
 			"https://img.example.test/" + sentinel + "queued.png"})
 		if err != nil {
@@ -178,12 +178,12 @@ func seedFetched(ctx context.Context, tx *store.Tx) error {
 }
 
 // seed fills st with the rows the route samples read.
-func seed(t *testing.T, st *store.Store) {
-	t.Helper()
+func seed(tb testing.TB, st *store.Store) {
+	tb.Helper()
 	ctx := context.Background()
 	cursor := controllers.SourceCursor{NextPage: 3, Order: "kudos_desc", WindowFrom: "2020-01-01", WindowTo: "2020-12-31",
 		Rescan: true, RescanStarted: seedTime.Unix(), RetryAt: seedTime.Unix() + 60}
-	require.NoError(t, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+	require.NoError(tb, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		id, err := tx.InsertSource(ctx, model.Source{
 			Kind: "tag", Target: sentinel + "target", FiltersJSON: `{"` + sentinel + `filter":["` + sentinel + `value"]}`,
 			Path: "/tags/" + sentinel + "path/works", State: model.SourceActive, BackfillOrder: "kudos_desc",
@@ -192,7 +192,7 @@ func seed(t *testing.T, st *store.Store) {
 		if err != nil {
 			return err
 		}
-		require.Equal(t, seedTagSource, id)
+		require.Equal(tb, seedTagSource, id)
 		tag, err := tx.GetSourceRow(ctx, id)
 		if err != nil {
 			return err
@@ -207,13 +207,13 @@ func seed(t *testing.T, st *store.Store) {
 		if err != nil {
 			return err
 		}
-		require.Equal(t, seedSeriesSource, id)
+		require.Equal(tb, seedSeriesSource, id)
 
 		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindSourceAdd, Target: 1, DedupeKey: "seed-add-1"})
 		if err != nil {
 			return err
 		}
-		require.Equal(t, seedDoneAdd, id)
+		require.Equal(tb, seedDoneAdd, id)
 		if err := tx.FinishJob(ctx, id, model.JobDone, ""); err != nil {
 			return err
 		}
@@ -227,7 +227,7 @@ func seed(t *testing.T, st *store.Store) {
 		if err != nil {
 			return err
 		}
-		require.Equal(t, seedFailedAdd, id)
+		require.Equal(tb, seedFailedAdd, id)
 		if err := tx.FinishJob(ctx, id, model.JobFailed, string(controllers.CodeNotFound)+":"+sentinel+"detail"); err != nil {
 			return err
 		}
@@ -236,14 +236,14 @@ func seed(t *testing.T, st *store.Store) {
 		if err != nil {
 			return err
 		}
-		require.Equal(t, seedOtherJob, id)
+		require.Equal(tb, seedOtherJob, id)
 
 		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindBackfill, SourceID: seedTagSource,
 			Target: 3, Priority: jobs.ClassBackfill, DedupeKey: sentinel + "dedupe"})
 		if err != nil {
 			return err
 		}
-		require.Equal(t, seedBackfillJob, id)
+		require.Equal(tb, seedBackfillJob, id)
 		// Its trace: a start and a retry, with every text field a sentinel.
 		if err := tx.JobEvent(ctx, id, model.JobEventStart,
 			controllers.JobOutcome{Attempt: new(1), Target: new(int64(3))}); err != nil {

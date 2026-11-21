@@ -80,6 +80,9 @@ func TestDecodeJSON(t *testing.T) {
 		"wrong type":     `{"priority":"high"}`,
 		"case mismatch":  `{"URL":"u"}`,
 		"array":          `[]`,
+		"null":           `null`,
+		"spaced null":    " null ",
+		"string":         `"x"`,
 	}
 	for name, body := range bad {
 		t.Run(name, func(t *testing.T) {

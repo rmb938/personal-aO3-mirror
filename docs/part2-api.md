@@ -1382,6 +1382,42 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
   - Run the `/security-review` skill and `make deadcode`; govulncheck.
   - Update the OpenAPI spec; load-test the rate limits.
   - Review the OWASP API Security Top 10 (2023) item by item.
+  - In four PRs:
+  - [x] **15a. Fuzz the parsers.** Each target checks the parser against an oracle written
+    from the documented rules, not by calling the parser. `make test` replays the seeds;
+    `make fuzz` finds the targets. As built:
+    - `runtime.FuzzParseParams`: the exact invalid params in order (unknown, repeated, then
+      `per_page`, `page` with the offset cap, an enum), the values handed on, a valid page's
+      offset within `MaxOffset`.
+    - `runtime.FuzzPathParams`: `ParseInt` (ASCII digits, `[1, hi]`), `PathID`, `PathTagName`
+      (escaped or not) and `PathSHA256`.
+    - `runtime.FuzzRequestQuery`: any raw query through the public middleware chain with
+      `--no-reveal` on or off: the problem type in the documented order (414, 400, the reveal
+      param, the route's check), `X-Fanwork` revealed only for a valid reveal param, and no
+      query value in the body, headers or logs.
+    - `runtime.FuzzDecodeJSON`: any body as each `request.Types()` type. Accepted only when it
+      is one valid JSON object; each problem's pointer names a member the body has, with a
+      catalogue detail; a body with no problem is within every bound of its type.
+    - `integration.FuzzRoutes`: fuzzed queries, bodies and path segments to every route that
+      parses client input (the QUERY searches, the paged GETs, tag by name, images, source add
+      and settings) over the seeded store, hashed and revealed. No 5xx, JSON bodies, no seeded
+      sentinel in a hashed response, none in the logs.
+    - `searchquery.FuzzTerms` and `ao3url.FuzzParse` (reached from bodies): terms are
+      normalized words of q; a rejected URL's message is its reason's fixed text, and an
+      accepted one's `BasePath` parses back to the same source.
+    - Found and fixed: `DecodeJSON` took a `null` body as `{}` (now `invalid-body`, as its
+      detail says); `ao3url.Parse` took a login holding `/` (`/users/%2F/pseuds/0`), whose
+      pseud target does not split back (now `malformed`; the input is a committed seed).
+    - `integration`'s seed helpers take `testing.TB`, so a fuzz target seeds once.
+  - [ ] **15b. Load-test the rate limits**: concurrent in-process requests per limit group
+    (general, search, source add, the admin factor): exactly N pass a window, then 429 with
+    `Retry-After`; an untrusted peer's `X-Forwarded-For` does not change its bucket. Plus
+    commands for the user against `serve --no-reveal`.
+  - [ ] **15c. OpenAPI audit**: every route's statuses, problem types, headers (`X-Fanwork`,
+    `Retry-After`, `Accept-Query`) and limits in the spec; fix drift; `make generate`.
+  - [ ] **15d. Security review**: `/security-review`, `make deadcode` triage, govulncheck, and
+    the OWASP API Security Top 10 (2023) item by item, written up here; small gaps fixed,
+    auth items (API1, API2, API5) left to stage 16.
 - [ ] **16. Auth (placeholder, design later)**
   - Must land before Funnel exposure. Expected: a separate `users.db`.
   - Revisit then: reveal requiring auth, per-user rate limits, Tailscale identity headers
