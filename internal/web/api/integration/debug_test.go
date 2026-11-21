@@ -28,7 +28,7 @@ func TestDebugJob(t *testing.T) {
 	assert.Equal(t, dto.JobEventType("start"), start.Event)
 	assert.Equal(t, seedTime, start.OccurredAt)
 	assert.Equal(t, new(1), start.Outcome.Attempt)
-	assert.True(t, isHash(t, *start.Outcome.Target), "target hashed")
+	assert.Equal(t, new(int64(3)), start.Outcome.Target, "target is a plain number")
 	assert.Equal(t, &dto.BackfillDetail{}, start.Backfill, "a start event has the kind's member, all null")
 
 	retry := d.Events[1]

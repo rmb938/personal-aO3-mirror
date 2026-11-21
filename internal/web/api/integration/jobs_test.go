@@ -35,7 +35,7 @@ func TestListJobs(t *testing.T) {
 	assert.Equal(t, dto.JobState("failed"), failed.State)
 	assert.Equal(t, dto.JobErrorCode("not_found"), failed.LastErrorCode)
 	assert.True(t, isHash(t, failed.LastErrorDetail), "last_error_detail hashed")
-	assert.True(t, isHash(t, failed.Target), "target hashed")
+	assert.Equal(t, int64(2), failed.Target, "target is its source add id, not hashed")
 	assert.Equal(t, seedTime, failed.FinishedAt)
 
 	for target, want := range map[string][]int64{

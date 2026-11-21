@@ -190,17 +190,17 @@ func TestSourceCLI(t *testing.T) {
 	assert.Contains(t, out, "next page 2, order hits_desc", "show backfill cursor")
 	_, out, _ = c.run("source", "show", "1", "--names")
 	assert.Contains(t, out, "/tags/Fixture", "show --names")
-	// jobs and debug hash targets, paths and reasons unless --names.
-	for _, args := range [][]string{{"jobs"}, {"debug", "job", "1"}} {
-		code, out, errOut := c.run(args...)
-		require.Equal(t, 0, code, "%v: %s", args, errOut)
-		assert.Contains(t, out, "h_", "%v must hash targets", args)
-		code, out, errOut = c.run(append(args, "--names")...)
-		require.Equal(t, 0, code, "%v --names: %s", args, errOut)
-		assert.NotContains(t, out, "h_", "%v --names", args)
-	}
-	_, out, _ = c.run("jobs", "--kind", "work", "--names")
-	assert.Contains(t, out, "1001", "jobs --names shows the work id targets")
+	// debug hashes paths and reasons unless --names.
+	code, out, errOut = c.run("debug", "job", "1")
+	require.Equal(t, 0, code, errOut)
+	assert.Contains(t, out, "h_", "debug job must hash strings")
+	code, out, errOut = c.run("debug", "job", "1", "--names")
+	require.Equal(t, 0, code, errOut)
+	assert.NotContains(t, out, "h_", "debug job --names")
+	// Job targets are plain numbers.
+	_, out, _ = c.run("jobs", "--kind", "work")
+	assert.Contains(t, out, "1001", "jobs shows the work id targets")
+	assert.NotContains(t, out, "h_", "jobs has no hashed field here")
 
 	for _, step := range []struct {
 		args []string

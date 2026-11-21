@@ -21,7 +21,7 @@ func TestJob(t *testing.T) {
 	}
 	got := Job(j)
 	assert.Equal(t, dto.Job{
-		ID: 9, Kind: "backfill", Target: "3", SourceID: 4, Priority: 4, State: "failed", Attempts: 2,
+		ID: 9, Kind: "backfill", Target: 3, SourceID: 4, Priority: 4, State: "failed", Attempts: 2,
 		MaxAttempts: 5, LastErrorCode: "not_found", LastErrorDetail: "page 3",
 		NotBeforeAt: created.Add(time.Minute).UTC(), CreatedAt: created.UTC(),
 		StartedAt: created.Add(2 * time.Minute).UTC(), FinishedAt: created.Add(3 * time.Minute).UTC(),

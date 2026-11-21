@@ -709,8 +709,8 @@ components:
         kind: { $ref: "#/components/schemas/JobKind" }
         target:
           {
-            type: string,
-            description: "Page number, work/tag/series id or source add id (hashed).",
+            type: integer,
+            description: "Page number, work/tag/series id or source add id.",
           }
         source_id:
           {
@@ -1065,8 +1065,8 @@ components:
           }
         target:
           {
-            type: [string, "null"],
-            description: "Start event: the job's target (hashed).",
+            type: [integer, "null"],
+            description: "Start event: the job's target.",
           }
         duration:
           {

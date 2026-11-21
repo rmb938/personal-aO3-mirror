@@ -692,8 +692,8 @@ type ID int
 type Job struct {
 	ID   ID      `json:"id"`
 	Kind JobKind `json:"kind"`
-	// Page number, work/tag/series id or source add id (hashed).
-	Target string `json:"target"`
+	// Page number, work/tag/series id or source add id.
+	Target int `json:"target"`
 	// The job's source, when it has one.
 	SourceID OptID `json:"source_id"`
 	// Class: lower runs first.
@@ -722,7 +722,7 @@ func (s *Job) GetKind() JobKind {
 }
 
 // GetTarget returns the value of Target.
-func (s *Job) GetTarget() string {
+func (s *Job) GetTarget() int {
 	return s.Target
 }
 
@@ -792,7 +792,7 @@ func (s *Job) SetKind(val JobKind) {
 }
 
 // SetTarget sets the value of Target.
-func (s *Job) SetTarget(val string) {
+func (s *Job) SetTarget(val int) {
 	s.Target = val
 }
 
@@ -1398,8 +1398,8 @@ func (s *JobList) SetTotal(val int) {
 type JobOutcome struct {
 	// Start event: the attempt number, counting this one.
 	Attempt NilInt `json:"attempt"`
-	// Start event: the job's target (hashed).
-	Target NilString `json:"target"`
+	// Start event: the job's target.
+	Target NilInt `json:"target"`
 	// How long the handler ran.
 	Duration  NilDuration     `json:"duration"`
 	ErrorCode NilJobErrorCode `json:"error_code"`
@@ -1417,7 +1417,7 @@ func (s *JobOutcome) GetAttempt() NilInt {
 }
 
 // GetTarget returns the value of Target.
-func (s *JobOutcome) GetTarget() NilString {
+func (s *JobOutcome) GetTarget() NilInt {
 	return s.Target
 }
 
@@ -1452,7 +1452,7 @@ func (s *JobOutcome) SetAttempt(val NilInt) {
 }
 
 // SetTarget sets the value of Target.
-func (s *JobOutcome) SetTarget(val NilString) {
+func (s *JobOutcome) SetTarget(val NilInt) {
 	s.Target = val
 }
 

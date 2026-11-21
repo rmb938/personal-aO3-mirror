@@ -22,7 +22,7 @@ const (
 	seedDoneAdd      int64 = 1 // add_source job, done, created seedTagSource
 	seedFailedAdd    int64 = 2 // add_source job, failed with a sentinel detail
 	seedOtherJob     int64 = 3 // a work job (not a source add), queued
-	seedBackfillJob  int64 = 4 // a backfill job of seedTagSource with a sentinel target, queued
+	seedBackfillJob  int64 = 4 // a backfill job of seedTagSource with a sentinel dedupe key, queued
 	seedWork         int64 = 7 // seedOtherJob's work, from a blurb, every text field a sentinel
 )
 
