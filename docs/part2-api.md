@@ -956,10 +956,32 @@ Status: tick when the PR merges.
       and reads every row it skips, ~70–150 ms (worst when the filter matches fewer rows than
       the offset); first pages are under 2 ms; counts are at most ~11 ms. Stage 10's search rate
       limit bounds the deep-page cost.
-  - [ ] **9b. Tag filters.** Include/exclude tag ids, by type (rating, warning, category, fandom,
+  - [x] **9b. Tag filters.** Include/exclude tag ids, by type (rating, warning, category, fandom,
     relationship, character, freeform, other). A tag id matches like AO3's `filter_ids`: the
     tag, its synonyms (`merger_id`) and works tagged with any of its sub tags (`tag_meta`,
     transitive). Bounded id lists; reverse indexes for `tags(merger_id)` and `tag_meta(meta_id)`.
+    As built:
+    - AO3 folds its per-type lists (`rating_ids`, `fandom_ids`, …) into one `filter_ids` list
+      (`app/models/search/taggable_query.rb`), so `model.WorkFilter` has one `Tags` list (every
+      id must match) and one `ExcludeTags` list (none may match), each at most
+      `model.MaxWorkFilterTags` (20). Per-type request fields, if any, are stage 10's.
+    - Matching (`store.tagFilterWorks`): works tagged with the id, any sub tag below it
+      (`tag_meta`, a recursive CTE; `UNION` ends a cycle) or a synonym of either. That is AO3's
+      index set (a work's tags, their filters and every meta tag above them,
+      `app/models/concerns/filterable.rb`) read from the tag side. A synonym id matches only
+      works tagged with it, as on AO3. Each included id is its own `id IN (…)`; all excluded ids
+      share one `id NOT IN (…)`.
+    - Meta migration `0005_work_tag_filters.sql`: `tag_meta(meta_id)`, a partial
+      `tags(merger_id)`, and `work_tags(tag_id, work_id)` replacing `work_tags_tag` so the work
+      ids are read from the index alone. `TestWorksTagFilterPlans` checks the expansion uses
+      them.
+    - An included tag drives the page from its works and sorts them (a temp b-tree), so the
+      cost grows with the number of matches, not the offset. At 200k works: a tag on a third
+      of them takes ~25 ms for the first page and ~50 ms for a deep one, a tag on 10% (a meta
+      tag over 100 subs and their synonyms) ~10–17 ms, and a rare tag under 1 ms; counts are
+      ~0.2–30 ms, ~55 ms for excluding the popular tag. Walking the sort index instead (a
+      correlated `EXISTS`) would make popular first pages cheap but scan the whole index for
+      rare tags, so it was left out.
   - [ ] **9c. Crossover.** AO3's rule (`lib/fandom_crossover.rb`): a work is a crossover when no
     fandom on it shares a meta tag ancestor (after mergers) with all the others. Too costly to
     work out per query, so a precomputed `works.crossover` column, recomputed on work upsert

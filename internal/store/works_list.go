@@ -54,6 +54,21 @@ func workWhere(f model.WorkFilter) (string, []any, error) {
 		b.WriteString(` AND ` + sql)
 		args = append(args, a...)
 	}
+	for _, ids := range [][]int64{f.Tags, f.ExcludeTags} {
+		if len(ids) > model.MaxWorkFilterTags {
+			return "", nil, fmt.Errorf("store: works: %d tag ids (max %d)", len(ids), model.MaxWorkFilterTags)
+		}
+	}
+	for _, id := range f.Tags {
+		cond(`id IN (`+tagFilterWorks(1)+`)`, id)
+	}
+	if n := len(f.ExcludeTags); n > 0 {
+		ids := make([]any, n)
+		for i, id := range f.ExcludeTags {
+			ids[i] = id
+		}
+		cond(`id NOT IN (`+tagFilterWorks(n)+`)`, ids...)
+	}
 	if f.Complete != nil {
 		cond(`complete = ?`, boolInt(*f.Complete))
 	}
@@ -114,6 +129,19 @@ func workWhere(f model.WorkFilter) (string, []any, error) {
 		}
 	}
 	return b.String(), args, nil
+}
+
+// tagFilterWorks returns a subquery for the ids of works matching any of n tag ids (n bound
+// parameters), like AO3's filter_ids: works tagged with one of the tags, any sub tag below it
+// (tag_meta, transitively; UNION stops on a cycle), or a synonym (merger) of either. AO3 indexes
+// a work under its tags, their filters (the merger, or the tag itself when canonical) and every
+// meta tag above those (app/models/concerns/filterable.rb), which is the same set read from the
+// other side. A synonym id matches only works tagged with it, as on AO3.
+func tagFilterWorks(n int) string {
+	return `SELECT wt.work_id FROM work_tags wt WHERE wt.tag_id IN (
+		WITH RECURSIVE sub(id) AS (VALUES (?)` + strings.Repeat(`, (?)`, n-1) + `
+			UNION SELECT m.sub_id FROM tag_meta m JOIN sub ON m.meta_id = sub.id)
+		SELECT id FROM sub UNION SELECT t.id FROM tags t JOIN sub ON t.merger_id = sub.id)`
 }
 
 // FindWorks returns up to f.Limit works matching f in f's order, skipping the first f.Offset.
