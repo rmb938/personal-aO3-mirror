@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -178,6 +179,11 @@ func (c *core) unix() int64 { return c.now().Unix() }
 
 // migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.
 func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
+	return s.migrateTo(ctx, db, name, math.MaxInt)
+}
+
+// migrateTo is migrate stopping after version upTo (tests build older schemas with it).
+func (s *Store) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("store: %s migrations table: %w", name, err)
@@ -203,6 +209,9 @@ func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
 		}
 		if ver <= current {
 			continue
+		}
+		if ver > upTo {
+			break
 		}
 		body, err := migrationsFS.ReadFile(dir + "/" + e.Name())
 		if err != nil {

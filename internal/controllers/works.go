@@ -35,7 +35,7 @@ func (c *Controllers) EnqueueWorkFetch(ctx context.Context, workID, sourceID int
 // builds work-fetch jobs.
 func enqueueWorkFetch(ctx context.Context, tx *store.Tx, workID, sourceID int64, class int) (int64, bool, error) {
 	return tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, SourceID: sourceID,
-		Target: strconv.FormatInt(workID, 10), Priority: class, DedupeKey: jobs.WorkKey(workID)})
+		Target: workID, Priority: class, DedupeKey: jobs.WorkKey(workID)})
 }
 
 // FetchWork fetches one full work page and stores the raw page, chapter bodies and metadata in

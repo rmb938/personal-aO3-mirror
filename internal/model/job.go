@@ -29,12 +29,12 @@ func JobEvents() []string {
 	return []string{JobEventStart, JobEventDone, JobEventFailed, JobEventRetry, JobEventError, JobEventWait}
 }
 
-// Job is one queued unit of work. Target is content-free (page number, work id, path pattern).
+// Job is one queued unit of work. Target is a page number or an id (work, tag, series, source add).
 type Job struct {
 	ID          int64
 	Kind        string
 	SourceID    int64 // 0 = none
-	Target      string
+	Target      int64
 	Priority    int // class: lower runs first
 	State       string
 	NotBefore   time.Time

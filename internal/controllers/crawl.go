@@ -220,7 +220,7 @@ func (c *Controllers) PollSourcePage(ctx context.Context, sourceID int64, page i
 			fresh.TotalWorks = l.Total
 		}
 		if more {
-			if _, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindPoll, SourceID: fresh.ID, Target: strconv.Itoa(page + 1),
+			if _, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindPoll, SourceID: fresh.ID, Target: int64(page + 1),
 				Priority: jobs.ClassPoll, DedupeKey: jobs.PollKey(fresh.ID, page+1)}); err != nil {
 				return err
 			}

@@ -15,7 +15,7 @@ import (
 func TestJobDebug(t *testing.T) {
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("x", 3600))
 	got := JobDebug(controllers.JobDebug{
-		Job: model.Job{ID: 4, Kind: "work", Target: "7", State: model.JobDone, DedupeKey: "work:7"},
+		Job: model.Job{ID: 4, Kind: "work", Target: 7, State: model.JobDone, DedupeKey: "work:7"},
 		Events: []controllers.JobEvent{{Time: at, Event: model.JobEventStart, Outcome: controllers.JobOutcome{Attempt: new(1)},
 			Detail: &controllers.WorkDetail{}}},
 		Requests: []store.RequestRow{{Time: at, Kind: "work", Path: "/works/7", Status: 200, Class: "ok"}},
@@ -39,11 +39,11 @@ func TestWorkDebug(t *testing.T) {
 	got := WorkDebug(controllers.WorkDebug{
 		ID:       7,
 		Diag:     store.WorkDiag{Status: model.StatusOK, Published: "2025-01-02", Words: 1200, ChaptersPosted: 2},
-		Jobs:     []model.Job{{ID: 3, Kind: "work", State: model.JobQueued}},
+		Jobs:     []model.Job{{ID: 3, Kind: "work", Target: 7, State: model.JobQueued}},
 		Requests: []store.RequestRow{{Time: at, Kind: "work", Path: "/works/7", Status: 200, Class: "ok"}},
 	})
 	assert.Equal(t, int64(7), got.Work.ID)
-	assert.Equal(t, []dto.Job{{ID: 3, Kind: "work", State: "queued"}}, got.Jobs)
+	assert.Equal(t, []dto.Job{{ID: 3, Kind: "work", Target: "7", State: "queued"}}, got.Jobs)
 	assert.Equal(t, []dto.Request{{RequestedAt: at.UTC(), Kind: "work", Path: "/works/7", Status: 200, Class: "ok"}}, got.Requests)
 
 	empty := WorkDebug(controllers.WorkDebug{})
@@ -76,7 +76,7 @@ func TestJobOutcome(t *testing.T) {
 		Attempt: new(2), Target: new("7"), Duration: new(dto.Duration(1500 * time.Millisecond)),
 		ErrorCode: new(dto.JobErrorCode("not_found")), ErrorDetail: new("x:y"), NextState: new(dto.JobState("failed")),
 		NotBeforeAt: new(nb.UTC()),
-	}, jobOutcome(controllers.JobOutcome{Attempt: new(2), Target: new("7"), MS: new(int64(1500)), Error: new("not_found:x:y"),
+	}, jobOutcome(controllers.JobOutcome{Attempt: new(2), Target: new(int64(7)), MS: new(int64(1500)), Error: new("not_found:x:y"),
 		NextState: new("failed"), NotBefore: new(nb)}))
 
 	got := jobOutcome(controllers.JobOutcome{Error: new("rate_limited"), MS: new(int64(0))})

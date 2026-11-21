@@ -22,9 +22,9 @@ type JobDetail interface {
 // and target, and an outcome event's duration, error, next state and hold-back time. It is
 // stored merged with the handler's JobDetail into one JSON object, so their keys must differ.
 type JobOutcome struct {
-	Attempt *int    `json:"attempt,omitzero"`
-	Target  *string `json:"target,omitzero"`
-	MS      *int64  `json:"ms,omitzero"`
+	Attempt *int   `json:"attempt,omitzero"`
+	Target  *int64 `json:"target,omitzero"`
+	MS      *int64 `json:"ms,omitzero"`
 	// Error is the error code, or "code:detail" for a permanent failure.
 	Error     *string    `json:"error,omitzero"`
 	NextState *string    `json:"next_state,omitzero"`

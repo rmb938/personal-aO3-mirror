@@ -90,7 +90,7 @@ func TestSourcesLifecycle(t *testing.T) {
 	now := time.Now().Unix()
 	for _, st := range []string{"queued", "queued", "running"} {
 		_, err := s.meta.Exec(`INSERT INTO jobs (kind, source_id, target, priority_class, state, dedupe_key, created_at, updated_at)
-			VALUES ('listing_page', ?, '/x', 4, ?, ?, ?, ?)`, id, st, st+time.Now().String(), now, now)
+			VALUES ('backfill', ?, 1, 4, ?, ?, ?, ?)`, id, st, st+time.Now().String(), now, now)
 		require.NoError(t, err)
 	}
 	require.NoError(t, s.SetSourceState(ctx, id, model.SourcePaused, model.SourceActive))

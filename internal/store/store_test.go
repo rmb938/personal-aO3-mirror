@@ -68,7 +68,7 @@ func TestMigrationsIdempotent(t *testing.T) {
 	for i := range 2 {
 		s, err := Open(ctx, dir, Options{})
 		require.NoError(t, err, "open %d", i)
-		for db, want := range map[string]int{"meta": 2, "content": 1} {
+		for db, want := range map[string]int{"meta": 3, "content": 1} {
 			v, err := s.schemaVersion(ctx, db)
 			require.NoError(t, err)
 			require.Equal(t, want, v, "%s schema", db)
@@ -102,11 +102,11 @@ func TestOpenRefusesUnknownMigrations(t *testing.T) {
 	s, err := Open(ctx, dir, Options{})
 	require.NoError(t, err)
 	// Simulate a store created by an older build that had a migration this build lacks.
-	_, err = s.meta.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, '0003_tags_images.sql', 0)`)
+	_, err = s.meta.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (99, '0099_tags_images.sql', 0)`)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	_, err = Open(ctx, dir, Options{})
-	require.ErrorContains(t, err, "0003_tags_images.sql", "open should refuse an unknown applied migration")
+	require.ErrorContains(t, err, "0099_tags_images.sql", "open should refuse an unknown applied migration")
 }
 
 func TestUpsertBlurbThenPage(t *testing.T) {
@@ -399,12 +399,12 @@ func TestWorkLookupsAreExact(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"/works/12?view_full_work=true", "/works/12/chapters/5"}, paths)
 
-	enqueue(t, s, NewJob{Kind: "work", Target: "12", Priority: 3, DedupeKey: "work:12"})
-	enqueue(t, s, NewJob{Kind: "work", Target: "123", Priority: 3, DedupeKey: "work:123"})
+	enqueue(t, s, NewJob{Kind: "work", Target: 12, Priority: 3, DedupeKey: "work:12"})
+	enqueue(t, s, NewJob{Kind: "work", Target: 123, Priority: 3, DedupeKey: "work:123"})
 	jobs, err := s.FindJobs(ctx, model.JobFilter{DedupeKey: "work:12", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
-	require.Equal(t, "12", jobs[0].Target)
+	require.Equal(t, int64(12), jobs[0].Target)
 }
 
 func TestRawPagesDedupeAndPrune(t *testing.T) {

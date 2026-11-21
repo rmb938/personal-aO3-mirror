@@ -175,7 +175,7 @@ func TestSourceAddOutcomeOnlyForSourceAdds(t *testing.T) {
 	var other int64
 	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var err error
-		other, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: "1", DedupeKey: jobs.WorkKey(1)})
+		other, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: 1, DedupeKey: jobs.WorkKey(1)})
 		return err
 	}))
 	_, err := e.svc.SourceAddOutcome(ctx, other)
@@ -214,13 +214,13 @@ func TestListJobsPageAndTotal(t *testing.T) {
 	var ids []int64
 	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
 		for i := range int64(3) {
-			id, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: "1", DedupeKey: jobs.WorkKey(i + 1)})
+			id, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: i + 1, DedupeKey: jobs.WorkKey(i + 1)})
 			if err != nil {
 				return err
 			}
 			ids = append(ids, id)
 		}
-		_, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindTagInfo, Target: "9", DedupeKey: jobs.TagKey(9)})
+		_, _, err := tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindTagInfo, Target: 9, DedupeKey: jobs.TagKey(9)})
 		return err
 	}))
 	page, total, err := e.svc.ListJobs(ctx, model.JobFilter{Kind: jobs.KindWork, Offset: 1, Limit: 1})
