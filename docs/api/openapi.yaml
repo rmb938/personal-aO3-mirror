@@ -34,7 +34,9 @@ info:
     most 64 requests are handled at once and 256 more wait up to 5 s (then 503 `unavailable`
     with `Retry-After: 1`); a request runs at most `api.request_timeout` (default 10 s, then
     503). The path plus query string is at most 4096 bytes (414), with at most 32 query
-    parameters (400); a body is at most 16 KiB (413).
+    parameters (400); a body is at most 16 KiB (413). The public listener answers only the
+    `Host` names in `api.allowed_hosts` (default 127.0.0.1, ::1, localhost; any port), else
+    421 `misdirected-request`.
 servers:
   - url: /
 # Headers the middleware sets, on any response (Allow only on a 405). OpenAPI has no global
@@ -957,7 +959,7 @@ components:
         An RFC 9457 problem. Every field is an enumerable value. `x-problems` are the types any
         operation can return; an operation's own `x-problems` adds the rest.
       x-problems:
-        [bad-request, validation-error, reveal-disabled, uri-too-long, rate-limited, unavailable, internal-error]
+        [bad-request, misdirected-request, validation-error, reveal-disabled, uri-too-long, rate-limited, unavailable, internal-error]
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:

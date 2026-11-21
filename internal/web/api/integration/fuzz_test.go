@@ -70,8 +70,9 @@ func FuzzRoutes(f *testing.F) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	opts := runtime.Options{ // testOptions with limits too high to trip
-		Version: testVersion, TrustedProxies: []string{"127.0.0.1/32", "::1/128"}, RequestTimeout: 10 * time.Second,
-		GeneralPerMin: math.MaxInt32, SourceAddPerHour: math.MaxInt32, SearchPerMin: math.MaxInt32,
+		Version: testVersion, TrustedProxies: []string{"127.0.0.1/32", "::1/128"}, AllowedHosts: []string{"example.com"},
+		RequestTimeout: 10 * time.Second,
+		GeneralPerMin:  math.MaxInt32, SourceAddPerHour: math.MaxInt32, SearchPerMin: math.MaxInt32,
 	}
 	a, err := api.New(opts, log, newTestControllers(f, log))
 	require.NoError(f, err)

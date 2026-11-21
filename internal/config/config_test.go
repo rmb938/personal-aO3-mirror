@@ -43,6 +43,7 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:8080", cfg.API.Listen)
 	assert.Equal(t, "api/admin.sock", cfg.API.AdminSocket)
 	assert.Equal(t, []string{"127.0.0.1/32", "::1/128"}, cfg.API.TrustedProxies)
+	assert.Equal(t, []string{"127.0.0.1", "::1", "localhost"}, cfg.API.AllowedHosts)
 	assert.Equal(t, 24*time.Hour, cfg.API.HashKeyRotation)
 
 	_, err = Parse([]byte("contact: {discord: \"@fixture_user\"}\napi: {hash_key_rotation: 0s}\n"))
@@ -57,6 +58,10 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 		"admin_socket: \"\"":             "relative path inside data_dir",
 		"trusted_proxies: []":            "must not be empty",
 		"trusted_proxies: [10.0.0.1]":    "not a CIDR prefix",
+		"allowed_hosts: []":              "allowed_hosts must not be empty",
+		"allowed_hosts: [\"a.b:8080\"]":  "not a host name",
+		"allowed_hosts: [\"*.ts.net\"]":  "not a host name",
+		"allowed_hosts: [\"fe80::1%1\"]": "not a host name",
 		"request_timeout: 0s":            "request_timeout",
 		"request_timeout: 2m":            "request_timeout",
 		"hash_key_rotation: 30m":         "hash_key_rotation",
@@ -94,4 +99,16 @@ func TestExampleConfigFailsUntilContactSet(t *testing.T) {
 	fixed := strings.Replace(string(raw), `discord: ""`, `discord: "@fixture_user"`, 1)
 	_, err = Parse([]byte(fixed))
 	require.NoError(t, err, "example config with contact should be valid")
+}
+
+func TestValidHost(t *testing.T) {
+	for _, h := range []string{"localhost", "127.0.0.1", "::1", "mirror.tail1234.ts.net", "A-1.example"} {
+		assert.True(t, ValidHost(h), h)
+	}
+	for _, h := range []string{
+		"", "a.b:8080", "[::1]", "*.ts.net", "fe80::1%eth0", "a..b", "a.", "-a.b", "a-.b", "a_b",
+		strings.Repeat("a", 64) + ".b", strings.Repeat("a.", 127) + "aa",
+	} {
+		assert.False(t, ValidHost(h), h)
+	}
 }

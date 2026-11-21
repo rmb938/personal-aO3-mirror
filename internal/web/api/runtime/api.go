@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
@@ -25,6 +26,9 @@ type Options struct {
 	NoReveal bool
 	// TrustedProxies are the CIDR prefixes whose X-Forwarded-For is trusted (public listener).
 	TrustedProxies []string
+	// AllowedHosts are the host names (no port, any case) the public listener answers to; any
+	// other Host gets 421 misdirected-request. The admin socket does not check Host.
+	AllowedHosts []string
 	// RequestTimeout is the per-request context deadline.
 	RequestTimeout time.Duration
 	// HashKeyRotation is the hash key lifetime (0: one key per process; else >= 1h).
@@ -81,6 +85,14 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 			return nil, fmt.Errorf("api: trusted proxy %q: %w", p, err)
 		}
 	}
+	if len(opts.AllowedHosts) == 0 {
+		return nil, errors.New("api: no allowed hosts")
+	}
+	for _, h := range opts.AllowedHosts {
+		if !config.ValidHost(h) {
+			return nil, fmt.Errorf("api: allowed host %q is not a host name or IP address", h)
+		}
+	}
 	if opts.RequestTimeout <= 0 {
 		return nil, errors.New("api: request timeout must be positive")
 	}
@@ -107,6 +119,7 @@ func (a *API) Public() http.Handler { return a.public }
 // Admin is the handler for the admin unix socket: every public route plus the admin routes.
 func (a *API) Admin() http.Handler { return a.admin }
 
+// Router is one listener's router as a *chi.Mux, for tests that walk or extend the routes.
 func (a *API) Router(admin bool) *chi.Mux {
 	if admin {
 		return a.admin
@@ -152,6 +165,12 @@ func (a *API) router(admin bool, registerRoutes RouteBuilder) *chi.Mux {
 		a.recoverer,
 		securityHeaders,
 		a.enforce,
+	)
+	if !admin {
+		// A unix socket can't be reached by DNS rebinding, and clients name it freely.
+		r.Use(a.hostCheck(a.opts.AllowedHosts))
+	}
+	r.Use(
 		a.urlLimits,
 		a.rateLimit(rate, time.Minute, listener),
 		a.throttle(maxInFlight, maxBacklog, backlogWait),

@@ -214,6 +214,30 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestHostCheck(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *Options) {
+		o.AllowedHosts = []string{"example.com", "Mirror.Example.net", "127.0.0.1", "::1"}
+	})
+	do := func(h http.Handler, host string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/healthz", nil)
+		req.Host = host
+		return testutil.Do(t, h, req)
+	}
+	for _, host := range []string{
+		"example.com", "EXAMPLE.com:8080", "mirror.example.net", "127.0.0.1:8080", "[::1]:8080", "[::1]",
+	} {
+		assert.Equal(t, http.StatusOK, do(a.Public(), host).Code, host)
+	}
+	for _, host := range []string{"", "evil.example", "example.com.", "example.com.evil.example", "127.0.0.2:8080", "[::1"} {
+		w := do(a.Public(), host)
+		require.Equal(t, http.StatusMisdirectedRequest, w.Code, host)
+		assert.Equal(t, dto.TypeMisdirected, testutil.DecodeProblem(t, w).Type, host)
+		assert.Equal(t, "hashed", w.Header().Get(HeaderFanwork), host)
+		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), host)
+	}
+	assert.Equal(t, http.StatusOK, do(a.Admin(), "admin").Code, "the socket does not check Host")
+}
+
 func TestURLLimits(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	long := "/api/v1/healthz?x=" + strings.Repeat("a", MaxURLBytes)

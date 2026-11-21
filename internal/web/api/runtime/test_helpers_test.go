@@ -21,10 +21,13 @@ const (
 	revealQuery = "?" + RevealParam + "=1"
 )
 
+// testHosts holds httptest.NewRequest's default Host.
+var testHosts = []string{"example.com"}
+
 func testOptions(t *testing.T) Options {
 	t.Helper()
 	return Options{
-		Version: "test", TrustedProxies: []string{"127.0.0.1/32", "::1/128"},
+		Version: "test", TrustedProxies: []string{"127.0.0.1/32", "::1/128"}, AllowedHosts: testHosts,
 		RequestTimeout: 10 * time.Second, GeneralPerMin: 1000, SourceAddPerHour: 1000, SearchPerMin: 1000,
 	}
 }

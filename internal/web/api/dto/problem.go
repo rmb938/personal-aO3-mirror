@@ -49,6 +49,7 @@ const ProblemTypeBase = "https://github.com/rmb938/personal-aO3-mirror/blob/main
 
 const (
 	TypeBadRequest           ProblemType = ProblemTypeBase + "bad-request"
+	TypeMisdirected          ProblemType = ProblemTypeBase + "misdirected-request"
 	TypeValidation           ProblemType = ProblemTypeBase + "validation-error"
 	TypeInvalidBody          ProblemType = ProblemTypeBase + "invalid-body"
 	TypeBodyTooLarge         ProblemType = ProblemTypeBase + "body-too-large"
@@ -83,6 +84,7 @@ type ProblemInfo struct {
 // comes from it. docs/api/problems.md documents each one (a test checks they match).
 var problemInfo = map[ProblemType]ProblemInfo{
 	TypeBadRequest:           {http.StatusBadRequest, "Bad Request"},
+	TypeMisdirected:          {http.StatusMisdirectedRequest, "Misdirected Request"},
 	TypeValidation:           {http.StatusUnprocessableEntity, "Validation Error"},
 	TypeInvalidBody:          {http.StatusBadRequest, "Invalid Request Body"},
 	TypeBodyTooLarge:         {http.StatusRequestEntityTooLarge, "Content Too Large"},

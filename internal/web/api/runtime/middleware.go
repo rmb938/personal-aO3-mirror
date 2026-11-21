@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -290,6 +292,35 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostCheck answers 421 misdirected-request unless the Host header, without its port, is one of
+// hosts (case-insensitive). A page using DNS rebinding sends its own host name, so it can't
+// reach the listener from a browser; Go's cross-origin check alone would see it as same-origin.
+func (a *API) hostCheck(hosts []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		allowed[strings.ToLower(h)] = true
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !allowed[requestHost(r.Host)] {
+				respondError(w, r, a.log, problem.WithDetail(dto.TypeMisdirected, DetailHostNotAllowed))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// requestHost is a Host header's host, lowercased, without its port or IPv6 brackets.
+func requestHost(h string) string {
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
+	} else if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = h[1 : len(h)-1]
+	}
+	return strings.ToLower(h)
 }
 
 // urlLimits rejects URLs whose escaped path plus raw query exceed MaxURLBytes (414). Parameter

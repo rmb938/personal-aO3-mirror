@@ -92,6 +92,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		Version:          version,
 		NoReveal:         noReveal,
 		TrustedProxies:   cfg.API.TrustedProxies,
+		AllowedHosts:     cfg.API.AllowedHosts,
 		RequestTimeout:   cfg.API.RequestTimeout,
 		HashKeyRotation:  cfg.API.HashKeyRotation,
 		GeneralPerMin:    cfg.API.Rate.GeneralPerMin,
@@ -190,7 +191,7 @@ func (s *server) serve(ctx context.Context) (err error) {
 	defer func() { err = errors.Join(err, s.store.Close()) }()
 	attrs := []any{
 		"listen", s.tcp.Addr().String(), "admin_socket", s.sock.Addr().String(),
-		"trusted_proxies", s.cfg.TrustedProxies, "no_reveal", s.noReveal,
+		"trusted_proxies", s.cfg.TrustedProxies, "allowed_hosts", s.cfg.AllowedHosts, "no_reveal", s.noReveal,
 		"request_timeout", s.cfg.RequestTimeout.String(), "hash_key_rotation", s.cfg.HashKeyRotation.String(),
 		"general_per_min", s.cfg.Rate.GeneralPerMin, "search_per_min", s.cfg.Rate.SearchPerMin,
 		"source_add_per_hour", s.cfg.Rate.SourceAddPerHour,
