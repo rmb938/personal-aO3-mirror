@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,4 +161,106 @@ func TestListTags(t *testing.T) {
 
 	_, _, err = e.svc.ListTags(ctx, model.TagFilter{Limit: store.MaxTagPage + 1})
 	require.Error(t, err)
+}
+
+// seedMedia stores works over fandoms Fixture Fandom 1..7 (fandom n on n works) and their tag
+// pages: each lists Fixture Media A as its parent, and fandom 1 Fixture Media B too.
+func seedMedia(t *testing.T, e *env) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, e.st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
+		id := int64(0)
+		for n := 1; n <= 7; n++ {
+			fandom := "Fixture Fandom " + strconv.Itoa(n)
+			for range n {
+				id++
+				w := model.Work{ID: id, Title: "Fixture Title", Revised: "2026-11-01",
+					Tags: []model.Tag{{Type: model.TagFandom, Name: fandom}}}
+				if _, err := tx.UpsertWork(ctx, w, model.FromPage, 1); err != nil {
+					return err
+				}
+			}
+			tag, err := tx.TagByName(ctx, fandom)
+			if err != nil {
+				return err
+			}
+			parents := []string{"Fixture Media A"}
+			if n == 1 {
+				parents = append(parents, "Fixture Media B")
+			}
+			if err := tx.UpdateTagInfo(ctx, tag.ID, store.TagInfoUpdate{Type: model.TagFandom, Canonical: true,
+				Parents: parents}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+}
+
+func TestListMedia(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	seedMedia(t, e)
+
+	page, total, err := e.svc.ListMedia(ctx, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, page, 2)
+	a, b := page[0], page[1]
+	assert.Equal(t, "Fixture Media A", a.Tag.Name, "by name")
+	assert.Equal(t, model.TagMedia, a.Tag.Type)
+	assert.Equal(t, 7, a.FandomsTotal)
+	var names []string
+	for _, f := range a.Fandoms {
+		names = append(names, f.Name)
+	}
+	assert.Equal(t, []string{"Fixture Fandom 7", "Fixture Fandom 6", "Fixture Fandom 5", "Fixture Fandom 4",
+		"Fixture Fandom 3"}, names, "the most used, at most MediumTopFandoms")
+	assert.Equal(t, 7, a.Fandoms[0].Uses)
+	assert.Equal(t, "Fixture Media B", b.Tag.Name)
+	assert.Equal(t, 1, b.FandomsTotal)
+	require.Len(t, b.Fandoms, 1)
+	assert.Equal(t, "Fixture Fandom 1", b.Fandoms[0].Name)
+
+	page, total, err = e.svc.ListMedia(ctx, 1, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total, "over all pages")
+	require.Len(t, page, 1)
+	assert.Equal(t, b.Tag, page[0].Tag)
+
+	_, _, err = e.svc.ListMedia(ctx, 0, store.MaxTagPage+1)
+	require.Error(t, err)
+}
+
+func TestListMediumFandoms(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	seedMedia(t, e)
+	media, _, err := e.svc.ListMedia(ctx, 0, 10)
+	require.NoError(t, err)
+	a := media[0].Tag.ID
+
+	page, total, err := e.svc.ListMediumFandoms(ctx, a, model.TagFilter{Offset: 1, Limit: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 7, total)
+	require.Len(t, page, 2)
+	assert.Equal(t, "Fixture Fandom 2", page[0].Name, "by name by default")
+	assert.Equal(t, "Fixture Fandom 3", page[1].Name)
+
+	page, _, err = e.svc.ListMediumFandoms(ctx, a, model.TagFilter{Sort: model.TagSortUses, Direction: model.SortAsc,
+		Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, "Fixture Fandom 1", page[0].Name)
+
+	page, total, err = e.svc.ListMediumFandoms(ctx, a, model.TagFilter{Types: []model.TagType{model.TagMedia},
+		ParentIDs: []int64{media[1].Tag.ID}, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 7, total, "the medium's type and parent replace the filter's")
+	assert.Len(t, page, 7)
+
+	fandom := page[0].ID
+	for _, id := range []int64{fandom, 999_999} {
+		_, _, err = e.svc.ListMediumFandoms(ctx, id, model.TagFilter{Limit: 10})
+		require.ErrorIs(t, err, ErrNoMedium, "a fandom, or no tag")
+	}
 }

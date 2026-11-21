@@ -41,7 +41,7 @@ func TestGetTag(t *testing.T) {
 		assert.Equal(t, 1, groups[0].Total, name)
 		assert.True(t, isHash(t, groups[0].Tags[0].Name), name+" name hashed")
 	}
-	assert.Equal(t, dto.TagType("Unknown"), tag.Parents[0].Type, "a parent's type is unknown until it is seen on a work")
+	assert.Equal(t, dto.TagType("Media"), tag.Parents[0].Type, "a fandom's parents are media")
 	assert.Equal(t, dto.TagType("Fandom"), tag.Synonyms[0].Type, "a synonym takes the tag's type")
 
 	// The synonym: merged into the seeded tag, so not canonical.

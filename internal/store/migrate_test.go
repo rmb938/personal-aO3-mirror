@@ -77,6 +77,37 @@ func TestMigrateJobTargetInt(t *testing.T) {
 	require.Equal(t, 1, n, "other job's event kept")
 }
 
+// 0009 types the Unknown parents of fandoms as Media, and no other tag.
+func TestMigrateMediaParents(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	old := openAt(t, dir, 8)
+	_, err := old.meta.ExecContext(ctx, `INSERT INTO tags (id, name, type, first_seen) VALUES
+		(1, 'Fixture Fandom', 'Fandom', 1), (2, 'Fixture Media', 'Unknown', 1), (3, 'Fixture Character', 'Character', 1),
+		(4, 'Fixture Parent', 'Unknown', 1), (5, 'Fixture Lone', 'Unknown', 1)`)
+	require.NoError(t, err)
+	_, err = old.meta.ExecContext(ctx, `INSERT INTO tag_parents (child_id, parent_id) VALUES (1, 2), (3, 1), (3, 4)`)
+	require.NoError(t, err)
+	require.NoError(t, old.meta.Close())
+
+	s, err := Open(ctx, dir, Options{})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s.Close()) }()
+	got := map[int64]string{}
+	rows, err := s.meta.QueryContext(ctx, `SELECT id, type FROM tags`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	for rows.Next() {
+		var id int64
+		var typ string
+		require.NoError(t, rows.Scan(&id, &typ))
+		got[id] = typ
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, map[int64]string{1: "Fandom", 2: "Media", 3: "Character", 4: "Unknown", 5: "Unknown"}, got,
+		"only the fandom's parent becomes Media")
+}
+
 // A stored target that is not an integer fails the migration instead of becoming 0.
 func TestMigrateJobTargetIntRefusesText(t *testing.T) {
 	dir := t.TempDir()

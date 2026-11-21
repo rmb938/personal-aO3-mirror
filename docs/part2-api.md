@@ -1204,7 +1204,25 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `info_fetched_at`. `convert.TagFilter` and `convert.TagList` map it.
       - QUERY only (no `GET /tags`): `Accept-Query`, the search rate limit, paging in the query
         string. The leak sample filters by type and sorts by uses.
-  - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d.
+  - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d, after AO3's `MediaController`
+    and `FandomsController#index`. In two PRs:
+    - [x] **12e1. Store + controller: media.** As built:
+      - Media tags were never typed: tag pages stored parents as `Unknown` until seen on a work,
+        and a medium is never on a work. AO3 gives a fandom only media parents
+        (`Fandom#parent_types`; meta tags are listed apart), so `UpdateTagInfo` now types a
+        fandom's parents `Media` (other tags' parents still start `Unknown`), and meta migration
+        0009 types the `Unknown` parents of stored fandoms.
+      - `controllers.ListMedia(offset, limit)`: a page of the stored media tags by name, each a
+        `Medium` with its `MediumTopFandoms` (5, as AO3) most used fandoms and `FandomsTotal`,
+        plus the total, in one read transaction. AO3 lists canonical media only; the mirror
+        never reads a medium's tag page, so it lists every medium a fandom page named.
+      - `controllers.ListMediumFandoms(mediumID, f)`: `ListTags` with the type `Fandom` and the
+        medium as the parent, or `ErrNoMedium` (no tag, or not a media tag). AO3 lists canonical
+        fandoms (all in use for Uncategorized Fandoms); this lists every fandom, and `canonical`
+        tells them apart.
+    - [ ] **12e2. Routes**: `GET /media` (page, per_page) and `GET /media/{id}/fandoms` (sort,
+      direction, page, per_page), DTOs, convert, `ErrNoMedium` as 404, leak samples, OpenAPI and
+      the client.
 - [ ] **13. Series, creators, collections**
   - `GET /series/{id}` (with `complete_locally`, `works_total`, `works_mirrored`,
     `missing_positions`, `missing_work_ids`, `mirror_source_url`) and `/series/{id}/works`.
