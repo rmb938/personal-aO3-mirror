@@ -128,11 +128,16 @@ type WorkSkin struct {
 }
 
 // WorkSort is a work listing's sort column, after AO3's work_search sort_column (an enum).
+// WorkSortBestMatch ranks by the search query, so it needs one.
 type WorkSort string
+
+// WorkSortBestMatch is the sort by search rank (AO3 _score, "Best Match").
+const WorkSortBestMatch WorkSort = "best_match"
 
 // EnumValues lists every WorkSort.
 func (WorkSort) EnumValues() []string {
-	return []string{"revised", "published", "words", "hits", "kudos", "comments", "bookmarks", "title", "creator"}
+	return []string{"revised", "published", "words", "hits", "kudos", "comments", "bookmarks", "title", "creator",
+		string(WorkSortBestMatch)}
 }
 
 // SortDirection orders a listing (an enum). Omitted, the sort column's default applies:

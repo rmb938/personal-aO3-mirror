@@ -78,6 +78,7 @@ type ListSourcesParams struct {
 
 // ListWorksParams is parameters of listWorks operation.
 type ListWorksParams struct {
+	// `best_match` needs a search query, which only `QUERY` takes: 422 here.
 	Sort OptWorkSort `json:",omitempty,omitzero"`
 	// Omitted, ascending for `title` and `creator` and descending for the rest.
 	Direction OptSortDirection `json:",omitempty,omitzero"`

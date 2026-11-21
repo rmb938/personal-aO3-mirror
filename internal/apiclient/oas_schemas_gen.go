@@ -7657,6 +7657,11 @@ func (s *WorkListHeaders) SetResponse(val WorkList) {
 // are all listed in one `validation-error` (by JSON Pointer).
 // Ref: #/components/schemas/WorkQueryRequest
 type WorkQueryRequest struct {
+	// Search text (AO3 `query`) matched against titles, summaries, creators, tags and series titles: words
+	// and `"quoted phrases"` must all match, and a leading `-` excludes a word or phrase; nothing else is
+	// syntax. At most 16 terms, at least one not excluded, and no control characters. Free text: refused
+	// with `reveal-required` unless the request is revealed.
+	Q OptString `json:"q"`
 	// Every one must match (AO3 `filter_ids`, every tag type in one list). A tag id matches works tagged
 	// with it, a synonym of it, or any of its sub tags (transitively) or their synonyms.
 	TagIds []ID `json:"tag_ids"`
@@ -7687,6 +7692,11 @@ type WorkQueryRequest struct {
 	Sort      OptWorkSort  `json:"sort"`
 	// Omitted, ascending for `title` and `creator` and descending for the rest.
 	Direction OptSortDirection `json:"direction"`
+}
+
+// GetQ returns the value of Q.
+func (s *WorkQueryRequest) GetQ() OptString {
+	return s.Q
 }
 
 // GetTagIds returns the value of TagIds.
@@ -7772,6 +7782,11 @@ func (s *WorkQueryRequest) GetSort() OptWorkSort {
 // GetDirection returns the value of Direction.
 func (s *WorkQueryRequest) GetDirection() OptSortDirection {
 	return s.Direction
+}
+
+// SetQ sets the value of Q.
+func (s *WorkQueryRequest) SetQ(val OptString) {
+	s.Q = val
 }
 
 // SetTagIds sets the value of TagIds.
@@ -8075,8 +8090,10 @@ func (s *WorkSkin) SetCSS(val OptString) {
 	s.CSS = val
 }
 
-// Work listing sort column, after AO3's `sort_column`: `revised` (the default; Date Updated),
-// `published` (Date Posted), `words`, `hits`, `kudos`, `comments`, `bookmarks`, `title`, `creator`.
+// Work listing sort column, after AO3's `sort_column`: `revised` (the default without a search query;
+// Date Updated), `published` (Date Posted), `words`, `hits`, `kudos`, `comments`, `bookmarks`,
+// `title`, `creator`, and `best_match` (AO3 Best Match: search rank, best first by default; the
+// default with a query, and only valid with one).
 // Ref: #/components/schemas/WorkSort
 type WorkSort string
 
@@ -8090,6 +8107,7 @@ const (
 	WorkSortBookmarks WorkSort = "bookmarks"
 	WorkSortTitle     WorkSort = "title"
 	WorkSortCreator   WorkSort = "creator"
+	WorkSortBestMatch WorkSort = "best_match"
 )
 
 // AllValues returns all WorkSort values.
@@ -8104,6 +8122,7 @@ func (WorkSort) AllValues() []WorkSort {
 		WorkSortBookmarks,
 		WorkSortTitle,
 		WorkSortCreator,
+		WorkSortBestMatch,
 	}
 }
 
@@ -8127,6 +8146,8 @@ func (s WorkSort) MarshalText() ([]byte, error) {
 	case WorkSortTitle:
 		return []byte(s), nil
 	case WorkSortCreator:
+		return []byte(s), nil
+	case WorkSortBestMatch:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -8162,6 +8183,9 @@ func (s *WorkSort) UnmarshalText(data []byte) error {
 		return nil
 	case WorkSortCreator:
 		*s = WorkSortCreator
+		return nil
+	case WorkSortBestMatch:
+		*s = WorkSortBestMatch
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

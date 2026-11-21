@@ -45,3 +45,8 @@ func TestWorkFilter(t *testing.T) {
 func TestWorkQueryBoundsMatchModel(t *testing.T) {
 	assert.Equal(t, model.MaxWorkFilterTags, request.MaxWorkQueryTags)
 }
+
+func TestWorkFilterQuery(t *testing.T) {
+	got := WorkFilter(request.WorkQuery{Q: `lorem -"ipsum dolor"`, Sort: "best_match"})
+	assert.Equal(t, model.WorkFilter{Query: `lorem -"ipsum dolor"`, Sort: model.WorkSortBestMatch}, got)
+}

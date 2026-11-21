@@ -1071,17 +1071,17 @@ Status: tick when the PR merges.
       (`GET` and `QUERY`), besides the existing 415 case. chi v5.5.0 routes `QUERY` natively
       (`r.Query`), and ogen v1.25.0 generates the OpenAPI 3.2 `query` operation
       (`apiclient.QueryWorks`).
-- [ ] **11. Full-text search**
+- [x] **11. Full-text search**
   - Add `q` to the QUERY body (reveal-only). Sanitized FTS5 MATCH joined with the stage 9
     filters; total count; ranking.
   - Replaces the unused `SearchWorkIDs`.
   - In two PRs:
   - [x] **11a. Store: search query and ranking.** As built:
-    - `model.WorkFilter.Query` is search text. `model.SearchTerms` splits it into a subset of
-      AO3's query syntax: words, `"quoted phrases"` (an unclosed quote runs to the end) and a
+    - `model.WorkFilter.Query` is search text. `searchquery.Terms` (`model.SearchTerms` until
+      11b) splits it into a subset of AO3's query syntax: words, `"quoted phrases"` (an unclosed quote runs to the end) and a
       leading `-` to exclude a word or phrase; every other term must match (AO3's
       `default_operator: AND`). AND, OR, `field:value`, wildcards and the like are plain words.
-      A term with no letter or digit is dropped. At most `model.MaxSearchTerms` (16).
+      A term with no letter or digit is dropped. At most `searchquery.MaxTerms` (16).
     - `store.ftsMatch` builds the MATCH expression: each term a quoted FTS5 string (so FTS5
       tokenizes it into a word or phrase and no user text is syntax), included terms joined
       with AND, excluded ones removed with `NOT (… OR …)`. No included term, or too many terms,
@@ -1110,9 +1110,18 @@ Status: tick when the PR merges.
       upsert (the work, plus every work in a series the upsert inserted or renamed), on
       `UpsertSeries` (the series' works) and on `SetSeriesMembers` (current and dropped members).
     - `BenchmarkFTS` at 200k works: the backfill ~3 s, one work ~0.15 ms, a 20-work series ~2 ms.
-  - [ ] **11b. API: `q`.** `q` in `request.WorkQuery` (reveal-only, joins `NeedsReveal`; at most
+  - [x] **11b. API: `q`.** `q` in `request.WorkQuery` (reveal-only, joins `NeedsReveal`; at most
     256 runes and 16 terms, at least one included term: 422 otherwise), `best_match` in
-    `dto.WorkSort` (422 without `q`, on `GET` too), OpenAPI and the regenerated client.
+    `dto.WorkSort` (422 without `q`, on `GET` too), OpenAPI and the regenerated client. As built:
+    - The tokenizer moved from `model` to the stdlib-only `internal/searchquery` (`Terms`,
+      `Term`, `MaxTerms`), so `request` validates with the store's rules without using `model`.
+    - `WorkQuery.Validate` records one `/q` error for a q over `MaxQueryRunes` (256) or with a
+      control character (`detailQuery`), or with too many terms or none to include
+      (`detailTerms`), so a valid body never makes the store refuse the search.
+    - `dto.WorkSortBestMatch` is in the enum; `request.DetailBestMatch` is the 422 for it without
+      `q`, at `/sort` in the body and on the `sort` parameter of `GET` (which has no `q`).
+    - The all-routes leak sample stays without `q` (it must succeed hashed);
+      `TestQueryWorksSearch` searches the seeded works revealed and checks q is never logged.
 - [ ] **12. Tags**
   - Store readers for parents, meta/sub tags, synonyms/merger, and work counts.
   - `GET /tags/{id}`; `GET` + `QUERY /tags/{id}/works` (stage 9 filters scoped to the tag and,

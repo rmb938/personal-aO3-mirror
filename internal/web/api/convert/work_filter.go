@@ -11,6 +11,7 @@ import (
 // WorkFilter maps a validated work query body to the store filter (paging is the caller's).
 func WorkFilter(r request.WorkQuery) model.WorkFilter {
 	return model.WorkFilter{
+		Query:         r.Q,
 		Tags:          slices.Clone(r.TagIDs),
 		ExcludeTags:   slices.Clone(r.ExcludeTagIDs),
 		Complete:      r.Complete,
