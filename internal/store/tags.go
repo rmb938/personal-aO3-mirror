@@ -90,27 +90,37 @@ type TagInfo struct {
 
 // TagInfoByID returns a tag and its wrangling state by id, or ErrNoTag.
 func (s *ReadTx) TagInfoByID(ctx context.Context, id int64) (TagInfo, error) {
-	return s.tagInfo(ctx, `id = ?`, id)
+	return s.tagInfo(ctx, `t.id = ?`, id)
 }
 
 // TagByName returns a tag and its wrangling state by name (case-insensitive), or ErrNoTag.
 func (s *ReadTx) TagByName(ctx context.Context, name string) (TagInfo, error) {
-	return s.tagInfo(ctx, `name = ?`, name)
+	return s.tagInfo(ctx, `t.name = ?`, name)
 }
 
 // tagInfo reads the one tag matching cond (a constant condition on one bound arg).
 func (s *ReadTx) tagInfo(ctx context.Context, cond string, arg any) (TagInfo, error) {
 	var t TagInfo
-	var canonical, merger sql.NullInt64
-	var fetched int64
-	err := s.meta.QueryRowContext(ctx, `SELECT id, name, type, canonical, merger_id, info_fetched_at
-		FROM tags WHERE `+cond, arg).Scan(&t.ID, &t.Name, &t.Type, &canonical, &merger, &fetched)
+	err := scanTagInfo(s.meta.QueryRowContext(ctx, `SELECT `+tagInfoCols+` FROM tags t WHERE `+cond, arg).Scan, &t)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNoTag
 	}
+	return t, err
+}
+
+// tagInfoCols are the columns scanTagInfo reads, from tags as t.
+const tagInfoCols = `t.id, t.name, t.type, t.canonical, t.merger_id, t.info_fetched_at`
+
+// scanTagInfo scans tagInfoCols, then the extra destinations, into t.
+func scanTagInfo(scan func(dest ...any) error, t *TagInfo, extra ...any) error {
+	var canonical, merger sql.NullInt64
+	var fetched int64
+	if err := scan(append([]any{&t.ID, &t.Name, &t.Type, &canonical, &merger, &fetched}, extra...)...); err != nil {
+		return err
+	}
 	t.Canonical, t.CanonicalKnown, t.MergerID = canonical.Int64 == 1, canonical.Valid, merger.Int64
 	t.InfoFetchedAt = unixTime(fetched)
-	return t, err
+	return nil
 }
 
 // TagInfoUpdate is what a tag page says about a tag.

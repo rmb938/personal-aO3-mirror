@@ -134,3 +134,30 @@ func TestListTagWorks(t *testing.T) {
 	_, _, err = e.svc.ListTagWorks(ctx, 999_999, model.WorkFilter{Limit: 10})
 	require.ErrorIs(t, err, store.ErrNoTag)
 }
+
+func TestListTags(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	seedViewTags(t, e)
+	tagNames := func(page []store.TagRow) []string {
+		var out []string
+		for _, r := range page {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+
+	page, total, err := e.svc.ListTags(ctx, model.TagFilter{Sort: model.TagSortUses, Limit: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 4, total, "every stored tag, over all pages")
+	assert.Equal(t, []string{"Fixture Fandom", "Fixture Char Syn"}, tagNames(page))
+	assert.Equal(t, 2, page[0].Uses)
+
+	page, total, err = e.svc.ListTags(ctx, model.TagFilter{Types: []model.TagType{model.TagCharacter}, Offset: 1, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	assert.Equal(t, []string{"Fixture Char Syn", "Fixture Character"}, tagNames(page))
+
+	_, _, err = e.svc.ListTags(ctx, model.TagFilter{Limit: store.MaxTagPage + 1})
+	require.Error(t, err)
+}
