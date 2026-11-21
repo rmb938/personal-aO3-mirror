@@ -20,6 +20,7 @@ const (
 	Jobs      = "/api/v1/jobs"
 	Job       = "/api/v1/jobs/{id}"
 	Status    = "/api/v1/status"
+	Works     = "/api/v1/works"
 	Work      = "/api/v1/works/{id}"
 	WorkSkin  = "/api/v1/works/{id}/skin"
 	Chapters  = "/api/v1/works/{id}/chapters"

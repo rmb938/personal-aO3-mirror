@@ -3031,6 +3031,52 @@ func (o OptSeriesInfoDetail) Or(d SeriesInfoDetail) SeriesInfoDetail {
 	return d
 }
 
+// NewOptSortDirection returns new OptSortDirection with value set to v.
+func NewOptSortDirection(v SortDirection) OptSortDirection {
+	return OptSortDirection{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptSortDirection is optional SortDirection.
+type OptSortDirection struct {
+	Value SortDirection
+	Set   bool
+}
+
+// IsSet returns true if OptSortDirection was set.
+func (o OptSortDirection) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptSortDirection) Reset() {
+	var v SortDirection
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptSortDirection) SetTo(v SortDirection) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptSortDirection) Get() (v SortDirection, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptSortDirection) Or(d SortDirection) SortDirection {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptSourceAddDetail returns new OptSourceAddDetail with value set to v.
 func NewOptSourceAddDetail(v SourceAddDetail) OptSourceAddDetail {
 	return OptSourceAddDetail{
@@ -3301,6 +3347,52 @@ func (o OptWorkDetail) Get() (v WorkDetail, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptWorkDetail) Or(d WorkDetail) WorkDetail {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptWorkSort returns new OptWorkSort with value set to v.
+func NewOptWorkSort(v WorkSort) OptWorkSort {
+	return OptWorkSort{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptWorkSort is optional WorkSort.
+type OptWorkSort struct {
+	Value WorkSort
+	Set   bool
+}
+
+// IsSet returns true if OptWorkSort was set.
+func (o OptWorkSort) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptWorkSort) Reset() {
+	var v WorkSort
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptWorkSort) SetTo(v WorkSort) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptWorkSort) Get() (v WorkSort, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptWorkSort) Or(d WorkSort) WorkSort {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -4110,6 +4202,48 @@ func (s *SeriesInfoDetail) SetMembersSeen(val NilInt) {
 
 // SetSourceSettingsNoContent is response for SetSourceSettings operation.
 type SetSourceSettingsNoContent struct{}
+
+// Ref: #/components/schemas/SortDirection
+type SortDirection string
+
+const (
+	SortDirectionAsc  SortDirection = "asc"
+	SortDirectionDesc SortDirection = "desc"
+)
+
+// AllValues returns all SortDirection values.
+func (SortDirection) AllValues() []SortDirection {
+	return []SortDirection{
+		SortDirectionAsc,
+		SortDirectionDesc,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s SortDirection) MarshalText() ([]byte, error) {
+	switch s {
+	case SortDirectionAsc:
+		return []byte(s), nil
+	case SortDirectionDesc:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *SortDirection) UnmarshalText(data []byte) error {
+	switch SortDirection(data) {
+	case SortDirectionAsc:
+		*s = SortDirectionAsc
+		return nil
+	case SortDirectionDesc:
+		*s = SortDirectionDesc
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
 
 // Ref: #/components/schemas/Source
 type Source struct {
@@ -6184,6 +6318,278 @@ func (s *Work) SetLastFetchedAt(val OptTimestamp) {
 	s.LastFetchedAt = val
 }
 
+// One work in a listing: what AO3's blurb shows. Strings other than `status`, tag `type` and the
+// `_on`/`_at` dates are content, hashed unless revealed. Lists are `[]` when empty; optional fields
+// are omitted when unset.
+// Ref: #/components/schemas/WorkBlurb
+type WorkBlurb struct {
+	ID     ID              `json:"id"`
+	Status WorkBlurbStatus `json:"status"`
+	Title  string          `json:"title"`
+	// Byline order.
+	Creators       []WorkCreator `json:"creators"`
+	Anonymous      bool          `json:"anonymous"`
+	Restricted     bool          `json:"restricted"`
+	SummaryHTML    OptString     `json:"summary_html"`
+	Language       OptString     `json:"language"`
+	Words          int           `json:"words"`
+	ChaptersPosted int           `json:"chapters_posted"`
+	// Omitted when unknown.
+	ChaptersExpected OptInt `json:"chapters_expected"`
+	Complete         bool   `json:"complete"`
+	// Known only from the work page.
+	PublishedOn OptDate   `json:"published_on"`
+	RevisedOn   OptDate   `json:"revised_on"`
+	Stats       WorkStats `json:"stats"`
+	// Page order (grouped by type).
+	Tags   []WorkTag        `json:"tags"`
+	Series []WorkSeriesPart `json:"series"`
+	// The last full fetch; omitted for a blurb-only work.
+	LastFetchedAt OptTimestamp `json:"last_fetched_at"`
+}
+
+// GetID returns the value of ID.
+func (s *WorkBlurb) GetID() ID {
+	return s.ID
+}
+
+// GetStatus returns the value of Status.
+func (s *WorkBlurb) GetStatus() WorkBlurbStatus {
+	return s.Status
+}
+
+// GetTitle returns the value of Title.
+func (s *WorkBlurb) GetTitle() string {
+	return s.Title
+}
+
+// GetCreators returns the value of Creators.
+func (s *WorkBlurb) GetCreators() []WorkCreator {
+	return s.Creators
+}
+
+// GetAnonymous returns the value of Anonymous.
+func (s *WorkBlurb) GetAnonymous() bool {
+	return s.Anonymous
+}
+
+// GetRestricted returns the value of Restricted.
+func (s *WorkBlurb) GetRestricted() bool {
+	return s.Restricted
+}
+
+// GetSummaryHTML returns the value of SummaryHTML.
+func (s *WorkBlurb) GetSummaryHTML() OptString {
+	return s.SummaryHTML
+}
+
+// GetLanguage returns the value of Language.
+func (s *WorkBlurb) GetLanguage() OptString {
+	return s.Language
+}
+
+// GetWords returns the value of Words.
+func (s *WorkBlurb) GetWords() int {
+	return s.Words
+}
+
+// GetChaptersPosted returns the value of ChaptersPosted.
+func (s *WorkBlurb) GetChaptersPosted() int {
+	return s.ChaptersPosted
+}
+
+// GetChaptersExpected returns the value of ChaptersExpected.
+func (s *WorkBlurb) GetChaptersExpected() OptInt {
+	return s.ChaptersExpected
+}
+
+// GetComplete returns the value of Complete.
+func (s *WorkBlurb) GetComplete() bool {
+	return s.Complete
+}
+
+// GetPublishedOn returns the value of PublishedOn.
+func (s *WorkBlurb) GetPublishedOn() OptDate {
+	return s.PublishedOn
+}
+
+// GetRevisedOn returns the value of RevisedOn.
+func (s *WorkBlurb) GetRevisedOn() OptDate {
+	return s.RevisedOn
+}
+
+// GetStats returns the value of Stats.
+func (s *WorkBlurb) GetStats() WorkStats {
+	return s.Stats
+}
+
+// GetTags returns the value of Tags.
+func (s *WorkBlurb) GetTags() []WorkTag {
+	return s.Tags
+}
+
+// GetSeries returns the value of Series.
+func (s *WorkBlurb) GetSeries() []WorkSeriesPart {
+	return s.Series
+}
+
+// GetLastFetchedAt returns the value of LastFetchedAt.
+func (s *WorkBlurb) GetLastFetchedAt() OptTimestamp {
+	return s.LastFetchedAt
+}
+
+// SetID sets the value of ID.
+func (s *WorkBlurb) SetID(val ID) {
+	s.ID = val
+}
+
+// SetStatus sets the value of Status.
+func (s *WorkBlurb) SetStatus(val WorkBlurbStatus) {
+	s.Status = val
+}
+
+// SetTitle sets the value of Title.
+func (s *WorkBlurb) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetCreators sets the value of Creators.
+func (s *WorkBlurb) SetCreators(val []WorkCreator) {
+	s.Creators = val
+}
+
+// SetAnonymous sets the value of Anonymous.
+func (s *WorkBlurb) SetAnonymous(val bool) {
+	s.Anonymous = val
+}
+
+// SetRestricted sets the value of Restricted.
+func (s *WorkBlurb) SetRestricted(val bool) {
+	s.Restricted = val
+}
+
+// SetSummaryHTML sets the value of SummaryHTML.
+func (s *WorkBlurb) SetSummaryHTML(val OptString) {
+	s.SummaryHTML = val
+}
+
+// SetLanguage sets the value of Language.
+func (s *WorkBlurb) SetLanguage(val OptString) {
+	s.Language = val
+}
+
+// SetWords sets the value of Words.
+func (s *WorkBlurb) SetWords(val int) {
+	s.Words = val
+}
+
+// SetChaptersPosted sets the value of ChaptersPosted.
+func (s *WorkBlurb) SetChaptersPosted(val int) {
+	s.ChaptersPosted = val
+}
+
+// SetChaptersExpected sets the value of ChaptersExpected.
+func (s *WorkBlurb) SetChaptersExpected(val OptInt) {
+	s.ChaptersExpected = val
+}
+
+// SetComplete sets the value of Complete.
+func (s *WorkBlurb) SetComplete(val bool) {
+	s.Complete = val
+}
+
+// SetPublishedOn sets the value of PublishedOn.
+func (s *WorkBlurb) SetPublishedOn(val OptDate) {
+	s.PublishedOn = val
+}
+
+// SetRevisedOn sets the value of RevisedOn.
+func (s *WorkBlurb) SetRevisedOn(val OptDate) {
+	s.RevisedOn = val
+}
+
+// SetStats sets the value of Stats.
+func (s *WorkBlurb) SetStats(val WorkStats) {
+	s.Stats = val
+}
+
+// SetTags sets the value of Tags.
+func (s *WorkBlurb) SetTags(val []WorkTag) {
+	s.Tags = val
+}
+
+// SetSeries sets the value of Series.
+func (s *WorkBlurb) SetSeries(val []WorkSeriesPart) {
+	s.Series = val
+}
+
+// SetLastFetchedAt sets the value of LastFetchedAt.
+func (s *WorkBlurb) SetLastFetchedAt(val OptTimestamp) {
+	s.LastFetchedAt = val
+}
+
+type WorkBlurbStatus string
+
+const (
+	WorkBlurbStatusOk         WorkBlurbStatus = "ok"
+	WorkBlurbStatusDeleted    WorkBlurbStatus = "deleted"
+	WorkBlurbStatusHidden     WorkBlurbStatus = "hidden"
+	WorkBlurbStatusRestricted WorkBlurbStatus = "restricted"
+	WorkBlurbStatusUnrevealed WorkBlurbStatus = "unrevealed"
+)
+
+// AllValues returns all WorkBlurbStatus values.
+func (WorkBlurbStatus) AllValues() []WorkBlurbStatus {
+	return []WorkBlurbStatus{
+		WorkBlurbStatusOk,
+		WorkBlurbStatusDeleted,
+		WorkBlurbStatusHidden,
+		WorkBlurbStatusRestricted,
+		WorkBlurbStatusUnrevealed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WorkBlurbStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case WorkBlurbStatusOk:
+		return []byte(s), nil
+	case WorkBlurbStatusDeleted:
+		return []byte(s), nil
+	case WorkBlurbStatusHidden:
+		return []byte(s), nil
+	case WorkBlurbStatusRestricted:
+		return []byte(s), nil
+	case WorkBlurbStatusUnrevealed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WorkBlurbStatus) UnmarshalText(data []byte) error {
+	switch WorkBlurbStatus(data) {
+	case WorkBlurbStatusOk:
+		*s = WorkBlurbStatusOk
+		return nil
+	case WorkBlurbStatusDeleted:
+		*s = WorkBlurbStatusDeleted
+		return nil
+	case WorkBlurbStatusHidden:
+		*s = WorkBlurbStatusHidden
+		return nil
+	case WorkBlurbStatusRestricted:
+		*s = WorkBlurbStatusRestricted
+		return nil
+	case WorkBlurbStatusUnrevealed:
+		*s = WorkBlurbStatusUnrevealed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/WorkChapters
 type WorkChapters struct {
 	// In order.
@@ -6946,6 +7352,55 @@ func (s *WorkDiagStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/WorkList
+type WorkList struct {
+	Items   []WorkBlurb `json:"items"`
+	Page    int         `json:"page"`
+	PerPage int         `json:"per_page"`
+	// Matching works over all pages.
+	Total int `json:"total"`
+}
+
+// GetItems returns the value of Items.
+func (s *WorkList) GetItems() []WorkBlurb {
+	return s.Items
+}
+
+// GetPage returns the value of Page.
+func (s *WorkList) GetPage() int {
+	return s.Page
+}
+
+// GetPerPage returns the value of PerPage.
+func (s *WorkList) GetPerPage() int {
+	return s.PerPage
+}
+
+// GetTotal returns the value of Total.
+func (s *WorkList) GetTotal() int {
+	return s.Total
+}
+
+// SetItems sets the value of Items.
+func (s *WorkList) SetItems(val []WorkBlurb) {
+	s.Items = val
+}
+
+// SetPage sets the value of Page.
+func (s *WorkList) SetPage(val int) {
+	s.Page = val
+}
+
+// SetPerPage sets the value of PerPage.
+func (s *WorkList) SetPerPage(val int) {
+	s.PerPage = val
+}
+
+// SetTotal sets the value of Total.
+func (s *WorkList) SetTotal(val int) {
+	s.Total = val
+}
+
 // A series the work is in, with how much of it is mirrored. `complete_locally` is false for a partial
 // series: not a source, with fewer mirrored works than AO3 lists. A series whose page was never
 // fetched has `works_total` null and is not partial.
@@ -7045,6 +7500,45 @@ func (s *WorkSeries) SetMissingWorkIds(val []ID) {
 	s.MissingWorkIds = val
 }
 
+// A series the work is in, without mirror coverage (see `WorkSeries`).
+// Ref: #/components/schemas/WorkSeriesPart
+type WorkSeriesPart struct {
+	ID    ID     `json:"id"`
+	Title string `json:"title"`
+	// The work's part number; omitted when unknown.
+	Position OptInt `json:"position"`
+}
+
+// GetID returns the value of ID.
+func (s *WorkSeriesPart) GetID() ID {
+	return s.ID
+}
+
+// GetTitle returns the value of Title.
+func (s *WorkSeriesPart) GetTitle() string {
+	return s.Title
+}
+
+// GetPosition returns the value of Position.
+func (s *WorkSeriesPart) GetPosition() OptInt {
+	return s.Position
+}
+
+// SetID sets the value of ID.
+func (s *WorkSeriesPart) SetID(val ID) {
+	s.ID = val
+}
+
+// SetTitle sets the value of Title.
+func (s *WorkSeriesPart) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetPosition sets the value of Position.
+func (s *WorkSeriesPart) SetPosition(val OptInt) {
+	s.Position = val
+}
+
 // Ref: #/components/schemas/WorkSkin
 type WorkSkin struct {
 	// Untrusted CSS (hashed); omitted when the work has none.
@@ -7059,6 +7553,99 @@ func (s *WorkSkin) GetCSS() OptString {
 // SetCSS sets the value of CSS.
 func (s *WorkSkin) SetCSS(val OptString) {
 	s.CSS = val
+}
+
+// Work listing sort column, after AO3's `sort_column`: `revised` (the default; Date Updated),
+// `published` (Date Posted), `words`, `hits`, `kudos`, `comments`, `bookmarks`, `title`, `creator`.
+// Ref: #/components/schemas/WorkSort
+type WorkSort string
+
+const (
+	WorkSortRevised   WorkSort = "revised"
+	WorkSortPublished WorkSort = "published"
+	WorkSortWords     WorkSort = "words"
+	WorkSortHits      WorkSort = "hits"
+	WorkSortKudos     WorkSort = "kudos"
+	WorkSortComments  WorkSort = "comments"
+	WorkSortBookmarks WorkSort = "bookmarks"
+	WorkSortTitle     WorkSort = "title"
+	WorkSortCreator   WorkSort = "creator"
+)
+
+// AllValues returns all WorkSort values.
+func (WorkSort) AllValues() []WorkSort {
+	return []WorkSort{
+		WorkSortRevised,
+		WorkSortPublished,
+		WorkSortWords,
+		WorkSortHits,
+		WorkSortKudos,
+		WorkSortComments,
+		WorkSortBookmarks,
+		WorkSortTitle,
+		WorkSortCreator,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WorkSort) MarshalText() ([]byte, error) {
+	switch s {
+	case WorkSortRevised:
+		return []byte(s), nil
+	case WorkSortPublished:
+		return []byte(s), nil
+	case WorkSortWords:
+		return []byte(s), nil
+	case WorkSortHits:
+		return []byte(s), nil
+	case WorkSortKudos:
+		return []byte(s), nil
+	case WorkSortComments:
+		return []byte(s), nil
+	case WorkSortBookmarks:
+		return []byte(s), nil
+	case WorkSortTitle:
+		return []byte(s), nil
+	case WorkSortCreator:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WorkSort) UnmarshalText(data []byte) error {
+	switch WorkSort(data) {
+	case WorkSortRevised:
+		*s = WorkSortRevised
+		return nil
+	case WorkSortPublished:
+		*s = WorkSortPublished
+		return nil
+	case WorkSortWords:
+		*s = WorkSortWords
+		return nil
+	case WorkSortHits:
+		*s = WorkSortHits
+		return nil
+	case WorkSortKudos:
+		*s = WorkSortKudos
+		return nil
+	case WorkSortComments:
+		*s = WorkSortComments
+		return nil
+	case WorkSortBookmarks:
+		*s = WorkSortBookmarks
+		return nil
+	case WorkSortTitle:
+		*s = WorkSortTitle
+		return nil
+	case WorkSortCreator:
+		*s = WorkSortCreator
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/WorkStats

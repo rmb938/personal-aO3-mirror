@@ -29,6 +29,8 @@ var (
 	DetailRevealValue  = problem.NewDetail("must be 1")
 	DetailJobState     = problem.OneOf(dto.JobState(""))
 	DetailJobKind      = problem.OneOf(dto.JobKind(""))
+	DetailWorkSort     = problem.OneOf(dto.WorkSort(""))
+	DetailDirection    = problem.OneOf(dto.SortDirection(""))
 
 	// Source add body (POST /api/v1/sources); the body's own details are in request.
 	DetailConfirmAdminOnly = problem.NewDetail("only the admin socket accepts confirm; a large source added here waits for `source confirm`")

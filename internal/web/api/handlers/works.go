@@ -3,10 +3,35 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
+
+// ListWorks is GET /api/v1/works (sort, direction, page, per_page): one page of every stored
+// work, by default most recently revised first.
+func (a *Handlers) ListWorks(r *http.Request) (any, error) {
+	q, err := runtime.ParseParams(r, string(dto.ParamSort), string(dto.ParamDirection),
+		string(dto.ParamPage), string(dto.ParamPerPage))
+	if err != nil {
+		return nil, err
+	}
+	f := model.WorkFilter{
+		Sort:      model.WorkSort(q.Enum(string(dto.ParamSort), dto.WorkSort(""), runtime.DetailWorkSort)),
+		Direction: model.SortDirection(q.Enum(string(dto.ParamDirection), dto.SortDirection(""), runtime.DetailDirection)),
+	}
+	p := q.Page()
+	if err := q.Err(); err != nil {
+		return nil, err
+	}
+	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	items, total, err := a.ctl.ListWorks(r.Context(), f)
+	if err != nil {
+		return nil, err
+	}
+	return convert.WorkBlurbList(items, total, p.Page, p.PerPage), nil
+}
 
 // GetWork is GET /api/v1/works/{id}: a stored work's metadata, relations and chapter list.
 func (a *Handlers) GetWork(r *http.Request) (any, error) {

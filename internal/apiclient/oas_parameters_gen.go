@@ -76,6 +76,16 @@ type ListSourcesParams struct {
 	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
+// ListWorksParams is parameters of listWorks operation.
+type ListWorksParams struct {
+	Sort OptWorkSort `json:",omitempty,omitzero"`
+	// Omitted, ascending for `title` and `creator` and descending for the rest.
+	Direction OptSortDirection `json:",omitempty,omitzero"`
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
 // PauseSourceParams is parameters of pauseSource operation.
 type PauseSourceParams struct {
 	ID ID

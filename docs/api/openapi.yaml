@@ -276,6 +276,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Status" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/works:
+    get:
+      operationId: listWorks
+      summary: One page of every stored work, most recently revised first by default.
+      description: |
+        Each item is a listing blurb: no notes, collections or chapter list (see
+        `GET /api/v1/works/{id}`). Content strings are hashed unless revealed; HTML is untrusted.
+        Every sort ends with the work id, in the same direction, so pages are stable. Title and
+        creator sorts follow AO3's sort keys; in hashed mode the order still says a little about
+        the hidden text.
+      parameters:
+        - name: sort
+          in: query
+          schema: { $ref: "#/components/schemas/WorkSort" }
+        - name: direction
+          in: query
+          description: Omitted, ascending for `title` and `creator` and descending for the rest.
+          schema: { $ref: "#/components/schemas/SortDirection" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: A page of the works.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/works/{id}:
     get:
       operationId: getWork
@@ -1600,6 +1627,98 @@ components:
           {
             $ref: "#/components/schemas/Timestamp",
             description: "The last full fetch; omitted for a blurb-only work.",
+          }
+    WorkSort:
+      type: string
+      description: |
+        Work listing sort column, after AO3's `sort_column`: `revised` (the default; Date
+        Updated), `published` (Date Posted), `words`, `hits`, `kudos`, `comments`, `bookmarks`,
+        `title`, `creator`.
+      enum: [revised, published, words, hits, kudos, comments, bookmarks, title, creator]
+    SortDirection:
+      type: string
+      enum: [asc, desc]
+    WorkList:
+      type: object
+      required: [items, page, per_page, total]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/WorkBlurb" } }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: "Matching works over all pages." }
+    WorkBlurb:
+      type: object
+      description: |
+        One work in a listing: what AO3's blurb shows. Strings other than `status`, tag `type`
+        and the `_on`/`_at` dates are content, hashed unless revealed. Lists are `[]` when
+        empty; optional fields are omitted when unset.
+      required:
+        [
+          id,
+          status,
+          title,
+          creators,
+          anonymous,
+          restricted,
+          words,
+          chapters_posted,
+          complete,
+          stats,
+          tags,
+          series,
+        ]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        status:
+          { type: string, enum: [ok, deleted, hidden, restricted, unrevealed] }
+        title: { type: string }
+        creators:
+          type: array
+          description: Byline order.
+          items: { $ref: "#/components/schemas/WorkCreator" }
+        anonymous: { type: boolean }
+        restricted: { type: boolean }
+        summary_html: { type: string }
+        language: { type: string }
+        words: { type: integer }
+        chapters_posted: { type: integer }
+        chapters_expected:
+          { type: integer, description: "Omitted when unknown." }
+        complete: { type: boolean }
+        published_on:
+          {
+            type: string,
+            format: date,
+            description: "Known only from the work page.",
+          }
+        revised_on: { type: string, format: date }
+        stats: { $ref: "#/components/schemas/WorkStats" }
+        tags:
+          type: array
+          description: Page order (grouped by type).
+          items: { $ref: "#/components/schemas/WorkTag" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/WorkSeriesPart" }
+        last_fetched_at:
+          {
+            $ref: "#/components/schemas/Timestamp",
+            description: "The last full fetch; omitted for a blurb-only work.",
+          }
+    WorkSeriesPart:
+      type: object
+      description: A series the work is in, without mirror coverage (see `WorkSeries`).
+      required: [id, title]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        title: { type: string }
+        position:
+          {
+            type: integer,
+            description: "The work's part number; omitted when unknown.",
           }
     WorkCreator:
       type: object

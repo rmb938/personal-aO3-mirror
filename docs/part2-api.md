@@ -1040,8 +1040,17 @@ Status: tick when the PR merges.
     - `controllers.ListWorks` returns `[]WorkBlurb` (row, creators, tags, series; what AO3's
       blurb shows, so no collections) and the total from one read transaction. A limit over
       `MaxWorkBatch` is an error.
-  - [ ] **10b. `GET /works?page&per_page&sort&direction`** → `dto.WorkList{items, page, per_page,
-    total}` of `dto.WorkBlurb`, with `dto.WorkSort` / `dto.SortDirection` enums.
+  - [x] **10b. `GET /works?page&per_page&sort&direction`** → `dto.WorkList{items, page, per_page,
+    total}` of `dto.WorkBlurb`, with `dto.WorkSort` / `dto.SortDirection` enums. As built:
+    - The page is `dto.List[dto.WorkBlurb]` (`WorkList` in the OpenAPI spec), like the job and
+      source lists. No filters: every stored work, any status.
+    - `dto.WorkBlurb` (`convert.WorkBlurb` / `WorkBlurbList`): the work view's fields minus
+      notes, end notes, collections and the chapter list; `series` items are
+      `dto.WorkSeriesPart` (id, title, position; no coverage).
+    - `sort` and `direction` are new `dto.ParamName`s, read with `Params.Enum`
+      (`DetailWorkSort`, `DetailDirection`). A convert test keeps the dto enums equal to
+      `model.WorkSorts()` and the model directions; the integration test checks
+      `runtime.MaxPerPage` ≤ `store.MaxWorkBatch`.
   - [ ] **10c. `QUERY /works`**: a `request.WorkQuery` body with the stage 9 filters, sort and
     direction; `page` / `per_page` stay query params, as on `GET`. `language` is free text (the
     stored AO3 display name), so it is reveal-only (400 `reveal-required` in hashed mode). The

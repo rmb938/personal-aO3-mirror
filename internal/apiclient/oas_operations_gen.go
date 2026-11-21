@@ -23,6 +23,7 @@ const (
 	GetWorkSkinOperation       OperationName = "GetWorkSkin"
 	ListJobsOperation          OperationName = "ListJobs"
 	ListSourcesOperation       OperationName = "ListSources"
+	ListWorksOperation         OperationName = "ListWorks"
 	PauseSourceOperation       OperationName = "PauseSource"
 	RefreshSourceOperation     OperationName = "RefreshSource"
 	RemoveSourceOperation      OperationName = "RemoveSource"
