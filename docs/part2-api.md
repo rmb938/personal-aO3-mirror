@@ -1271,9 +1271,27 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - `store.ErrNoSeries` is 404 with `DetailNoSeries`. The seed's series 77 now has a
       creator, description, notes, dates and stats, every string a sentinel; both routes have
       leak samples.
-  - [ ] **13c. Store + controller: creators**: a creator scope on `model.WorkFilter` (AO3
+  - [x] **13c. Store + controller: creators**: a creator scope on `model.WorkFilter` (AO3
     `pseud_id`), `GetCreator` (login, pseud, works count) and a creator listing (name filter,
-    paging, name or works sort).
+    paging, name or works sort). As built:
+    - Meta migration 0010 replaces `work_creators_creator` with a covering `(creator_id,
+      work_id)` index and adds `creators_name` on `(pseud, user_login)`, both `NOCASE`.
+    - `model.WorkFilter.CreatorID` (0 = any) keeps works with the creator in the byline.
+    - `model.CreatorFilter`: `Name` (words, each a case-insensitive substring of the pseud or
+      the login, ANDed; at most `MaxCreatorNameWords`, 16; `TagNameWords` is now `NameWords`,
+      shared), `Sort` (`name`: pseud, then login, ignoring case, asc by default; `works` desc)
+      and `Direction`.
+    - `store.CreatorByID` (`ErrNoCreator`), `FindCreators` / `CountCreators`
+      (`store/creators.go`) returning `CreatorRow`s (`CreatorRef` plus `Works`, equal to
+      `CountWorks` with the creator scope). A deferred join as `FindTags`; a works tie breaks by
+      name ascending, then id. `MaxCreatorPage` (100) bounds the limit.
+    - `controllers.GetCreator` returns a `CreatorView` (the creator and its works count; a
+      creator named only by a series page has 0), `ListCreators` the page and total, and
+      `ListCreatorWorks(id, f)` the works with the path creator as the scope, or
+      `ErrNoCreator`; each one read transaction.
+    - `BenchmarkCreators` (50k creators on seedWorks' works): a page by name under 0.5 ms, by
+      works ~16–24 ms (every match's works are counted), counts under 5 ms, a creator's works
+      page under 0.1 ms.
   - [ ] **13d. Creator routes**: `GET /creators/{id}`, `GET` + `QUERY /creators/{id}/works`,
     `QUERY /creators` (`name` is reveal-only).
   - [ ] **13e. Store + controller: collections**: a meta migration indexing
