@@ -29,6 +29,7 @@ const (
 	ListWorksOperation         OperationName = "ListWorks"
 	PauseSourceOperation       OperationName = "PauseSource"
 	QueryTagWorksOperation     OperationName = "QueryTagWorks"
+	QueryTagsOperation         OperationName = "QueryTags"
 	QueryWorksOperation        OperationName = "QueryWorks"
 	RefreshSourceOperation     OperationName = "RefreshSource"
 	RemoveSourceOperation      OperationName = "RemoveSource"

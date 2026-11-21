@@ -124,6 +124,13 @@ type QueryTagWorksParams struct {
 	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
+// QueryTagsParams is parameters of queryTags operation.
+type QueryTagsParams struct {
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
 // QueryWorksParams is parameters of queryWorks operation.
 type QueryWorksParams struct {
 	// 1-based page number; (page-1)*per_page is at most 100000.

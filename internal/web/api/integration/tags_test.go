@@ -154,3 +154,105 @@ func TestTagWorks(t *testing.T) {
 	w := queryJSON(t, h, "/api/v1/works", `{}`)
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 }
+
+// queryTags sends a tag query, requires 200 and decodes the page.
+func queryTags(t *testing.T, h http.Handler, target, body string) dto.List[dto.TagListItem] {
+	t.Helper()
+	w := queryJSON(t, h, target, body)
+	require.Equal(t, http.StatusOK, w.Code, body+": "+w.Body.String())
+	assert.Equal(t, runtime.ContentTypeJSON, w.Header().Get(runtime.HeaderAcceptQuery), "QUERY advertised")
+	var l dto.List[dto.TagListItem]
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &l))
+	return l
+}
+
+func tagIDs(l dto.List[dto.TagListItem]) []int64 {
+	ids := []int64{}
+	for _, it := range l.Items {
+		ids = append(ids, it.ID)
+	}
+	return ids
+}
+
+// TestQueryTags runs tag queries over the seed: seedTag (a canonical fandom with a parent, a
+// meta tag and a synonym) among the seeded works' other tags.
+func TestQueryTags(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Public()
+	tag := getJSON[dto.Tag](t, h, "/api/v1/tags/"+strconv.FormatInt(seedTag, 10))
+	require.Len(t, tag.Parents, 1)
+	require.Len(t, tag.Synonyms, 1)
+	parent := tag.Parents[0].Tags[0].ID
+	synonym := tag.Synonyms[0].Tags[0].ID
+
+	all := queryTags(t, h, "/api/v1/tags", `{}`)
+	assert.Greater(t, all.Total, 4, "the works' tags and the tag page's relations")
+	assert.Len(t, all.Items, all.Total)
+	for _, it := range all.Items {
+		assert.True(t, isHash(t, it.Name), "names hashed")
+	}
+
+	for body, want := range map[string][]int64{
+		`{"types":["Fandom"],"canonical":true}`:                   {seedTag},
+		`{"canonical":false}`:                                     {synonym},
+		`{"parent_ids":[` + strconv.FormatInt(parent, 10) + `]}`:  {seedTag},
+		`{"parent_ids":[` + strconv.FormatInt(seedTag, 10) + `]}`: {},
+	} {
+		l := queryTags(t, h, "/api/v1/tags", body)
+		assert.Equal(t, want, tagIDs(l), body)
+		assert.Equal(t, len(want), l.Total, body)
+	}
+
+	// The synonym: merged into seedTag, not canonical, used by no stored work.
+	syn := queryTags(t, h, "/api/v1/tags", `{"canonical":false}`).Items[0]
+	assert.Equal(t, dto.TagListItem{ID: synonym, Name: syn.Name, Type: "Fandom", Canonical: new(false),
+		MergerID: new(seedTag)}, syn)
+	fandom := queryTags(t, h, "/api/v1/tags", `{"types":["Fandom"],"canonical":true}`).Items[0]
+	assert.Equal(t, 1, fandom.Uses, "seedFetchedWork")
+	assert.Equal(t, tag.InfoFetchedAt, fandom.InfoFetchedAt)
+
+	// By uses, most used first; paging is in the query string.
+	byUses := queryTags(t, h, "/api/v1/tags?per_page=2&page=1", `{"sort":"uses"}`)
+	assert.Equal(t, all.Total, byUses.Total)
+	require.Len(t, byUses.Items, 2)
+	assert.GreaterOrEqual(t, byUses.Items[0].Uses, byUses.Items[1].Uses)
+	asc := queryTags(t, h, "/api/v1/tags?per_page=1", `{"sort":"uses","direction":"asc"}`)
+	assert.Equal(t, 0, asc.Items[0].Uses, "a relation no stored work uses")
+
+	// Every invalid parameter and member is listed in one response.
+	bad := queryJSON(t, h, "/api/v1/tags?per_page=0", `{"types":["fandom"],"parent_ids":[0],"sort":"created_at"}`)
+	require.Equal(t, http.StatusUnprocessableEntity, bad.Code, bad.Body.String())
+	var where []string
+	for _, e := range testutil.DecodeProblem(t, bad).Errors {
+		where = append(where, string(e.Parameter)+e.Pointer)
+	}
+	assert.Equal(t, []string{"per_page", "/types/0", "/parent_ids/0", "/sort"}, where,
+		"pointers pass the enforcer (they name TagQuery members)")
+
+	// The name is free text: refused hashed, before the store is read.
+	logs.Reset()
+	w := queryJSON(t, h, "/api/v1/tags", `{"name":"`+sentinel+`fandom"}`)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	p := testutil.DecodeProblem(t, w)
+	assert.Equal(t, dto.TypeRevealRequired, p.Type)
+	assert.Equal(t, runtime.DetailFreeText.Message(), p.Detail)
+	testutil.AssertNoSentinel(t, w, logs, sentinel)
+	assert.Equal(t, dto.TypeValidation, testutil.DecodeProblem(t, queryJSON(t, h, "/api/v1/tags", `{"name":" "}`)).Type,
+		"an invalid name is a validation error, hashed too")
+
+	// Revealed: name words match anywhere, ignoring case.
+	l := queryTags(t, h, "/api/v1/tags"+revealQuery, `{"name":"FANDOM sentinel-"}`)
+	assert.Equal(t, []int64{seedTag}, tagIDs(l))
+	assert.Equal(t, sentinel+"fandom", l.Items[0].Name)
+	assert.Empty(t, queryTags(t, h, "/api/v1/tags"+revealQuery, `{"name":"`+sentinel+`fandom nomatch"}`).Items,
+		"every word must match")
+	assert.NotContains(t, logs.String(), sentinel, "the name is never logged")
+}
+
+func TestQueryTagsRateLimit(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 1 })
+	queryWorks(t, a.Public(), "/api/v1/works", `{}`)
+	w := queryJSON(t, a.Public(), "/api/v1/tags", `{}`)
+	require.Equal(t, http.StatusTooManyRequests, w.Code, "one search budget with QUERY /works")
+	assert.Equal(t, dto.TypeRateLimited, testutil.DecodeProblem(t, w).Type)
+}

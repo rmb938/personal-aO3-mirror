@@ -142,9 +142,14 @@ func (w *WorkQuery) validateQuery(v *problem.Validation) {
 	}
 }
 
-// validateTagIDs records a list over MaxWorkQueryTags or with a repeat at key, and each id out
-// of range at its index.
+// validateTagIDs records a work query's tag id list: validateIDs capped at MaxWorkQueryTags.
 func validateTagIDs(v *problem.Validation, ids []int64, key string) {
+	validateIDs(v, ids, MaxWorkQueryTags, detailTagIDs, key)
+}
+
+// validateIDs records a list over limit ids or with a repeat at key (with tooMany), and each
+// id out of range at its index.
+func validateIDs(v *problem.Validation, ids []int64, limit int, tooMany problem.Detail, key string) {
 	seen := make(map[int64]bool, len(ids))
 	repeat := false
 	for i, id := range ids {
@@ -154,8 +159,8 @@ func validateTagIDs(v *problem.Validation, ids []int64, key string) {
 		repeat = repeat || seen[id]
 		seen[id] = true
 	}
-	if len(ids) > MaxWorkQueryTags || repeat {
-		v.Member(detailTagIDs, key)
+	if len(ids) > limit || repeat {
+		v.Member(tooMany, key)
 	}
 }
 

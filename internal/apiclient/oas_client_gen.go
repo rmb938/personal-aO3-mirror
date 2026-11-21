@@ -240,6 +240,16 @@ type Invoker interface {
 	//
 	// QUERY /api/v1/tags/{id}/works
 	QueryTagWorks(ctx context.Context, request *WorkQueryRequest, params QueryTagWorksParams, options ...RequestOption) (*WorkListHeaders, error)
+	// QueryTags invokes queryTags operation.
+	//
+	// The body holds the filters, sort and direction (absent members match everything, so `{}` lists every
+	// stored tag by name); paging stays in the query string. Names are hashed unless revealed; `name` is
+	// free text, so in hashed mode it is refused with `reveal-required`. Every sort ends with the name and
+	// then the id, so pages are stable; in hashed mode the name order still says a little about the hidden
+	// text. It shares the search rate limit.
+	//
+	// QUERY /api/v1/tags
+	QueryTags(ctx context.Context, request *TagQueryRequest, params QueryTagsParams, options ...RequestOption) (*TagListHeaders, error)
 	// QueryWorks invokes queryWorks operation.
 	//
 	// The body holds the search query, filters, sort and direction (absent members match everything, so
@@ -2393,6 +2403,111 @@ func (c *Client) sendQueryTagWorks(ctx context.Context, request *WorkQueryReques
 	}
 
 	result, err := decodeQueryTagWorksResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// QueryTags invokes queryTags operation.
+//
+// The body holds the filters, sort and direction (absent members match everything, so `{}` lists every
+// stored tag by name); paging stays in the query string. Names are hashed unless revealed; `name` is
+// free text, so in hashed mode it is refused with `reveal-required`. Every sort ends with the name and
+// then the id, so pages are stable; in hashed mode the name order still says a little about the hidden
+// text. It shares the search rate limit.
+//
+// QUERY /api/v1/tags
+func (c *Client) QueryTags(ctx context.Context, request *TagQueryRequest, params QueryTagsParams, options ...RequestOption) (*TagListHeaders, error) {
+	res, err := c.sendQueryTags(ctx, request, params, options...)
+	return res, err
+}
+
+func (c *Client) sendQueryTags(ctx context.Context, request *TagQueryRequest, params QueryTagsParams, requestOptions ...RequestOption) (res *TagListHeaders, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/tags"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "per_page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "per_page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PerPage.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "QUERY", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeQueryTagsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeQueryTagsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

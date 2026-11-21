@@ -45,6 +45,30 @@ type TagRef struct {
 	Type TagType `json:"type"`
 }
 
+// TagSort is a tag listing's sort column, after AO3's tag search sort_column (an enum): name
+// (the default, ascending by default) or uses (descending by default).
+type TagSort string
+
+// EnumValues lists every TagSort.
+func (TagSort) EnumValues() []string { return []string{"name", "uses"} }
+
+// TagListItem is one tag in a tag listing (QUERY /api/v1/tags), as AO3's tag search result.
+// Name is fanwork content, hashed unless revealed.
+type TagListItem struct {
+	ID   int64   `json:"id"`
+	Name string  `json:"name"`
+	Type TagType `json:"type"`
+	// Canonical is null until the tag page was read, as in Tag.
+	Canonical *bool `json:"canonical"`
+	// MergerID is the tag this one is a synonym of, or null.
+	MergerID *int64 `json:"merger_id"`
+	// Uses is the stored works (any status) tagged with this tag itself (AO3 uses): unlike
+	// Tag.WorksCount, synonyms and sub tags do not count.
+	Uses int `json:"uses"`
+	// InfoFetchedAt is the last tag page fetch; omitted when never fetched.
+	InfoFetchedAt time.Time `json:"info_fetched_at,omitzero"`
+}
+
 // TagGroup is a tag's related tags of one type: the first ones by name and how many there are.
 type TagGroup struct {
 	Type  TagType  `json:"type"`

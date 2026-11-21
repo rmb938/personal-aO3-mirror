@@ -1957,6 +1957,51 @@ func (o NilEstimate) Or(d Estimate) Estimate {
 	return d
 }
 
+// NewNilID returns new NilID with value set to v.
+func NewNilID(v ID) NilID {
+	return NilID{
+		Value: v,
+	}
+}
+
+// NilID is nullable ID.
+type NilID struct {
+	Value ID
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilID) SetTo(v ID) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilID) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilID) SetToNull() {
+	o.Null = true
+	var v ID
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilID) Get() (v ID, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilID) Or(d ID) ID {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilInt returns new NilInt with value set to v.
 func NewNilInt(v int) NilInt {
 	return NilInt{
@@ -3526,6 +3571,52 @@ func (o OptTagInfoDetail) Get() (v TagInfoDetail, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptTagInfoDetail) Or(d TagInfoDetail) TagInfoDetail {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptTagSort returns new OptTagSort with value set to v.
+func NewOptTagSort(v TagSort) OptTagSort {
+	return OptTagSort{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTagSort is optional TagSort.
+type OptTagSort struct {
+	Value TagSort
+	Set   bool
+}
+
+// IsSet returns true if OptTagSort was set.
+func (o OptTagSort) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTagSort) Reset() {
+	var v TagSort
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTagSort) SetTo(v TagSort) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTagSort) Get() (v TagSort, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTagSort) Or(d TagSort) TagSort {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -6399,6 +6490,247 @@ func (s *TagInfoDetail) SetParents(val NilInt) {
 	s.Parents = val
 }
 
+// Ref: #/components/schemas/TagList
+type TagList struct {
+	Items   []TagListItem `json:"items"`
+	Page    int           `json:"page"`
+	PerPage int           `json:"per_page"`
+	// Matching tags over all pages.
+	Total int `json:"total"`
+}
+
+// GetItems returns the value of Items.
+func (s *TagList) GetItems() []TagListItem {
+	return s.Items
+}
+
+// GetPage returns the value of Page.
+func (s *TagList) GetPage() int {
+	return s.Page
+}
+
+// GetPerPage returns the value of PerPage.
+func (s *TagList) GetPerPage() int {
+	return s.PerPage
+}
+
+// GetTotal returns the value of Total.
+func (s *TagList) GetTotal() int {
+	return s.Total
+}
+
+// SetItems sets the value of Items.
+func (s *TagList) SetItems(val []TagListItem) {
+	s.Items = val
+}
+
+// SetPage sets the value of Page.
+func (s *TagList) SetPage(val int) {
+	s.Page = val
+}
+
+// SetPerPage sets the value of PerPage.
+func (s *TagList) SetPerPage(val int) {
+	s.PerPage = val
+}
+
+// SetTotal sets the value of Total.
+func (s *TagList) SetTotal(val int) {
+	s.Total = val
+}
+
+// TagListHeaders wraps TagList with response headers.
+type TagListHeaders struct {
+	AcceptQuery OptAcceptQuery
+	Response    TagList
+}
+
+// GetAcceptQuery returns the value of AcceptQuery.
+func (s *TagListHeaders) GetAcceptQuery() OptAcceptQuery {
+	return s.AcceptQuery
+}
+
+// GetResponse returns the value of Response.
+func (s *TagListHeaders) GetResponse() TagList {
+	return s.Response
+}
+
+// SetAcceptQuery sets the value of AcceptQuery.
+func (s *TagListHeaders) SetAcceptQuery(val OptAcceptQuery) {
+	s.AcceptQuery = val
+}
+
+// SetResponse sets the value of Response.
+func (s *TagListHeaders) SetResponse(val TagList) {
+	s.Response = val
+}
+
+// A stored tag in a tag search. `name` is content, hashed unless revealed.
+// Ref: #/components/schemas/TagListItem
+type TagListItem struct {
+	ID   ID      `json:"id"`
+	Name string  `json:"name"`
+	Type TagType `json:"type"`
+	// Null until the tag page was read; a tag merged as a synonym is not canonical.
+	Canonical NilBool `json:"canonical"`
+	// The tag this one is a synonym of, or null.
+	MergerID NilID `json:"merger_id"`
+	// Stored works (any status) tagged with this tag itself (AO3 uses); unlike a tag's `works_count`,
+	// synonyms and sub tags do not count.
+	Uses          int          `json:"uses"`
+	InfoFetchedAt OptTimestamp `json:"info_fetched_at"`
+}
+
+// GetID returns the value of ID.
+func (s *TagListItem) GetID() ID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *TagListItem) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *TagListItem) GetType() TagType {
+	return s.Type
+}
+
+// GetCanonical returns the value of Canonical.
+func (s *TagListItem) GetCanonical() NilBool {
+	return s.Canonical
+}
+
+// GetMergerID returns the value of MergerID.
+func (s *TagListItem) GetMergerID() NilID {
+	return s.MergerID
+}
+
+// GetUses returns the value of Uses.
+func (s *TagListItem) GetUses() int {
+	return s.Uses
+}
+
+// GetInfoFetchedAt returns the value of InfoFetchedAt.
+func (s *TagListItem) GetInfoFetchedAt() OptTimestamp {
+	return s.InfoFetchedAt
+}
+
+// SetID sets the value of ID.
+func (s *TagListItem) SetID(val ID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *TagListItem) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *TagListItem) SetType(val TagType) {
+	s.Type = val
+}
+
+// SetCanonical sets the value of Canonical.
+func (s *TagListItem) SetCanonical(val NilBool) {
+	s.Canonical = val
+}
+
+// SetMergerID sets the value of MergerID.
+func (s *TagListItem) SetMergerID(val NilID) {
+	s.MergerID = val
+}
+
+// SetUses sets the value of Uses.
+func (s *TagListItem) SetUses(val int) {
+	s.Uses = val
+}
+
+// SetInfoFetchedAt sets the value of InfoFetchedAt.
+func (s *TagListItem) SetInfoFetchedAt(val OptTimestamp) {
+	s.InfoFetchedAt = val
+}
+
+// AO3 tag search filters. Every member is optional; absent members match everything. Invalid members
+// are all listed in one `validation-error` (by JSON Pointer).
+// Ref: #/components/schemas/TagQueryRequest
+type TagQueryRequest struct {
+	// Whitespace-separated words that must each appear in the tag's name, anywhere and ignoring ASCII case
+	// (AO3 `name`). 1 to 16 words, no control characters. Free text: refused with `reveal-required` unless
+	// the request is revealed.
+	Name OptString `json:"name"`
+	// Any of these (AO3 `type`).
+	Types []TagType `json:"types"`
+	// True keeps canonical tags; false, tags recorded as not canonical (synonyms among them). A tag whose
+	// page was never read matches neither.
+	Canonical OptBool `json:"canonical"`
+	// Each must be a direct parent of the tag (AO3 `fandoms`, by id).
+	ParentIds []ID       `json:"parent_ids"`
+	Sort      OptTagSort `json:"sort"`
+	// Omitted, ascending for `name` and descending for `uses`.
+	Direction OptSortDirection `json:"direction"`
+}
+
+// GetName returns the value of Name.
+func (s *TagQueryRequest) GetName() OptString {
+	return s.Name
+}
+
+// GetTypes returns the value of Types.
+func (s *TagQueryRequest) GetTypes() []TagType {
+	return s.Types
+}
+
+// GetCanonical returns the value of Canonical.
+func (s *TagQueryRequest) GetCanonical() OptBool {
+	return s.Canonical
+}
+
+// GetParentIds returns the value of ParentIds.
+func (s *TagQueryRequest) GetParentIds() []ID {
+	return s.ParentIds
+}
+
+// GetSort returns the value of Sort.
+func (s *TagQueryRequest) GetSort() OptTagSort {
+	return s.Sort
+}
+
+// GetDirection returns the value of Direction.
+func (s *TagQueryRequest) GetDirection() OptSortDirection {
+	return s.Direction
+}
+
+// SetName sets the value of Name.
+func (s *TagQueryRequest) SetName(val OptString) {
+	s.Name = val
+}
+
+// SetTypes sets the value of Types.
+func (s *TagQueryRequest) SetTypes(val []TagType) {
+	s.Types = val
+}
+
+// SetCanonical sets the value of Canonical.
+func (s *TagQueryRequest) SetCanonical(val OptBool) {
+	s.Canonical = val
+}
+
+// SetParentIds sets the value of ParentIds.
+func (s *TagQueryRequest) SetParentIds(val []ID) {
+	s.ParentIds = val
+}
+
+// SetSort sets the value of Sort.
+func (s *TagQueryRequest) SetSort(val OptTagSort) {
+	s.Sort = val
+}
+
+// SetDirection sets the value of Direction.
+func (s *TagQueryRequest) SetDirection(val OptSortDirection) {
+	s.Direction = val
+}
+
 // Ref: #/components/schemas/TagRef
 type TagRef struct {
 	ID   ID      `json:"id"`
@@ -6434,6 +6766,51 @@ func (s *TagRef) SetName(val string) {
 // SetType sets the value of Type.
 func (s *TagRef) SetType(val TagType) {
 	s.Type = val
+}
+
+// Tag listing sort column, after AO3's tag search `sort_column`: `name` (the default, ascending by
+// default) or `uses` (descending by default; a tie is broken by name ascending). AO3's `created_at`
+// has no stored counterpart.
+// Ref: #/components/schemas/TagSort
+type TagSort string
+
+const (
+	TagSortName TagSort = "name"
+	TagSortUses TagSort = "uses"
+)
+
+// AllValues returns all TagSort values.
+func (TagSort) AllValues() []TagSort {
+	return []TagSort{
+		TagSortName,
+		TagSortUses,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TagSort) MarshalText() ([]byte, error) {
+	switch s {
+	case TagSortName:
+		return []byte(s), nil
+	case TagSortUses:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TagSort) UnmarshalText(data []byte) error {
+	switch TagSort(data) {
+	case TagSortName:
+		*s = TagSortName
+		return nil
+	case TagSortUses:
+		*s = TagSortUses
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/TagType

@@ -6,8 +6,37 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
+
+// QueryTags is QUERY /api/v1/tags (page, per_page; body request.TagQuery): one page of the
+// stored tags matching the body's filters, as AO3's tag search. The name filter is free text,
+// so it needs the reveal parameter.
+func (a *Handlers) QueryTags(r *http.Request) (any, error) {
+	q, err := runtime.ParseParams(r, string(dto.ParamPage), string(dto.ParamPerPage))
+	if err != nil {
+		return nil, err
+	}
+	p := q.Page()
+	var req request.TagQuery
+	if err := runtime.DecodeJSON(r, &req, &q.Validation); err != nil {
+		return nil, err
+	}
+	if err := q.Err(); err != nil {
+		return nil, err
+	}
+	if req.NeedsReveal() && !runtime.Revealed(r) {
+		return nil, problem.WithDetail(dto.TypeRevealRequired, runtime.DetailFreeText)
+	}
+	f := convert.TagFilter(req)
+	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	items, total, err := a.ctl.ListTags(r.Context(), f)
+	if err != nil {
+		return nil, err
+	}
+	return convert.TagList(items, total, p.Page, p.PerPage), nil
+}
 
 // GetTag is GET /api/v1/tags/{id}: a stored tag with its merger, related tags and work count.
 func (a *Handlers) GetTag(r *http.Request) (any, error) {

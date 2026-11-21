@@ -401,6 +401,34 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Chapter" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/tags:
+    query:
+      operationId: queryTags
+      summary: One page of the stored tags matching an AO3-style tag search.
+      description: |
+        The body holds the filters, sort and direction (absent members match everything, so `{}`
+        lists every stored tag by name); paging stays in the query string. Names are hashed
+        unless revealed; `name` is free text, so in hashed mode it is refused with
+        `reveal-required`. Every sort ends with the name and then the id, so pages are stable; in
+        hashed mode the name order still says a little about the hidden text. It shares the
+        search rate limit.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TagQueryRequest" }
+      responses:
+        "200":
+          description: A page of the matching tags.
+          headers:
+            Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagList" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/tags/{id}:
     get:
       operationId: getTag
@@ -1588,6 +1616,79 @@ components:
         tags:
           type: array
           items: { $ref: "#/components/schemas/TagRef" }
+    TagSort:
+      type: string
+      description: |
+        Tag listing sort column, after AO3's tag search `sort_column`: `name` (the default,
+        ascending by default) or `uses` (descending by default; a tie is broken by name
+        ascending). AO3's `created_at` has no stored counterpart.
+      enum: [name, uses]
+    TagQueryRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        AO3 tag search filters. Every member is optional; absent members match everything.
+        Invalid members are all listed in one `validation-error` (by JSON Pointer).
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: >-
+            Whitespace-separated words that must each appear in the tag's name, anywhere and
+            ignoring ASCII case (AO3 `name`). 1 to 16 words, no control characters. Free text:
+            refused with `reveal-required` unless the request is revealed.
+        types:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/TagType" }
+          description: Any of these (AO3 `type`).
+        canonical:
+          type: boolean
+          description: >-
+            true keeps canonical tags; false, tags recorded as not canonical (synonyms among
+            them). A tag whose page was never read matches neither.
+        parent_ids:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/ID" }
+          description: Each must be a direct parent of the tag (AO3 `fandoms`, by id).
+        sort: { $ref: "#/components/schemas/TagSort" }
+        direction:
+          allOf: [{ $ref: "#/components/schemas/SortDirection" }]
+          description: Omitted, ascending for `name` and descending for `uses`.
+    TagList:
+      type: object
+      required: [items, page, per_page, total]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/TagListItem" } }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: "Matching tags over all pages." }
+    TagListItem:
+      type: object
+      description: A stored tag in a tag search. `name` is content, hashed unless revealed.
+      required: [id, name, type, canonical, merger_id, uses]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        type: { $ref: "#/components/schemas/TagType" }
+        canonical:
+          type: [boolean, "null"]
+          description: Null until the tag page was read; a tag merged as a synonym is not canonical.
+        merger_id:
+          description: The tag this one is a synonym of, or null.
+          anyOf: [{ $ref: "#/components/schemas/ID" }, { type: "null" }]
+        uses:
+          type: integer
+          description: |
+            Stored works (any status) tagged with this tag itself (AO3 uses); unlike a tag's
+            `works_count`, synonyms and sub tags do not count.
+        # The last tag page fetch; omitted when never fetched.
+        info_fetched_at: { $ref: "#/components/schemas/Timestamp" }
     TagInfoDetail:
       type: object
       required: [tag_id, class, req_id, type, canonical, parents]
