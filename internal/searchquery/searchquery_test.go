@@ -1,4 +1,4 @@
-package model
+package searchquery
 
 import (
 	"testing"
@@ -6,11 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSearchTerms(t *testing.T) {
-	w := func(s string) SearchTerm { return SearchTerm{Text: s} }
-	x := func(s string) SearchTerm { return SearchTerm{Text: s, Exclude: true} }
+func TestTerms(t *testing.T) {
+	w := func(s string) Term { return Term{Text: s} }
+	x := func(s string) Term { return Term{Text: s, Exclude: true} }
 	privateUse := string(rune(0xE000))
-	for q, want := range map[string][]SearchTerm{
+	for q, want := range map[string][]Term{
 		"":                              nil,
 		"   \t\n":                       nil,
 		"lorem":                         {w("lorem")},
@@ -27,13 +27,6 @@ func TestSearchTerms(t *testing.T) {
 		`title:lorem OR ipsum* NEAR(a)`: {w("title:lorem"), w("OR"), w("ipsum*"), w("NEAR(a)")},
 		"lorem 42 " + privateUse:        {w("lorem"), w("42"), w(privateUse)},
 	} {
-		assert.Equal(t, want, SearchTerms(q), "%q", q)
+		assert.Equal(t, want, Terms(q), "%q", q)
 	}
-}
-
-func TestSortOrDefault(t *testing.T) {
-	assert.Equal(t, WorkSortRevised, WorkFilter{}.SortOrDefault())
-	assert.Equal(t, WorkSortBestMatch, WorkFilter{Query: "lorem"}.SortOrDefault())
-	assert.Equal(t, WorkSortKudos, WorkFilter{Query: "lorem", Sort: WorkSortKudos}.SortOrDefault())
-	assert.NotContains(t, WorkSorts(), WorkSortBestMatch, "best_match needs a query")
 }

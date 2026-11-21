@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
+	"github.com/rmb938/personal-aO3-mirror/internal/searchquery"
 )
 
 // seedSearchWorks stores synthetic works with "lorem" in a different field each, plus one
@@ -111,7 +112,7 @@ func TestFindWorksSearchRejects(t *testing.T) {
 		"best match, no query": {Sort: model.WorkSortBestMatch, Limit: 1},
 		"no words":             {Query: `!!! "" -`, Limit: 1},
 		"only excluded":        {Query: "-lorem", Limit: 1},
-		"too many terms":       {Query: strings.Repeat("lorem ", model.MaxSearchTerms+1), Limit: 1},
+		"too many terms":       {Query: strings.Repeat("lorem ", searchquery.MaxTerms+1), Limit: 1},
 	} {
 		_, err := s.FindWorks(ctx, f)
 		require.Error(t, err, name)
@@ -120,7 +121,7 @@ func TestFindWorksSearchRejects(t *testing.T) {
 			require.Error(t, err, name)
 		}
 	}
-	_, err := s.FindWorks(ctx, model.WorkFilter{Query: strings.Repeat("lorem ", model.MaxSearchTerms), Limit: 1})
+	_, err := s.FindWorks(ctx, model.WorkFilter{Query: strings.Repeat("lorem ", searchquery.MaxTerms), Limit: 1})
 	require.NoError(t, err, "at the cap")
 }
 

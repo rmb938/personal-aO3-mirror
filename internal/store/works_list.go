@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
+	"github.com/rmb938/personal-aO3-mirror/internal/searchquery"
 )
 
 // workSortCols maps each sort to its works column. Each column has an index (meta migrations
@@ -57,12 +58,12 @@ func sortDir(f model.WorkFilter) (string, error) {
 }
 
 // ftsMatch turns search text into an FTS5 MATCH expression. The text is never FTS5 syntax:
-// each term (model.SearchTerms) is a quoted string, which FTS5 tokenizes into a word or phrase,
+// each term (searchquery.Terms) is a quoted string, which FTS5 tokenizes into a word or phrase,
 // so every operator is built here. Included terms are ANDed, and excluded ones removed with NOT.
 func ftsMatch(q string) (string, error) {
-	terms := model.SearchTerms(q)
-	if len(terms) > model.MaxSearchTerms {
-		return "", fmt.Errorf("store: works: %d search terms (max %d)", len(terms), model.MaxSearchTerms)
+	terms := searchquery.Terms(q)
+	if len(terms) > searchquery.MaxTerms {
+		return "", fmt.Errorf("store: works: %d search terms (max %d)", len(terms), searchquery.MaxTerms)
 	}
 	var incl, excl []string
 	for _, t := range terms {
