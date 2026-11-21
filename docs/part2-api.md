@@ -879,6 +879,17 @@ Status: tick when the PR merges.
   - `GET /works/{id}/chapters` (entire work, size-capped).
   - `GET /works/{id}/skin`.
   - Every content string is in JSON, so it is hashed by default.
+  - In three PRs:
+  - [ ] **8a. Refactor: no HTML escaping in the enforcer.** `respond` marshals with
+    `encoding/json/v2`, which leaves `<`, `>` and `&` alone, but the enforcer re-quoted every
+    string it kept with v1 `json.Marshal`, which escapes them as `<` (six bytes for one), so
+    a revealed HTML chapter grew. It now quotes with `jsontext.AppendQuote` (minimal escaping,
+    RFC 8785). Responses are JSON with `nosniff` and a `default-src 'none'` CSP, so the
+    escaping protected nothing.
+  - [ ] **8b. Work + skin routes**: `GET /works/{id}` and `/works/{id}/skin` (public).
+  - [ ] **8c. Chapter routes**: `GET /works/{id}/chapters/{position}` and `/works/{id}/chapters`.
+    The whole-work route adds up the raw content bytes first; over 16 MiB (a constant) is a new
+    `work-too-large` problem (422) whose detail points to the per-chapter route.
 - [ ] **9. Store: work listing + filters**
   - One filter struct and query builder covering AO3 work_search equivalents:
     - include/exclude tag IDs (by type), rating/warning/category tag IDs;
