@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -157,6 +159,64 @@ func (s *Tx) ImageFinal(ctx context.Context, id int64, status, lastError string)
 	_, err := s.meta.ExecContext(ctx, `UPDATE images SET status = ?, last_error = ?, attempts = attempts + 1, fetched_at = ?
 		WHERE id = ?`, status, lastError, s.unix(), id)
 	return err
+}
+
+// ErrNoImage means no downloaded (ok) image has the requested sha256.
+var ErrNoImage = errors.New("store: no such image")
+
+// StoredImage is a downloaded image's file: its hash, the Content-Type the host served it with
+// (imagefetch keeps image/* only) and its size. Content-free.
+type StoredImage struct {
+	ID          int64 // the images row read (the first stored with this hash)
+	SHA256      string
+	ContentType string
+	Bytes       int
+}
+
+// imageBySHA reads one downloaded image by hash through the images_sha256 partial index (its
+// WHERE must keep status = 'ok' for SQLite to use it). Rows with equal bytes from different
+// URLs share a hash; the first one stored wins, so the answer is stable.
+const imageBySHA = `SELECT id, content_type, bytes FROM images WHERE sha256 = ? AND status = 'ok' ORDER BY id LIMIT 1`
+
+// ImageBySHA returns the downloaded image with hash sha, or ErrNoImage.
+func (s *ReadTx) ImageBySHA(ctx context.Context, sha string) (StoredImage, error) {
+	img := StoredImage{SHA256: sha}
+	err := s.meta.QueryRowContext(ctx, imageBySHA, sha).Scan(&img.ID, &img.ContentType, &img.Bytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return img, ErrNoImage
+	}
+	return img, err
+}
+
+// WorkImage is one image a work embeds. URL is the <img src> as stored (it can hold names:
+// never log it); SHA256 is set once the image is downloaded (Status ok), else "".
+type WorkImage struct {
+	URL    string
+	Status string
+	SHA256 string
+}
+
+// workImages reads a work's images by its work_images primary key, in the order they were
+// first seen (image id).
+const workImages = `SELECT i.url, i.status, i.sha256 FROM work_images wi JOIN images i ON i.id = wi.image_id
+	WHERE wi.work_id = ? ORDER BY i.id`
+
+// WorkImages returns the images work workID embeds (none for an unknown work).
+func (s *ReadTx) WorkImages(ctx context.Context, workID int64) ([]WorkImage, error) {
+	rows, err := s.meta.QueryContext(ctx, workImages, workID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkImage
+	for rows.Next() {
+		var w WorkImage
+		if err := rows.Scan(&w.URL, &w.Status, &w.SHA256); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
 }
 
 // ImageCounts groups images by status.

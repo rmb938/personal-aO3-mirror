@@ -1339,6 +1339,29 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
   - Hashed mode returns 403 by enforcer construction.
   - Add a store read by sha. Work DTOs list image refs as sha256 values, which are hashed in
     hashed mode.
+  - In two PRs:
+  - [x] **14a. Store + controller: images.** As built:
+    - Meta migration 0012 adds `images_sha256`, a partial index on `images (sha256) WHERE status
+      = 'ok'` (only downloaded rows have a hash).
+    - `store.ImageBySHA` returns a `StoredImage` (row id, hash, content type, bytes) for an `ok`
+      row, or `ErrNoImage`. Rows of equal bytes from different URLs share a hash; the first
+      stored (lowest id) wins, so the answer is stable. `store.WorkImages(workID)` lists a
+      work's `WorkImage`s (`url`, `status`, `sha256`, the hash empty until downloaded) by image
+      id from `work_images`. `TestImagePlans` checks both use their index.
+    - `controllers.GetImage(sha)` refuses a hash that is not 64 lowercase hex (so
+      `imagefetch.Path` only sees well-formed names), reads the row in one read transaction,
+      then the file (`Options.ImageDir`, `serve` passes `data_dir/images`) after it, at most
+      `MaxImageFileBytes` (32 MiB, the API's buffer cap), and checks it against its hash. A
+      missing file is `ErrNoImage` (logged with the image id); an unreadable, oversized or
+      mismatched one is an internal error. Bytes are never logged.
+    - `controllers.GetWork`'s `WorkView` gains `Images`.
+  - [ ] **14b. Image route and work image refs**: `GET /images/{sha256}` (64 lowercase hex,
+    checked with the other params), refused with `reveal-required` before the file is read in
+    hashed mode (the enforcer's 403 stays the backstop). A `runtime.Blob` response lets `Handle`
+    write raw bytes; `Respond` stays the only JSON writer. The route's CSP is `default-src
+    'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox`. The work DTO gains
+    `images` (`src_url` and `sha256` hashed, `status` a `dto.ImageStatus`); `ErrNoImage` is 404
+    with `DetailNoImage`; the seed gets a sentinel image; leak samples, OpenAPI and the client.
 - [ ] **15. Hardening pass**
   - Fuzz tests for the param and body parsers.
   - Run the `/security-review` skill and `make deadcode`; govulncheck.

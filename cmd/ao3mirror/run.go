@@ -126,7 +126,7 @@ func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut 
 	var wg sync.WaitGroup
 	if cfg.Images.Enabled {
 		w, err := imagefetch.New(imagefetch.Options{
-			Store: st, UserAgent: client.UserAgent(), Dir: cfg.Path("images"),
+			Store: st, UserAgent: client.UserAgent(), Dir: cfg.Path(imageDir),
 			PerHostInterval: cfg.Images.PerHostInterval, MaxBytes: cfg.Images.MaxBytes, Logger: log,
 		})
 		if err != nil {
