@@ -304,18 +304,22 @@ func TestFTS(t *testing.T) {
 	w2.Title, w2.SummaryHTML = "Other Fixture", "<p>nothing</p>"
 	_, err = s.UpsertWork(ctx, w2, model.FromBlurb, 1)
 	require.NoError(t, err)
-	for q, want := range map[string]int{"lorem": 1, "fixture": 2, `tags:"fixture character"`: 2, "creators:fixture_author": 2, "alpha": 1} {
-		ids, err := s.SearchWorkIDs(ctx, q, 10)
+	search := func(q string) []int64 {
+		t.Helper()
+		page, err := s.FindWorks(ctx, model.WorkFilter{Query: q, Limit: 10})
 		require.NoError(t, err)
-		require.Len(t, ids, want, "search %q", q)
+		return workIDs(page)
+	}
+	for q, want := range map[string]int{"lorem": 1, "fixture": 2, `"fixture character"`: 2, "fixture_author": 2,
+		"fixture_pseud": 2, "alpha": 1} {
+		require.Len(t, search(q), want, "search %q", q)
 	}
 	// Re-upsert must replace, not duplicate, the FTS row.
 	w2.Title = "Renamed"
 	_, err = s.UpsertWork(ctx, w2, model.FromBlurb, 1)
 	require.NoError(t, err)
-	ids, err := s.SearchWorkIDs(ctx, "renamed", 10)
-	require.NoError(t, err)
-	require.Len(t, ids, 1)
+	require.Equal(t, []int64{2}, search("renamed"))
+	require.Empty(t, search("other"))
 	var rows int
 	require.NoError(t, s.meta.QueryRow(`SELECT COUNT(*) FROM works_fts`).Scan(&rows))
 	require.Equal(t, 2, rows)

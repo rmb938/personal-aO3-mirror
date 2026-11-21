@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -27,29 +28,67 @@ var workSortCols = map[model.WorkSort]string{
 // workOrder returns f's ORDER BY clause (with a leading space). Every order ends with id in the
 // same direction, so equal sort values page in a stable order.
 func workOrder(f model.WorkFilter) (string, error) {
-	sort := f.Sort
-	if sort == "" {
-		sort = model.WorkSortRevised
-	}
+	sort := f.SortOrDefault()
 	col, ok := workSortCols[sort]
 	if !ok {
 		return "", fmt.Errorf("store: works: unknown sort %q", sort)
 	}
-	d := f.Direction
-	if d == model.SortDefault {
-		d = sort.DefaultDirection()
-	}
-	var dir string
-	switch d {
-	case model.SortDesc:
-		dir = "DESC"
-	case model.SortAsc:
-		dir = "ASC"
-	default:
-		return "", fmt.Errorf("store: works: unknown sort direction %q", f.Direction)
+	dir, err := sortDir(f)
+	if err != nil {
+		return "", err
 	}
 	return ` ORDER BY ` + col + ` ` + dir + `, id ` + dir, nil
 }
+
+// sortDir returns f's direction as SQL.
+func sortDir(f model.WorkFilter) (string, error) {
+	d := f.Direction
+	if d == model.SortDefault {
+		d = f.SortOrDefault().DefaultDirection()
+	}
+	switch d {
+	case model.SortDesc:
+		return "DESC", nil
+	case model.SortAsc:
+		return "ASC", nil
+	default:
+		return "", fmt.Errorf("store: works: unknown sort direction %q", f.Direction)
+	}
+}
+
+// ftsMatch turns search text into an FTS5 MATCH expression. The text is never FTS5 syntax:
+// each term (model.SearchTerms) is a quoted string, which FTS5 tokenizes into a word or phrase,
+// so every operator is built here. Included terms are ANDed, and excluded ones removed with NOT.
+func ftsMatch(q string) (string, error) {
+	terms := model.SearchTerms(q)
+	if len(terms) > model.MaxSearchTerms {
+		return "", fmt.Errorf("store: works: %d search terms (max %d)", len(terms), model.MaxSearchTerms)
+	}
+	var incl, excl []string
+	for _, t := range terms {
+		s := `"` + strings.ReplaceAll(t.Text, `"`, `""`) + `"`
+		if t.Exclude {
+			excl = append(excl, s)
+		} else {
+			incl = append(incl, s)
+		}
+	}
+	if len(incl) == 0 {
+		return "", errors.New("store: works: search has no term to match")
+	}
+	m := strings.Join(incl, " AND ")
+	if len(excl) > 0 {
+		m = `(` + m + `) NOT (` + strings.Join(excl, " OR ") + `)`
+	}
+	return m, nil
+}
+
+// ftsRanked selects each work matching the MATCH parameter as fid with its score (higher is a
+// better match). bm25 weighs the works_fts columns (title, summary, creators, tags) with AO3's
+// field boosts (title^7, creators^5, the rest 1; app/models/search/work_query.rb
+// general_query). bm25 is lower for better matches, so the score is its negation.
+const ftsRanked = `SELECT rowid AS fid, -bm25(works_fts, 7.0, 1.0, 5.0, 1.0) AS score
+	FROM works_fts WHERE works_fts MATCH ?`
 
 // workWhere builds the WHERE clause (with a leading space) and its args for f's filters. Values
 // are always parameters; only column names from this file are spliced in.
@@ -60,6 +99,13 @@ func workWhere(f model.WorkFilter) (string, []any, error) {
 	cond := func(sql string, a ...any) {
 		b.WriteString(` AND ` + sql)
 		args = append(args, a...)
+	}
+	if f.Query != "" {
+		m, err := ftsMatch(f.Query)
+		if err != nil {
+			return "", nil, err
+		}
+		cond(`id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ?)`, m)
 	}
 	for _, ids := range [][]int64{f.Tags, f.ExcludeTags} {
 		if len(ids) > model.MaxWorkFilterTags {
@@ -161,16 +207,10 @@ func (s *ReadTx) FindWorks(ctx context.Context, f model.WorkFilter) ([]WorkRow, 
 	if f.Offset < 0 || f.Limit < 1 {
 		return nil, fmt.Errorf("store: find works: bad page (offset %d, limit %d)", f.Offset, f.Limit)
 	}
-	where, args, err := workWhere(f)
+	q, args, err := workPageQuery(f)
 	if err != nil {
 		return nil, err
 	}
-	order, err := workOrder(f)
-	if err != nil {
-		return nil, err
-	}
-	q := `SELECT ` + workRowCols + ` FROM works WHERE id IN (SELECT id FROM works` + where + order +
-		` LIMIT ? OFFSET ?)` + order
 	rows, err := s.meta.QueryContext(ctx, q, append(args, f.Limit, f.Offset)...)
 	if err != nil {
 		return nil, err
@@ -185,6 +225,51 @@ func (s *ReadTx) FindWorks(ctx context.Context, f model.WorkFilter) ([]WorkRow, 
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// workPageQuery returns FindWorks's query and its args, less the trailing LIMIT and OFFSET.
+func workPageQuery(f model.WorkFilter) (string, []any, error) {
+	if f.SortOrDefault() == model.WorkSortBestMatch {
+		return bestMatchPageQuery(f)
+	}
+	where, args, err := workWhere(f)
+	if err != nil {
+		return "", nil, err
+	}
+	order, err := workOrder(f)
+	if err != nil {
+		return "", nil, err
+	}
+	return `SELECT ` + workRowCols + ` FROM works WHERE id IN (SELECT id FROM works` + where + order +
+		` LIMIT ? OFFSET ?)` + order, args, nil
+}
+
+// bestMatchPageQuery ranks every work matching f.Query (ftsRanked), keeps those matching f's
+// other filters and pages them by score, then id. There is no index on a score, so the cost
+// grows with the number of matches.
+func bestMatchPageQuery(f model.WorkFilter) (string, []any, error) {
+	if f.Query == "" {
+		return "", nil, errors.New("store: works: best_match sort needs a search query")
+	}
+	m, err := ftsMatch(f.Query)
+	if err != nil {
+		return "", nil, err
+	}
+	rest := f
+	rest.Query = "" // matched by the join with ftsRanked instead
+	where, args, err := workWhere(rest)
+	if err != nil {
+		return "", nil, err
+	}
+	dir, err := sortDir(f)
+	if err != nil {
+		return "", nil, err
+	}
+	page := `SELECT m.fid, m.score FROM (` + ftsRanked + `) m JOIN works ON works.id = m.fid` + where +
+		` ORDER BY m.score ` + dir + `, m.fid ` + dir + ` LIMIT ? OFFSET ?`
+	q := `SELECT ` + workRowCols + ` FROM works JOIN (` + page + `) p ON p.fid = works.id
+		ORDER BY p.score ` + dir + `, p.fid ` + dir
+	return q, append([]any{m}, args...), nil
 }
 
 // CountWorks returns the number of works matching f's filters.

@@ -1075,6 +1075,35 @@ Status: tick when the PR merges.
   - Add `q` to the QUERY body (reveal-only). Sanitized FTS5 MATCH joined with the stage 9
     filters; total count; ranking.
   - Replaces the unused `SearchWorkIDs`.
+  - In two PRs:
+  - [x] **11a. Store: search query and ranking.** As built:
+    - `model.WorkFilter.Query` is search text. `model.SearchTerms` splits it into a subset of
+      AO3's query syntax: words, `"quoted phrases"` (an unclosed quote runs to the end) and a
+      leading `-` to exclude a word or phrase; every other term must match (AO3's
+      `default_operator: AND`). AND, OR, `field:value`, wildcards and the like are plain words.
+      A term with no letter or digit is dropped. At most `model.MaxSearchTerms` (16).
+    - `store.ftsMatch` builds the MATCH expression: each term a quoted FTS5 string (so FTS5
+      tokenizes it into a word or phrase and no user text is syntax), included terms joined
+      with AND, excluded ones removed with `NOT (… OR …)`. No included term, or too many terms,
+      is an error.
+    - A query is one more `workWhere` condition (`id IN (SELECT rowid FROM works_fts WHERE
+      works_fts MATCH ?)`), so it combines with every stage 9 filter and `CountWorks` counts it.
+    - `model.WorkSortBestMatch` ("best_match", AO3 `_score` / "Best Match") ranks by
+      `-bm25(works_fts, 7, 1, 5, 1)`: AO3's field boosts (`title^7`, `creators^5`, summary and
+      tags 1; `app/models/search/work_query.rb`). It is the default sort when there is a query
+      (`WorkFilter.SortOrDefault`), as on AO3, defaults to descending (best first) and ends with
+      `id` like the others. It needs a query, so it is not in `model.WorkSorts()` (the sorts for
+      any listing); without one it is an error.
+    - AO3 also searches notes, end notes and series titles; `works_fts` does not index them yet
+      (series titles: 11a2).
+    - A search page is driven by the match (`TestWorksSearchPlans`: works read by rowid, no
+      scan, the matches sorted), so the cost grows with the matches. `BenchmarkWorksSearch` at
+      200k synthetic works: a word in every work ~160 ms for a ranked first page (~210 ms at
+      offset 10,000) and ~40 ms by revised date, a third of works ~70 / ~25 ms, a tenth ~27 /
+      ~10 ms, a rare word under 1 ms; counts ~0.1–40 ms. The search rate limit bounds it.
+  - [ ] **11b. API: `q`.** `q` in `request.WorkQuery` (reveal-only, joins `NeedsReveal`; at most
+    256 runes and 16 terms, at least one included term: 422 otherwise), `best_match` in
+    `dto.WorkSort` (422 without `q`, on `GET` too), OpenAPI and the regenerated client.
 - [ ] **12. Tags**
   - Store readers for parents, meta/sub tags, synonyms/merger, and work counts.
   - `GET /tags/{id}`; `GET` + `QUERY /tags/{id}/works` (stage 9 filters scoped to the tag and,

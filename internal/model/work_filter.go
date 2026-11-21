@@ -15,9 +15,12 @@ const (
 	WorkSortBookmarks WorkSort = "bookmarks"
 	WorkSortTitle     WorkSort = "title"   // AO3 title_to_sort_on
 	WorkSortCreator   WorkSort = "creator" // AO3 authors_to_sort_on ("Creator")
+	// WorkSortBestMatch ranks by how well a work matches WorkFilter.Query (AO3 _score, "Best
+	// Match"), so it needs one. It is the default sort when there is a query.
+	WorkSortBestMatch WorkSort = "best_match"
 )
 
-// WorkSorts lists every WorkSort.
+// WorkSorts lists every WorkSort that orders any listing, which is all but WorkSortBestMatch.
 func WorkSorts() []WorkSort {
 	return []WorkSort{WorkSortRevised, WorkSortPublished, WorkSortWords, WorkSortHits, WorkSortKudos,
 		WorkSortComments, WorkSortBookmarks, WorkSortTitle, WorkSortCreator}
@@ -67,6 +70,9 @@ const MaxWorkFilterTags = 20
 // id lists (rating_ids, fandom_ids, …) into one filter_ids list, so the type grouping belongs to
 // the API, not here.
 type WorkFilter struct {
+	// Query is search text (see SearchTerms) matched against titles, summaries, creators and
+	// tags, like AO3's query field. It holds fanwork content: never log it.
+	Query         string
 	Tags          []int64      // every one must match (AO3 filter_ids; at most MaxWorkFilterTags)
 	ExcludeTags   []int64      // none may match (AO3 excluded_tag_ids; at most MaxWorkFilterTags)
 	Complete      *bool        // AO3 complete
@@ -82,8 +88,20 @@ type WorkFilter struct {
 	Bookmarks     IntRange
 	Revised       DateRange // AO3 date_from / date_to
 	Published     DateRange // excludes works with no known published date (blurb-only)
-	Sort          WorkSort  // "" = WorkSortRevised
+	Sort          WorkSort  // "" = WorkSortBestMatch with a Query, else WorkSortRevised
 	Direction     SortDirection
 	Offset        int // rows to skip (≥ 0)
 	Limit         int // max rows (≥ 1)
+}
+
+// SortOrDefault is f's sort column: f.Sort, or the default when it is empty.
+func (f WorkFilter) SortOrDefault() WorkSort {
+	switch {
+	case f.Sort != "":
+		return f.Sort
+	case f.Query != "":
+		return WorkSortBestMatch
+	default:
+		return WorkSortRevised
+	}
 }
