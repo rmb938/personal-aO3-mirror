@@ -68,7 +68,7 @@ func TestMigrationsIdempotent(t *testing.T) {
 	for i := range 2 {
 		s, err := Open(ctx, dir, Options{})
 		require.NoError(t, err, "open %d", i)
-		for db, want := range map[string]int{"meta": 11, "content": 1} {
+		for db, want := range map[string]int{"meta": 12, "content": 1} {
 			v, err := s.schemaVersion(ctx, db)
 			require.NoError(t, err)
 			require.Equal(t, want, v, "%s schema", db)

@@ -24,6 +24,7 @@ type WorkView struct {
 	Series      []store.WorkSeriesPart
 	Collections []store.CollectionRef
 	Chapters    []model.Chapter // id, position, title, published date only
+	Images      []store.WorkImage
 }
 
 // WorkBlurb is a listed work with the relations AO3's work blurb shows.
@@ -106,7 +107,7 @@ func workBlurbs(ctx context.Context, tx *store.ReadTx, rows []store.WorkRow) ([]
 }
 
 // GetWork returns one stored work with its creators, tags, series (with coverage),
-// collections and chapter list, or store.ErrNoWork.
+// collections, chapter list and embedded images, or store.ErrNoWork.
 func (c *Controllers) GetWork(ctx context.Context, id int64) (WorkView, error) {
 	var v WorkView
 	err := c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
@@ -126,7 +127,10 @@ func (c *Controllers) GetWork(ctx context.Context, id int64) (WorkView, error) {
 		if v.Collections, err = tx.WorkCollections(ctx, id); err != nil {
 			return err
 		}
-		v.Chapters, err = tx.WorkChapters(ctx, id)
+		if v.Chapters, err = tx.WorkChapters(ctx, id); err != nil {
+			return err
+		}
+		v.Images, err = tx.WorkImages(ctx, id)
 		return err
 	})
 	return v, err

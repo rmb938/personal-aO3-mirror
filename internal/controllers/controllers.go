@@ -49,6 +49,7 @@ type Options struct {
 	DataDir      string // for data/debug skeletons
 	KeepVersions int    // content.keep_versions
 	QueueImages  bool   // queue embedded images of stored works for the image worker
+	ImageDir     string // the image worker's directory, which GetImage reads
 
 	Sources  config.Sources // add defaults and auto-confirm gate
 	Interval time.Duration  // current request interval, for add estimates

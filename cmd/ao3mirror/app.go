@@ -20,6 +20,9 @@ import (
 // apiTimeout bounds one CLI call to the admin socket, from dial to the end of the response.
 const apiTimeout = time.Minute
 
+// imageDir is the image worker's directory under data_dir, which `serve` reads images from.
+const imageDir = "images"
+
 // app bundles what the API commands (source, jobs, status, debug) need: the config and a
 // client for the admin socket of a running `ao3mirror serve`. They never open the store.
 type app struct {
@@ -53,7 +56,7 @@ func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client
 	o := controllers.Options{
 		Store: st, Logger: log, Now: time.Now,
 		DataDir: cfg.DataDir, KeepVersions: cfg.Content.KeepVersions, QueueImages: cfg.Images.Enabled,
-		Sources: cfg.Sources, Interval: cfg.Rate.Interval,
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: cfg.Path(imageDir),
 		TagInfoTypes: cfg.Tags.InfoTypes, TagInfoTTL: cfg.Tags.InfoTTL,
 		SeriesInfo: cfg.Series.Info, SeriesInfoTTL: cfg.Series.InfoTTL,
 	}
