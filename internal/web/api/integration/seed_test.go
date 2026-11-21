@@ -75,7 +75,7 @@ func seed(t *testing.T, st *store.Store) {
 		}
 		require.Equal(t, seedSeriesSource, id)
 
-		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindSourceAdd, Target: "1", DedupeKey: "seed-add-1"})
+		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindSourceAdd, Target: 1, DedupeKey: "seed-add-1"})
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func seed(t *testing.T, st *store.Store) {
 			return err
 		}
 
-		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindSourceAdd, Target: "2", DedupeKey: "seed-add-2"})
+		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindSourceAdd, Target: 2, DedupeKey: "seed-add-2"})
 		if err != nil {
 			return err
 		}
@@ -98,21 +98,21 @@ func seed(t *testing.T, st *store.Store) {
 			return err
 		}
 
-		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: "7", DedupeKey: jobs.WorkKey(7)})
+		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindWork, Target: 7, DedupeKey: jobs.WorkKey(7)})
 		if err != nil {
 			return err
 		}
 		require.Equal(t, seedOtherJob, id)
 
 		id, _, err = tx.EnqueueJob(ctx, store.NewJob{Kind: jobs.KindBackfill, SourceID: seedTagSource,
-			Target: sentinel + "jobtarget", Priority: jobs.ClassBackfill, DedupeKey: sentinel + "dedupe"})
+			Target: 3, Priority: jobs.ClassBackfill, DedupeKey: sentinel + "dedupe"})
 		if err != nil {
 			return err
 		}
 		require.Equal(t, seedBackfillJob, id)
 		// Its trace: a start and a retry, with every text field a sentinel.
 		if err := tx.JobEvent(ctx, id, model.JobEventStart,
-			controllers.JobOutcome{Attempt: new(1), Target: new(sentinel + "event")}); err != nil {
+			controllers.JobOutcome{Attempt: new(1), Target: new(int64(3))}); err != nil {
 			return err
 		}
 		if err := tx.JobEvent(ctx, id, model.JobEventRetry,

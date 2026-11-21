@@ -17,7 +17,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
@@ -74,40 +73,28 @@ func New(opts Options) *Scheduler {
 	s := &Scheduler{options: opts, store: opts.Store, controllers: opts.Controllers, log: opts.Logger.With("component", "scheduler")}
 	s.handlers = map[string]handler{
 		jobs.KindPoll: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
-			return s.controllers.PollSourcePage(ctx, j.SourceID, atoi(j.Target))
+			return s.controllers.PollSourcePage(ctx, j.SourceID, int(j.Target))
 		},
 		jobs.KindBackfill: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
-			return s.controllers.BackfillSourcePage(ctx, j.SourceID, atoi(j.Target))
+			return s.controllers.BackfillSourcePage(ctx, j.SourceID, int(j.Target))
 		},
 		jobs.KindWork: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
-			return s.controllers.FetchWork(ctx, atoi64(j.Target), j.SourceID, j.Attempts >= j.MaxAttempts)
+			return s.controllers.FetchWork(ctx, j.Target, j.SourceID, j.Attempts >= j.MaxAttempts)
 		},
 		jobs.KindTagInfo: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
-			return s.controllers.FetchTagInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
+			return s.controllers.FetchTagInfo(ctx, j.Target, j.Attempts >= j.MaxAttempts)
 		},
 		jobs.KindSeries: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
-			return s.controllers.FetchSeriesInfo(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
+			return s.controllers.FetchSeriesInfo(ctx, j.Target, j.Attempts >= j.MaxAttempts)
 		},
 		jobs.KindSourceAdd: func(ctx context.Context, j model.Job) (controllers.JobDetail, error) {
-			return s.controllers.AddQueuedSource(ctx, atoi64(j.Target), j.Attempts >= j.MaxAttempts)
+			return s.controllers.AddQueuedSource(ctx, j.Target, j.Attempts >= j.MaxAttempts)
 		},
 	}
 	for k := range s.handlers {
 		s.kinds = append(s.kinds, k)
 	}
 	return s
-}
-
-// atoi and atoi64 parse a job target; a malformed target becomes 0, which the controllers
-// reject as a bad id or a stale page.
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
-func atoi64(s string) int64 {
-	n, _ := strconv.ParseInt(s, 10, 64)
-	return n
 }
 
 // Run loops until ctx is cancelled.

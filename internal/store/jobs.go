@@ -36,8 +36,8 @@ const DefaultMaxAttempts = 5
 type NewJob struct {
 	Kind      string
 	SourceID  int64 // 0 = none
-	Target    string
-	Priority  int // class: lower runs first
+	Target    int64 // page number or id
+	Priority  int   // class: lower runs first
 	DedupeKey string
 }
 

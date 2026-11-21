@@ -834,7 +834,15 @@ Status: tick when the PR merges.
     type), failing if a stored target is not an integer. `model.Job.Target` and
     `store.NewJob.Target` become `int64`; enqueues pass the number and the scheduler handlers
     use it directly (`atoi`/`atoi64` go). The start event's `JobOutcome.Target` becomes
-    `*int64`. Dedupe keys are unchanged. No API change.
+    `*int64`. Dedupe keys are unchanged. No API change. As built:
+    - `0003_job_target_int.sql` rebuilds `job_events` too: the migration runs in a transaction
+      with foreign keys on (where `PRAGMA foreign_keys` is a no-op), so dropping `jobs` would
+      cascade-delete every event. The copy references `jobs_new`, and the rename rewrites it.
+    - `target INTEGER NOT NULL CHECK (typeof(target) = 'integer')`: the copy relies on INTEGER
+      affinity, so `'12'` becomes 12 and anything else fails the CHECK (and the migration).
+      Stored start events get their `target` rewritten to a JSON number.
+    - `convert` formats the target as a string until 6d-2. A job with target 0 now shows `"0"`.
+    - `migrateTo(ctx, db, name, upTo)` stops at a version, so tests can upgrade a 0002 db.
   - [ ] **6d-2. API.** `dto.Job.Target` and the start event's `target` (`dto/debug.go`) become
     integers, copied by `convert`; `openapi.yaml` and `internal/apiclient` follow
     (`make generate`). The all-routes leak test drops the sentinel job targets (an integer

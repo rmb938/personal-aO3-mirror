@@ -33,11 +33,11 @@ func TestEnqueueTakesOverParkedJob(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
 	paused := addSource(t, s, "paused", model.SourcePaused, 0)
-	id := enqueue(t, s, NewJob{Kind: "work", SourceID: paused, Target: "42", Priority: 4, DedupeKey: "work:42"})
+	id := enqueue(t, s, NewJob{Kind: "work", SourceID: paused, Target: 42, Priority: 4, DedupeKey: "work:42"})
 	_, err := s.PickJob(ctx, []string{"work"}, clk.t)
 	require.ErrorIs(t, err, ErrNoJob, "paused source's job must not run")
 
-	got, created, err := s.EnqueueJob(ctx, NewJob{Kind: "work", Target: "42", Priority: 1, DedupeKey: "work:42"})
+	got, created, err := s.EnqueueJob(ctx, NewJob{Kind: "work", Target: 42, Priority: 1, DedupeKey: "work:42"})
 	require.NoError(t, err)
 	require.False(t, created)
 	require.Equal(t, id, got)
@@ -51,10 +51,10 @@ func TestEnqueueTakesOverParkedJob(t *testing.T) {
 func TestEnqueueDedupeAndBump(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
-	id1, created, err := s.EnqueueJob(ctx, NewJob{Kind: "work", Target: "1", Priority: 4, DedupeKey: "work:1"})
+	id1, created, err := s.EnqueueJob(ctx, NewJob{Kind: "work", Target: 1, Priority: 4, DedupeKey: "work:1"})
 	require.NoError(t, err)
 	require.True(t, created)
-	id2, created, err := s.EnqueueJob(ctx, NewJob{Kind: "work", Target: "1", Priority: 1, DedupeKey: "work:1"})
+	id2, created, err := s.EnqueueJob(ctx, NewJob{Kind: "work", Target: 1, Priority: 1, DedupeKey: "work:1"})
 	require.NoError(t, err)
 	require.False(t, created, "dedupe")
 	require.Equal(t, id1, id2, "dedupe returns the existing job")
@@ -62,7 +62,7 @@ func TestEnqueueDedupeAndBump(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, j.Priority, "priority bumped")
 	require.NoError(t, s.FinishJob(ctx, id1, model.JobDone, ""))
-	_, created, err = s.EnqueueJob(ctx, NewJob{Kind: "work", Target: "1", Priority: 4, DedupeKey: "work:1"})
+	_, created, err = s.EnqueueJob(ctx, NewJob{Kind: "work", Target: 1, Priority: 4, DedupeKey: "work:1"})
 	require.NoError(t, err)
 	require.True(t, created, "finished job must not block a new one")
 }
@@ -74,7 +74,7 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 	b := addSource(t, s, "b", model.SourceActive, 0)
 	p := addSource(t, s, "p", model.SourcePaused, 0)
 	// Work 8 is retried an hour out before the others are queued, so it is not due yet.
-	delayed := enqueue(t, s, NewJob{Kind: "work", Target: "8", Priority: 1, DedupeKey: "work:8"})
+	delayed := enqueue(t, s, NewJob{Kind: "work", Target: 8, Priority: 1, DedupeKey: "work:8"})
 	j, err := s.PickJob(ctx, []string{"work"}, clk.t)
 	require.NoError(t, err)
 	require.Equal(t, delayed, j.ID)
@@ -83,10 +83,10 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 	for i := range 3 {
 		for _, src := range []int64{a, b, p} {
 			key := strconv.FormatInt(src, 10) + ":" + strconv.Itoa(i)
-			enqueue(t, s, NewJob{Kind: "backfill", SourceID: src, Target: strconv.Itoa(i), Priority: 4, DedupeKey: key})
+			enqueue(t, s, NewJob{Kind: "backfill", SourceID: src, Target: int64(i), Priority: 4, DedupeKey: key})
 		}
 	}
-	enqueue(t, s, NewJob{Kind: "work", Target: "9", Priority: 1, DedupeKey: "work:9"})
+	enqueue(t, s, NewJob{Kind: "work", Target: 9, Priority: 1, DedupeKey: "work:9"})
 
 	var order []string
 	for {
@@ -107,7 +107,7 @@ func TestPickOrderFairnessAndPaused(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoJob, "paused source job must not be picked")
 	j, err = s.PickJob(ctx, []string{"work"}, clk.t)
 	require.NoError(t, err)
-	require.Equal(t, "8", j.Target, "delayed job")
+	require.Equal(t, int64(8), j.Target, "delayed job")
 }
 
 func TestPriorityWithinClass(t *testing.T) {
@@ -115,8 +115,8 @@ func TestPriorityWithinClass(t *testing.T) {
 	ctx := context.Background()
 	lo := addSource(t, s, "lo", model.SourceActive, 0)
 	hi := addSource(t, s, "hi", model.SourceActive, 5)
-	enqueue(t, s, NewJob{Kind: "backfill", SourceID: lo, Target: "1", Priority: 4, DedupeKey: "lo"})
-	enqueue(t, s, NewJob{Kind: "backfill", SourceID: hi, Target: "1", Priority: 4, DedupeKey: "hi"})
+	enqueue(t, s, NewJob{Kind: "backfill", SourceID: lo, Target: 1, Priority: 4, DedupeKey: "lo"})
+	enqueue(t, s, NewJob{Kind: "backfill", SourceID: hi, Target: 1, Priority: 4, DedupeKey: "hi"})
 	j, err := s.PickJob(ctx, []string{"backfill"}, clk.t)
 	require.NoError(t, err)
 	require.Equal(t, hi, j.SourceID, "higher source priority should win")
@@ -125,7 +125,7 @@ func TestPriorityWithinClass(t *testing.T) {
 func TestRetryRecoverAndEvents(t *testing.T) {
 	s, clk, _ := openTest(t)
 	ctx := context.Background()
-	id := enqueue(t, s, NewJob{Kind: "work", Target: "1", Priority: 3, DedupeKey: "work:1"})
+	id := enqueue(t, s, NewJob{Kind: "work", Target: 1, Priority: 3, DedupeKey: "work:1"})
 	j, err := s.PickJob(ctx, []string{"work"}, clk.t)
 	require.NoError(t, err)
 	st, err := s.RetryJob(ctx, j.ID, clk.t.Add(time.Minute), "unavailable")
@@ -146,7 +146,7 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 		require.Equal(t, want, st, "attempt %d", attempt)
 	}
 
-	id2 := enqueue(t, s, NewJob{Kind: "work", Target: "2", Priority: 3, DedupeKey: "work:2"})
+	id2 := enqueue(t, s, NewJob{Kind: "work", Target: 2, Priority: 3, DedupeKey: "work:2"})
 	_, err = s.PickJob(ctx, []string{"work"}, clk.t)
 	require.NoError(t, err)
 	n, err := s.RecoverRunning(ctx)
@@ -159,7 +159,7 @@ func TestRetryRecoverAndEvents(t *testing.T) {
 	require.Equal(t, CodeCrashed, j2.LastError)
 
 	// A job that keeps killing the daemon runs out of attempts instead of crash-looping.
-	id3 := enqueue(t, s, NewJob{Kind: "work", Target: "3", Priority: 1, DedupeKey: "work:3"})
+	id3 := enqueue(t, s, NewJob{Kind: "work", Target: 3, Priority: 1, DedupeKey: "work:3"})
 	for range DefaultMaxAttempts {
 		j, err := s.PickJob(ctx, []string{"work"}, clk.t)
 		require.NoError(t, err)
@@ -211,7 +211,7 @@ func TestFindJobsPagedAndCount(t *testing.T) {
 	src := addSource(t, s, "Fixture Tag", model.SourceActive, 0)
 	var ids []int64
 	for i := range 7 {
-		j := NewJob{Kind: "work", Target: strconv.Itoa(i), Priority: 2, DedupeKey: "work:" + strconv.Itoa(i)}
+		j := NewJob{Kind: "work", Target: int64(i), Priority: 2, DedupeKey: "work:" + strconv.Itoa(i)}
 		if i%2 == 0 {
 			j.Kind, j.SourceID = "poll", src
 		}

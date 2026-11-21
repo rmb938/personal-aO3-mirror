@@ -14,7 +14,7 @@ func TestJob(t *testing.T) {
 	loc := time.FixedZone("x", -7200)
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, loc)
 	j := model.Job{
-		ID: 9, Kind: "backfill", SourceID: 4, Target: "3", Priority: 4, State: model.JobFailed,
+		ID: 9, Kind: "backfill", SourceID: 4, Target: 3, Priority: 4, State: model.JobFailed,
 		NotBefore: created.Add(time.Minute), Attempts: 2, MaxAttempts: 5, LastError: "not_found:page 3",
 		DedupeKey: "backfill:4:3", CreatedAt: created, StartedAt: created.Add(2 * time.Minute),
 		FinishedAt: created.Add(3 * time.Minute),
@@ -28,7 +28,7 @@ func TestJob(t *testing.T) {
 	}, got)
 	assert.Equal(t, time.UTC, got.CreatedAt.Location())
 
-	got = Job(model.Job{ID: 1, Kind: "work", Target: "7", State: model.JobQueued})
+	got = Job(model.Job{ID: 1, Kind: "work", Target: 7, State: model.JobQueued})
 	assert.Zero(t, got.SourceID)
 	assert.Zero(t, got.LastErrorCode)
 	assert.True(t, got.NotBeforeAt.IsZero() && got.StartedAt.IsZero() && got.FinishedAt.IsZero(), "unset times stay zero")

@@ -1,6 +1,8 @@
 package convert
 
 import (
+	"strconv"
+
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 )
@@ -10,7 +12,7 @@ func Job(j model.Job) dto.Job {
 	out := dto.Job{
 		ID:          j.ID,
 		Kind:        dto.JobKind(j.Kind),
-		Target:      j.Target,
+		Target:      strconv.FormatInt(j.Target, 10),
 		SourceID:    j.SourceID,
 		Priority:    j.Priority,
 		State:       dto.JobState(j.State),
