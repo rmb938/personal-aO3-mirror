@@ -89,18 +89,19 @@ var limitGroups = map[string]limitGroup{
 
 // burst sends m requests to h at once (each goroutine waits on one start signal) and returns
 // the responses in request order.
-func burst(h http.Handler, m int, request func(i int) *http.Request) []*httptest.ResponseRecorder {
+func burst(t *testing.T, h http.Handler, m int, request func(i int) *http.Request) []*httptest.ResponseRecorder {
+	t.Helper()
 	reqs := make([]*http.Request, m)
 	ws := make([]*httptest.ResponseRecorder, m)
 	for i := range m {
-		reqs[i], ws[i] = request(i), httptest.NewRecorder()
+		reqs[i] = request(i)
 	}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range m {
 		wg.Go(func() {
 			<-start
-			h.ServeHTTP(ws[i], reqs[i])
+			ws[i] = testutil.Do(t, h, reqs[i])
 		})
 	}
 	close(start)
@@ -139,7 +140,7 @@ func TestRateLimitBurst(t *testing.T) {
 				if listener == "admin" {
 					h = a.Admin()
 				}
-				requireBurst(t, burst(h, burstFactor*n, g.request), n, g.okCode, g.window, listener)
+				requireBurst(t, burst(t, h, burstFactor*n, g.request), n, g.okCode, g.window, listener)
 				// The burst came from one client (httptest's peer, or the socket's fixed
 				// bucket); it is now limited, and a route outside the group is not.
 				assert.Equal(t, http.StatusTooManyRequests, testutil.Do(t, h, g.request(0)).Code, listener)
@@ -168,14 +169,14 @@ func TestRateLimitForwardedFor(t *testing.T) {
 
 	// An untrusted peer naming a different client in every request still has one bucket,
 	// and its forged clients' buckets are untouched.
-	ws := burst(h, burstFactor*loadLimit, func(i int) *http.Request {
+	ws := burst(t, h, burstFactor*loadLimit, func(i int) *http.Request {
 		return get("198.51.100.7:4000", client(i%clients))
 	})
 	requireBurst(t, ws, loadLimit, http.StatusOK, time.Minute, "untrusted peer")
 
 	// Behind the trusted proxy each forwarded client has its own full bucket, keyed by the
 	// rightmost untrusted entry: a client-supplied entry to its left changes nothing.
-	ws = burst(h, clients*2*loadLimit, func(i int) *http.Request {
+	ws = burst(t, h, clients*2*loadLimit, func(i int) *http.Request {
 		return get("127.0.0.1:4000", fmt.Sprintf("192.0.2.%d, %s", i+1, client(i%clients)))
 	})
 	for c := range clients {
@@ -189,7 +190,7 @@ func TestRateLimitForwardedFor(t *testing.T) {
 	}
 
 	// Local clients without X-Forwarded-For (v4 and v6 loopback) share one bucket.
-	ws = burst(h, burstFactor*loadLimit, func(i int) *http.Request {
+	ws = burst(t, h, burstFactor*loadLimit, func(i int) *http.Request {
 		return get([]string{"127.0.0.1:4000", "[::1]:4000"}[i%2], "")
 	})
 	requireBurst(t, ws, loadLimit, http.StatusOK, time.Minute, "local")

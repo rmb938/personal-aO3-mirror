@@ -325,6 +325,7 @@ func TestSourceAdminActions(t *testing.T) {
 	assert.Equal(t, dto.SourceState("cancelled"), sourceState(t, h, seedTagSource))
 	assert.Equal(t, dto.JobState("cancelled"), getJSON[dto.Job](t, h, "/api/v1/jobs/4").State)
 	assert.Equal(t, http.StatusConflict, post(t, h, "/api/v1/sources/1/cancel").Code, "already cancelled")
+	assert.Equal(t, http.StatusConflict, post(t, h, "/api/v1/sources/1/pause").Code, "cancelled is not pausable")
 
 	requireNoContent(t, testutil.Do(t, h, httptest.NewRequest(http.MethodDelete, "/api/v1/sources/1", nil)), "delete")
 	assert.Equal(t, http.StatusNotFound, testutil.Get(t, h, "/api/v1/sources/1").Code)

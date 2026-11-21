@@ -40,7 +40,7 @@ func fail(errOut io.Writer, what string, err error) int {
 // apiError describes an API call error: a problem response by its title, detail and invalid
 // parts, a missing admin socket with a hint to start the API.
 func apiError(err error) string {
-	if p, ok := errors.AsType[*apiclient.ProblemStatusCode](err); ok {
+	if p, ok := errors.AsType[*apiclient.ProblemStatusCodeWithHeaders](err); ok {
 		return problemText(p.Response)
 	}
 	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {

@@ -114,7 +114,9 @@ added).
 ## rate-limited
 
 **429 Too Many Requests.** The client is over a rate limit. Retry after the `Retry-After`
-delay.
+delay (the limit's window, in seconds). Every response that passed a limit carries
+`X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` for the last limit it
+passed (`openapi.yaml` lists the limits).
 
 ## unavailable
 

@@ -50,15 +50,19 @@ const (
 // seedTime is the store clock while seeding.
 var seedTime = time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 
-// newTestControllers opens a temp store, seeds it and returns offline controllers over it.
-// The store and controllers log to log, so the leak test sees their lines too.
-func newTestControllers(tb testing.TB, log *slog.Logger) *controllers.Controllers {
+// newTestControllers opens a temp store, seeds it (then runs each of more in one transaction)
+// and returns offline controllers over it. The store and controllers log to log, so the leak
+// test sees their lines too.
+func newTestControllers(tb testing.TB, log *slog.Logger, more ...func(context.Context, *store.Tx) error) *controllers.Controllers {
 	tb.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, tb.TempDir(), store.Options{Logger: log, Now: func() time.Time { return seedTime }})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, st.Close()) })
 	seed(tb, st)
+	for _, f := range more {
+		require.NoError(tb, st.InTx(ctx, f))
+	}
 	imageDir := tb.TempDir()
 	seedImages(tb, st, imageDir)
 	cfg := config.Default()

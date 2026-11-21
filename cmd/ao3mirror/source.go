@@ -101,7 +101,7 @@ func sourceAdd(ctx context.Context, a *app, args []string, out, errOut io.Writer
 	case *apiclient.SourceAddQueuedHeaders:
 		return waitSourceAdd(ctx, a, r.Response, *wait, *names, out, errOut)
 	case *apiclient.ProblemHeaders: // 409 already-exists
-		if id, ok := idFromLocation(r.Location.Or("")); ok {
+		if id, ok := idFromLocation(r.Location); ok {
 			fmt.Fprintf(errOut, "source add: already added as source %d (see: ao3mirror source show %d)\n", id, id)
 			return 1
 		}

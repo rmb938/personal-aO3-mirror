@@ -1455,8 +1455,42 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       seq 1300 | xargs -P 32 -I@ curl -s -o /dev/null -w '%{http_code}\n' \
         --unix-socket data/api/admin.sock http://admin/api/v1/healthz | codes
       ```
-  - [ ] **15c. OpenAPI audit**: every route's statuses, problem types, headers (`X-Fanwork`,
-    `Retry-After`, `Accept-Query`) and limits in the spec; fix drift; `make generate`.
+  - [x] **15c. OpenAPI audit**: every route's statuses, problem types, headers (`X-Fanwork`,
+    `Retry-After`, `Accept-Query`) and limits in the spec; fix drift; `make generate`. As built:
+    - Problems stay under each operation's `default`, so the ogen client keeps one convenient
+      error type (`ProblemStatusCodeWithHeaders`); explicit error statuses would turn every
+      client method into a sum type. The problem types are listed instead: the Problem
+      response's `x-problems` are those any operation can return (`bad-request`,
+      `validation-error`, `reveal-disabled`, `uri-too-long`, `rate-limited`, `unavailable`,
+      `internal-error`), and each operation's own `x-problems` adds the rest (body problems,
+      `forbidden` on unsafe methods, `not-found`, `state-conflict`, `reveal-required`, ...).
+    - The headers the middleware sets are defined once, in a root `x-common-headers` map:
+      `X-Fanwork` and `X-Request-Id` (required), `X-Fanwork-Key-Epoch`, `X-Client-Request-Id`,
+      httprate's `X-RateLimit-Limit`, `-Remaining` and `-Reset` (undocumented before),
+      `Accept-Query` and `Allow`. OpenAPI has no global response headers, and declaring them
+      per response made ogen wrap every result in a `…Headers` struct of eight fields, none of
+      which the CLI reads. Responses declare only the headers a client acts on: `Location`
+      (201/202/409, now required), `Accept-Query` on the 200s of resources that take QUERY,
+      and `Retry-After` on the Problem response, so the client's error carries it
+      (`ProblemStatusCodeWithHeaders.RetryAfter`). `Cache-Control: no-store`
+      (revealed) is for browsers and caches, so like the security headers it is not
+      declared. `info.description` lists the rate, throttle, timeout, URL, query and body
+      limits.
+    - `integration/openapi_test.go`: `TestMain` makes `testutil.Do` (now also used by the
+      bursts and `FuzzRoutes`) check every response against the spec: a declared status (2xx),
+      content type, only declared headers and every required one, and for a problem a listed
+      type. On a full run it fails for a declared status or an operation's own `x-problems`
+      entry no test produced. `TestRoutesMatchOpenAPI` moved here; `TestOpenAPIProblemTypes`
+      checks every `x-problems` entry is a problem type.
+    - Drift found: the spec did not describe `X-Fanwork`'s values, `X-Request-Id` or the
+      rate-limit headers; PATCH and DELETE `/sources/{id}` are 405 (with `Allow`) on the public
+      listener; the tag query's `types` had no `maxItems`.
+    - Cases added for the gaps: `TestRequestProblems` (cross-origin, 415 and 413 for every
+      unsafe or body route), `TestScopedQueryProblems` (404 and `reveal-required` on the
+      scoped QUERYs), `TestGetWorkChaptersTooLarge` (`newTestControllers` takes extra seed
+      steps), and pausing a cancelled source.
+    - The client is regenerated: the 409's `Location` is a plain string now that it is
+      required (one CLI line), and the tag query's `types` is validated.
   - [ ] **15d. Security review**: `/security-review`, `make deadcode` triage, govulncheck, and
     the OWASP API Security Top 10 (2023) item by item, written up here; small gaps fixed,
     auth items (API1, API2, API5) left to stage 16.

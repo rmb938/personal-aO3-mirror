@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
@@ -127,6 +129,26 @@ func TestQueryWorks(t *testing.T) {
 	assert.Equal(t, sentinel+"title", l.Items[0].Title)
 	l = queryWorks(t, h, "/api/v1/works"+revealQuery, `{"language":"Fixture Language"}`)
 	assert.Empty(t, l.Items)
+}
+
+// TestScopedQueryProblems: a QUERY scoped to a tag, creator or collection refuses free text in
+// hashed mode and an unknown scope with 404.
+func TestScopedQueryProblems(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Public()
+	for pattern, detail := range map[string]problem.Detail{
+		route.TagWorks:        runtime.DetailNoTag,
+		route.CreatorWorks:    runtime.DetailNoCreator,
+		route.CollectionWorks: runtime.DetailNoCollection,
+	} {
+		w := queryJSON(t, h, route.Path(pattern, 999), `{}`)
+		require.Equal(t, http.StatusNotFound, w.Code, pattern)
+		assert.Equal(t, detail.Message(), testutil.DecodeProblem(t, w).Detail, pattern)
+
+		w = queryJSON(t, h, route.Path(pattern, 1), `{"q":"title"}`)
+		require.Equal(t, http.StatusBadRequest, w.Code, pattern)
+		assert.Equal(t, dto.TypeRevealRequired, testutil.DecodeProblem(t, w).Type, pattern)
+	}
 }
 
 // TestQueryWorksSearch runs q (revealed) over the seeded works: both titles are

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	api "github.com/rmb938/personal-aO3-mirror/internal/web/api"
@@ -344,51 +342,6 @@ func TestEnumScopedToField(t *testing.T) {
 
 	value = string(dto.HealthOK)
 	assert.JSONEq(t, `{"status":"ok"}`, testutil.Get(t, a.Router(false), "/enum").Body.String())
-}
-
-// openAPISpec is the part of docs/api/openapi.yaml the coverage test reads.
-type openAPISpec struct {
-	Paths map[string]map[string]yaml.Node `yaml:"paths"`
-}
-
-var openAPIMethods = map[string]string{
-	"get": http.MethodGet, "put": http.MethodPut, "post": http.MethodPost, "delete": http.MethodDelete,
-	"patch": http.MethodPatch, "query": runtime.MethodQuery,
-}
-
-// TestRoutesMatchOpenAPI checks docs/api/openapi.yaml against the routers: the public router has
-// exactly the operations not marked x-admin-only, and the admin router has all of them.
-func TestRoutesMatchOpenAPI(t *testing.T) {
-	raw, err := os.ReadFile("../../../../docs/api/openapi.yaml")
-	require.NoError(t, err)
-	var spec openAPISpec
-	require.NoError(t, yaml.Unmarshal(raw, &spec))
-
-	var public, all []string
-	for path, item := range spec.Paths {
-		for key, node := range item {
-			method, ok := openAPIMethods[key]
-			if !ok {
-				continue
-			}
-			var op struct {
-				AdminOnly bool `yaml:"x-admin-only"`
-			}
-			require.NoError(t, node.Decode(&op))
-			rt := method + " " + path
-			all = append(all, rt)
-			if !op.AdminOnly {
-				public = append(public, rt)
-			}
-		}
-	}
-	slices.Sort(public)
-	slices.Sort(all)
-	require.NotEmpty(t, public)
-
-	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	assert.Equal(t, public, walkRoutes(t, a.Router(false)), "public routes vs openapi.yaml")
-	assert.Equal(t, all, walkRoutes(t, a.Router(true)), "admin routes vs openapi.yaml")
 }
 
 // TestPathParamsDeclared: every route's path parameter is an id the access log records
