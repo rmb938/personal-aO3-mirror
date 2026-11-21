@@ -47,6 +47,20 @@ func (c *Controllers) GetTagByName(ctx context.Context, name string) (TagView, e
 	})
 }
 
+// ListTags returns one page of the stored tags matching f (f.Offset ≥ 0, 1 ≤ f.Limit ≤
+// store.MaxTagPage, in f's order), each with its uses, and the number of matching tags over
+// all pages, read in one transaction so they agree.
+func (c *Controllers) ListTags(ctx context.Context, f model.TagFilter) (page []store.TagRow, total int, err error) {
+	err = c.store.InReadTx(ctx, func(ctx context.Context, tx *store.ReadTx) error {
+		if page, err = tx.FindTags(ctx, f); err != nil {
+			return err
+		}
+		total, err = tx.CountTags(ctx, f)
+		return err
+	})
+	return page, total, err
+}
+
 // tagView reads the rest of t's view in the caller's transaction.
 func tagView(ctx context.Context, tx *store.ReadTx, t store.TagInfo) (TagView, error) {
 	v := TagView{Tag: t}

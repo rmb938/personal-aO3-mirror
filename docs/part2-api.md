@@ -1175,7 +1175,25 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       routes); a bad path id is reported with the other invalid params. Same `WorkList`
       response, `Accept-Query`, and the QUERY route shares the search rate limit.
   - [ ] **12d. Store + `QUERY /tags`**: `store.FindTags` (type, canonical and parent filters,
-    paging, name or use-count sort); `name` is reveal-only.
+    paging, name or use-count sort); `name` is reveal-only. In two PRs:
+    - [x] **12d1. Store + controller: tag listing**, after AO3's tag search (`TagQuery`). As
+      built:
+      - `model.TagFilter`: `Name` (whitespace-separated words, each a case-insensitive
+        substring of the name, ANDed like AO3's name query; at most `MaxTagNameWords`, 16),
+        `Types` (any of), `Canonical` (false matches only a recorded non-canonical tag, not one
+        never read), `ParentIDs` (each a direct parent, AO3's `fandoms` by id; at most 20),
+        `Sort` (`name` asc by default, `uses` desc) and `Direction`. AO3's `created_at` sort
+        is left out: the mirror knows when it first saw a tag, not when AO3 created it.
+      - `store.FindTags` / `CountTags` (`store/tags_list.go`) return `TagRow`s (`TagInfo` plus
+        `Uses`, the stored works tagged with the tag itself, as AO3's `uses`). A deferred join
+        picks the page's ids first; by name it walks the `name` index, and a uses tie breaks
+        by name ascending, then id, as on AO3. Name words are bound `LIKE … ESCAPE` patterns
+        with `%`, `_` and `\` escaped. `MaxTagPage` (100) bounds the limit.
+      - `controllers.ListTags` returns the page and total from one read transaction.
+      - `BenchmarkTags` (seedWorks' ~2k tags on ~1M taggings plus 50k unused): a page by name
+        under 5 ms, by uses ~20–35 ms (every match's uses is counted), counts under 3 ms.
+    - [ ] **12d2. `QUERY /tags`**: `request.TagQuery`, `dto.TagList`, convert, leak samples,
+      OpenAPI and the client; the route shares the search rate limit.
   - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d.
 - [ ] **13. Series, creators, collections**
   - `GET /series/{id}` (with `complete_locally`, `works_total`, `works_mirrored`,
