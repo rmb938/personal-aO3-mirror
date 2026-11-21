@@ -259,7 +259,7 @@ api:
 
 ## Stages
 
-Status: tick when the PR merges.
+Status: tick a stage when its code is done, in the same PR as that code, just before opening it.
 
 - [x] **0. Plan + guardrails**
   - Copy this plan to `docs/part2-api.md`.
@@ -1126,8 +1126,33 @@ Status: tick when the PR merges.
   - Store readers for parents, meta/sub tags, synonyms/merger, and work counts.
   - `GET /tags/{id}`; `GET` + `QUERY /tags/{id}/works` (stage 9 filters scoped to the tag and,
     for canonical tags, their synonyms).
+  - A tag by name, for AO3's `/tags/{name}` and `/tags/{name}/works` URLs (reveal-only).
   - `QUERY /tags` (type filter; `name` is reveal-only).
   - `GET /media` and `/media/{id}/fandoms` (AO3 fandom browse).
+  - In five PRs:
+  - [x] **12a. Store + controller: tag view.** As built:
+    - `store.TagInfoByID` (and `TagByName`, sharing one reader) return `TagInfo` with the new
+      `CanonicalKnown`: `canonical` is NULL until the tag page is read, or until the tag is
+      merged as a synonym (set to 0 then).
+    - `store.RelatedTags(id, rel, limit)` for `TagParents`, `TagChildren`, `TagMetaTags`,
+      `TagSubTags` (direct only) and `TagSynonyms`: `TagGroup`s (type, total, tags) in
+      `model.TagTypes()` order, as AO3's tag page groups them, each cut to `limit` (at most
+      `store.MaxTagGroup`, 100) tags by name (case-insensitive), then id. One window query per
+      relation numbers and counts each type, so a fandom with thousands of children costs one
+      read. Every relation reads an index on the tag's side (`TestRelatedTagsPlans`; the
+      `tag_parents(parent_id)` index is 0004's).
+    - `controllers.GetTag` / `GetTagByName` return a `TagView`: the tag, its merger (`TagRef`),
+      the five relations, and `Works`, the stored works (any status) a stage 9 filter on the tag
+      matches (`CountWorks`), so it equals the `/tags/{id}/works` total. One read transaction.
+  - [ ] **12b. `GET /tags/{id}` and `GET /tags/by-name/{name}`**: `dto.Tag`, `convert.Tag`, leak
+    samples, OpenAPI and the client. `{name}` is AO3's path form (`*s*` for `/` and so on,
+    `ao3url.TagFromParam`); it is free text, so reveal-only (400 `reveal-required` hashed) and
+    bounded in runes.
+  - [ ] **12c. `GET` + `QUERY /tags/{id}/works`**: the works list and query handlers with the
+    path tag as one more required tag filter.
+  - [ ] **12d. Store + `QUERY /tags`**: `store.FindTags` (type, canonical and parent filters,
+    paging, name or use-count sort); `name` is reveal-only.
+  - [ ] **12e. `GET /media` and `/media/{id}/fandoms`** over 12d.
 - [ ] **13. Series, creators, collections**
   - `GET /series/{id}` (with `complete_locally`, `works_total`, `works_mirrored`,
     `missing_positions`, `missing_work_ids`, `mirror_source_url`) and `/series/{id}/works`.

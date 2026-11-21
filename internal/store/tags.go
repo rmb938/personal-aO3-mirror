@@ -82,22 +82,34 @@ func (s *ReadTx) TagByID(ctx context.Context, id int64) (TagRef, error) {
 // TagInfo is a tag's wrangling state as recorded from its tag page.
 type TagInfo struct {
 	TagRef
-	Canonical     bool
-	MergerID      int64     // 0 = not a synonym
-	InfoFetchedAt time.Time // zero if the tag page was never fetched
+	Canonical      bool
+	CanonicalKnown bool      // canonical is recorded: the tag page was read, or it was merged as a synonym
+	MergerID       int64     // 0 = not a synonym
+	InfoFetchedAt  time.Time // zero if the tag page was never fetched
+}
+
+// TagInfoByID returns a tag and its wrangling state by id, or ErrNoTag.
+func (s *ReadTx) TagInfoByID(ctx context.Context, id int64) (TagInfo, error) {
+	return s.tagInfo(ctx, `id = ?`, id)
 }
 
 // TagByName returns a tag and its wrangling state by name (case-insensitive), or ErrNoTag.
 func (s *ReadTx) TagByName(ctx context.Context, name string) (TagInfo, error) {
+	return s.tagInfo(ctx, `name = ?`, name)
+}
+
+// tagInfo reads the one tag matching cond (a constant condition on one bound arg).
+func (s *ReadTx) tagInfo(ctx context.Context, cond string, arg any) (TagInfo, error) {
 	var t TagInfo
 	var canonical, merger sql.NullInt64
 	var fetched int64
-	err := s.meta.QueryRowContext(ctx, `SELECT id, name, type, canonical, merger_id, info_fetched_at FROM tags
-		WHERE name = ?`, name).Scan(&t.ID, &t.Name, &t.Type, &canonical, &merger, &fetched)
+	err := s.meta.QueryRowContext(ctx, `SELECT id, name, type, canonical, merger_id, info_fetched_at
+		FROM tags WHERE `+cond, arg).Scan(&t.ID, &t.Name, &t.Type, &canonical, &merger, &fetched)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNoTag
 	}
-	t.Canonical, t.MergerID, t.InfoFetchedAt = canonical.Int64 == 1, merger.Int64, unixTime(fetched)
+	t.Canonical, t.CanonicalKnown, t.MergerID = canonical.Int64 == 1, canonical.Valid, merger.Int64
+	t.InfoFetchedAt = unixTime(fetched)
 	return t, err
 }
 
