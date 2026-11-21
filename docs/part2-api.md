@@ -932,6 +932,44 @@ Status: tick when the PR merges.
     work rows for those ids only. Every sort ends with `id` as a tie-breaker so pages are stable.
   - Benchmark at a realistic size (synthetic, e.g. 200k works): a deep page up to the offset
     cap, and the filtered `total` count, which may cost more than the offset.
+  - In four PRs:
+  - [x] **9a. Scalar filters, sorts and paging.** As built:
+    - `model.WorkFilter` (`internal/model/work_filter.go`): `Complete` (tri-state), `SingleChapter`
+      (AO3: one chapter expected), `Language` (exact), `Statuses` (any of, at most one each),
+      `Fetched` (tri-state: full page fetched vs blurb-only), inclusive `IntRange`s for words,
+      kudos, hits, comments and bookmarks, inclusive `DateRange`s (by day) for revised (AO3
+      `date_from`/`date_to`) and published. A published or revised bound excludes works with no
+      known date (blurb-only works have no published date).
+    - Sorts (`model.WorkSort`, after AO3's `sort_column`): revised (default), published, words,
+      hits, kudos, comments, bookmarks; `model.SortDirection` "" means the column's default
+      (descending for all of these). Every order ends with `id` in the same direction.
+    - `store.FindWorks` / `CountWorks` (`store/works_list.go`) return `WorkRow`s (relation slices
+      empty) with a deferred join: `WHERE id IN (SELECT id … ORDER BY … LIMIT ? OFFSET ?)`.
+      Status is matched as `+status` so the planner walks the sort index rather than
+      `works_status` (most works are ok) and sorting every match. `TestWorksPagePlans` checks
+      that no sort × direction × unindexed-filter combination sorts in a temp b-tree.
+      Controller `ListWorks` (page + total in one read transaction).
+    - Meta migration `0004_work_listing.sql`: sort indexes for published, comments and bookmarks,
+      and the reverse indexes above.
+    - `BenchmarkWorksPage` / `BenchmarkWorksCount` at 200k synthetic works (100 per page, offset
+      99,900): an unfiltered deep page takes ~1 ms; a filtered deep page walks the sort index
+      and reads every row it skips, ~70–150 ms (worst when the filter matches fewer rows than
+      the offset); first pages are under 2 ms; counts are at most ~11 ms. Stage 10's search rate
+      limit bounds the deep-page cost.
+  - [ ] **9b. Tag filters.** Include/exclude tag ids, by type (rating, warning, category, fandom,
+    relationship, character, freeform, other). A tag id matches like AO3's `filter_ids`: the
+    tag, its synonyms (`merger_id`) and works tagged with any of its sub tags (`tag_meta`,
+    transitive). Bounded id lists; reverse indexes for `tags(merger_id)` and `tag_meta(meta_id)`.
+  - [ ] **9c. Crossover.** AO3's rule (`lib/fandom_crossover.rb`): a work is a crossover when no
+    fandom on it shares a meta tag ancestor (after mergers) with all the others. Too costly to
+    work out per query, so a precomputed `works.crossover` column, recomputed on work upsert
+    and when tag info changes a fandom's merger or meta tags.
+  - [ ] **9d. Title and creator sorts.** Precomputed sort-key columns with indexes, after AO3's
+    `sorted_title` (lowercase, strip a leading quote/dot/slash, move a leading a/an/the to the
+    end, zero-pad a leading number to 5) and `authors_to_sort_on` (pseud names sorted, joined,
+    lowercased, leading punctuation stripped; "Anonymous" for anonymous works). Default
+    direction ascending. Hashed mode hides the text but the order still says a little about it
+    (accepted).
 - [ ] **10. Works list + QUERY API**
   - `GET /works?page&per_page&sort` (simple listing).
   - `QUERY /works` with the body filter object (structured fields only in this stage).
