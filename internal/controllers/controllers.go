@@ -8,6 +8,7 @@
 //   - crawl.go: one poll or backfill listing page (incl. date windows for huge sources)
 //   - listings.go: fetch, parse and ingest one listing or series page
 //   - works.go: fetch one work page, store a parsed work, queue work fetches
+//   - workview.go: read a stored work, its chapters and skin (the API's work views)
 //   - tags.go, series.go: tag and series info pages
 //   - reparse.go: rebuild parsed data from stored raw pages (zero requests)
 //

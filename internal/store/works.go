@@ -422,21 +422,34 @@ func (s *ReadTx) WorkStatus(ctx context.Context, workID int64) (model.WorkStatus
 // ErrNoWork means no works row has the requested id.
 var ErrNoWork = errors.New("store: no such work")
 
-// Work returns a work's own metadata and stats (the works row). Related rows (creators, tags,
-// series, collections, chapters) are not loaded. The result holds fanwork content: never log it.
-func (s *ReadTx) Work(ctx context.Context, id int64) (model.Work, error) {
-	w := model.Work{ID: id}
+// WorkRow is a stored work's own row: its metadata and stats plus its local state. The
+// embedded Work's relation slices (creators, tags, series, collections, chapters) and SkinCSS
+// are not loaded; the Work* readers load them. It holds fanwork content: never log it.
+type WorkRow struct {
+	model.Work
+	Status      model.WorkStatus
+	LastFetched time.Time // zero: known from listing blurbs only, so no chapters or bodies
+}
+
+// Work returns a work's own row, or ErrNoWork.
+func (s *ReadTx) Work(ctx context.Context, id int64) (WorkRow, error) {
+	var r WorkRow
+	w := &r.Work
+	w.ID = id
 	var complete, restricted, anonymous int
+	var fetched int64
 	err := s.meta.QueryRowContext(ctx, `SELECT title, summary_html, notes_html, endnotes_html, language, words,
 		chapters_posted, chapters_expected, complete, published, revised_at, kudos, hits, comments, bookmarks,
-		restricted, anonymous FROM works WHERE id = ?`, id).Scan(&w.Title, &w.SummaryHTML, &w.NotesHTML,
-		&w.EndNotesHTML, &w.Language, &w.Words, &w.ChaptersPosted, &w.ChaptersExpected, &complete, &w.Published,
-		&w.Revised, &w.Stats.Kudos, &w.Stats.Hits, &w.Stats.Comments, &w.Stats.Bookmarks, &restricted, &anonymous)
+		restricted, anonymous, status, last_fetched FROM works WHERE id = ?`, id).Scan(&w.Title, &w.SummaryHTML,
+		&w.NotesHTML, &w.EndNotesHTML, &w.Language, &w.Words, &w.ChaptersPosted, &w.ChaptersExpected, &complete,
+		&w.Published, &w.Revised, &w.Stats.Kudos, &w.Stats.Hits, &w.Stats.Comments, &w.Stats.Bookmarks, &restricted,
+		&anonymous, &r.Status, &fetched)
 	if errors.Is(err, sql.ErrNoRows) {
-		return w, ErrNoWork
+		return r, ErrNoWork
 	}
 	w.Complete, w.Restricted, w.Anonymous = complete == 1, restricted == 1, anonymous == 1
-	return w, err
+	r.LastFetched = unixTime(fetched)
+	return r, err
 }
 
 // WorkDiag is the content-free state of one work (for `debug work` and tests): status, dates,
