@@ -84,10 +84,10 @@ func ftsMatch(q string) (string, error) {
 }
 
 // ftsRanked selects each work matching the MATCH parameter as fid with its score (higher is a
-// better match). bm25 weighs the works_fts columns (title, summary, creators, tags) with AO3's
-// field boosts (title^7, creators^5, the rest 1; app/models/search/work_query.rb
+// better match). bm25 weighs the works_fts columns (title, summary, creators, tags, series) with
+// AO3's field boosts (title^7, creators^5, the rest 1; app/models/search/work_query.rb
 // general_query). bm25 is lower for better matches, so the score is its negation.
-const ftsRanked = `SELECT rowid AS fid, -bm25(works_fts, 7.0, 1.0, 5.0, 1.0) AS score
+const ftsRanked = `SELECT rowid AS fid, -bm25(works_fts, 7.0, 1.0, 5.0, 1.0, 1.0) AS score
 	FROM works_fts WHERE works_fts MATCH ?`
 
 // workWhere builds the WHERE clause (with a leading space) and its args for f's filters. Values
