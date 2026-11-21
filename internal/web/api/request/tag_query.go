@@ -51,13 +51,17 @@ type TagQuery struct {
 // (reveal-required): matching it would tell a client whether a hidden name holds a guess.
 func (q *TagQuery) NeedsReveal() bool { return q.Name != "" }
 
+// validNameWords reports whether a name filter is valid text of at most maxRunes runes with 1
+// to maxWords words.
+func validNameWords(name string, maxRunes, maxWords int) bool {
+	n := len(strings.Fields(name))
+	return n > 0 && n <= maxWords && problem.ValidText(name, maxRunes)
+}
+
 // Validate records every invalid member.
 func (q *TagQuery) Validate(v *problem.Validation) {
-	if q.Name != "" {
-		if n := len(strings.Fields(q.Name)); n == 0 || n > MaxTagNameQueryWords ||
-			!problem.ValidText(q.Name, MaxTagNameQueryRunes) {
-			v.Member(detailTagName, "name")
-		}
+	if q.Name != "" && !validNameWords(q.Name, MaxTagNameQueryRunes, MaxTagNameQueryWords) {
+		v.Member(detailTagName, "name")
 	}
 	values := dto.TagType("").EnumValues()
 	seen := make(map[dto.TagType]bool, len(q.Types))

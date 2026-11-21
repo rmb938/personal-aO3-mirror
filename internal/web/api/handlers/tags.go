@@ -55,13 +55,13 @@ func (a *Handlers) GetTag(r *http.Request) (any, error) {
 // for the works a filter on the tag matches (its synonyms' and sub tags' too), as AO3's
 // /tags/{name}/works.
 func (a *Handlers) ListTagWorks(r *http.Request) (any, error) {
-	return a.listWorks(r, true)
+	return a.listWorks(r, a.ctl.ListTagWorks)
 }
 
 // QueryTagWorks is QUERY /api/v1/tags/{id}/works: QueryWorks with the path tag as one more
 // tag every work must match.
 func (a *Handlers) QueryTagWorks(r *http.Request) (any, error) {
-	return a.queryWorks(r, true)
+	return a.queryWorks(r, a.ctl.ListTagWorks)
 }
 
 // GetTagByName is GET /api/v1/tags/by-name/{name}: GetTag for the tag AO3's /tags/{name} page

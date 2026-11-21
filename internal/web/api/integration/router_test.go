@@ -170,6 +170,12 @@ var routeSamples = map[string]routeSample{
 		content: true},
 	"GET /api/v1/series/{id}":       {target: "/api/v1/series/77", status: http.StatusOK, content: true},
 	"GET /api/v1/series/{id}/works": {target: "/api/v1/series/77/works", status: http.StatusOK, content: true},
+	"QUERY /api/v1/creators": {target: "/api/v1/creators?per_page=5", status: http.StatusOK, content: true,
+		body: `{"sort":"works"}`},
+	"GET /api/v1/creators/{id}":       {target: "/api/v1/creators/1", status: http.StatusOK, content: true},
+	"GET /api/v1/creators/{id}/works": {target: "/api/v1/creators/1/works?sort=title", status: http.StatusOK, content: true},
+	"QUERY /api/v1/creators/{id}/works": {target: "/api/v1/creators/1/works?per_page=5", status: http.StatusOK,
+		content: true, body: `{"fetched":true}`},
 
 	// Admin socket only.
 	"POST /api/v1/sources/{id}/confirm": {target: "/api/v1/sources/2/confirm", status: http.StatusNoContent, fresh: true},

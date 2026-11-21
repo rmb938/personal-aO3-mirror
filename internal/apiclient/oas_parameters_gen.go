@@ -29,6 +29,11 @@ type GetChapterParams struct {
 	Position int
 }
 
+// GetCreatorParams is parameters of getCreator operation.
+type GetCreatorParams struct {
+	ID ID
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	ID ID
@@ -74,6 +79,18 @@ type GetWorkChaptersParams struct {
 // GetWorkSkinParams is parameters of getWorkSkin operation.
 type GetWorkSkinParams struct {
 	ID ID
+}
+
+// ListCreatorWorksParams is parameters of listCreatorWorks operation.
+type ListCreatorWorksParams struct {
+	ID ID
+	// `best_match` needs a search query, which only `QUERY` takes: 422 here.
+	Sort OptWorkSort `json:",omitempty,omitzero"`
+	// Omitted, ascending for `title` and `creator` and descending for the rest.
+	Direction OptSortDirection `json:",omitempty,omitzero"`
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
 // ListJobsParams is parameters of listJobs operation.
@@ -145,6 +162,21 @@ type ListWorksParams struct {
 // PauseSourceParams is parameters of pauseSource operation.
 type PauseSourceParams struct {
 	ID ID
+}
+
+// QueryCreatorWorksParams is parameters of queryCreatorWorks operation.
+type QueryCreatorWorksParams struct {
+	ID ID
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
+}
+
+// QueryCreatorsParams is parameters of queryCreators operation.
+type QueryCreatorsParams struct {
+	// 1-based page number; (page-1)*per_page is at most 100000.
+	Page    OptInt `json:",omitempty,omitzero"`
+	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
 // QueryTagWorksParams is parameters of queryTagWorks operation.

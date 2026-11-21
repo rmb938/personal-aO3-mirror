@@ -43,6 +43,7 @@ func TestEnumSetsMatchModel(t *testing.T) {
 	assert.ElementsMatch(t, strs(store.ContentChanges()), dto.ContentChange("").EnumValues(), "content changes")
 	assert.ElementsMatch(t, strs(model.TagTypes()), dto.TagType("").EnumValues(), "tag types")
 	assert.ElementsMatch(t, strs(model.TagSorts()), dto.TagSort("").EnumValues(), "tag sorts")
+	assert.ElementsMatch(t, strs(model.CreatorSorts()), dto.CreatorSort("").EnumValues(), "creator sorts")
 	assert.ElementsMatch(t, slices.Collect(maps.Keys(config.TagInfoTypes)), dto.TagInfoType("").EnumValues(),
 		"tag info types")
 }

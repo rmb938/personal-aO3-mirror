@@ -1292,8 +1292,22 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - `BenchmarkCreators` (50k creators on seedWorks' works): a page by name under 0.5 ms, by
       works ~16–24 ms (every match's works are counted), counts under 5 ms, a creator's works
       page under 0.1 ms.
-  - [ ] **13d. Creator routes**: `GET /creators/{id}`, `GET` + `QUERY /creators/{id}/works`,
-    `QUERY /creators` (`name` is reveal-only).
+  - [x] **13d. Creator routes**: `GET /creators/{id}`, `GET` + `QUERY /creators/{id}/works`,
+    `QUERY /creators` (`name` is reveal-only). As built:
+    - `GET /creators/{id}` answers `dto.Creator` (`convert.CreatorView`): `id`, `user`, `pseud`
+      (the work view's hashes), `works` (the works route's total) and `mirror_source_url`, the
+      AO3 pseud works URL (`ao3url.KindPseud`) for source add, hashed like the series one.
+    - `QUERY /creators`: `request.CreatorQuery` (`name`, 1 to 128 runes and 1 to 16 words, no
+      control characters, free text so `reveal-required` hashed; `sort` a `dto.CreatorSort`:
+      `name`, `works`; `direction`), mapped by `convert.CreatorFilter`, answered as
+      `dto.List[dto.Creator]` (OpenAPI `CreatorList`) through `convert.CreatorList`. The word
+      cap equals the store's (`TestCreatorQueryBoundsMatchModel`); the name check is shared with
+      the tag query (`validNameWords`). QUERY only, with the search rate limit, as `/tags`.
+    - `GET` + `QUERY /creators/{id}/works` are the `/works` handlers within
+      `controllers.ListCreatorWorks`: the works handlers now take a scope controller (the tag
+      routes pass `ListTagWorks`) instead of a tag flag. QUERY shares the search rate limit.
+    - `store.ErrNoCreator` is 404 with `DetailNoCreator`. The seed's `seedCreator` (1) is the
+      byline of both seeded works, checked while seeding; every route has a leak sample.
   - [ ] **13e. Store + controller: collections**: a meta migration indexing
     `work_collections(collection_id)`, a collection scope on `model.WorkFilter`, and
     `GetCollection` (name, title, works count).

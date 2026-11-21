@@ -57,6 +57,7 @@ var (
 	DetailNoTag            = problem.NewDetail("no stored tag has this id or name")
 	DetailNoMedium         = problem.NewDetail("no stored media tag has this id")
 	DetailNoSeries         = problem.NewDetail("no stored series has this id")
+	DetailNoCreator        = problem.NewDetail("no stored creator has this id")
 	DetailWorkTooLarge     = problem.NewDetail("the work's chapters are over " + workCapMiB + " MiB together; read them one at a time from " + route.Chapter)
 	DetailMethodNotAllowed = problem.NewDetail("this path does not support the method; see the Allow header")
 	DetailStateConflict    = problem.NewDetail("the resource is not in a state that allows this")
