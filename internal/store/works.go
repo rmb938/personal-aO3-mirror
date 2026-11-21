@@ -385,11 +385,6 @@ func updateFTS(ctx context.Context, tx querier, w model.Work) error {
 	return err
 }
 
-// SearchWorkIDs runs an FTS5 MATCH query and returns work ids by rank.
-func (s *ReadTx) SearchWorkIDs(ctx context.Context, match string, limit int) ([]int64, error) {
-	return queryInt64s(ctx, s.meta, `SELECT rowid FROM works_fts WHERE works_fts MATCH ? ORDER BY rank LIMIT ?`, match, limit)
-}
-
 // SetWorkStatus records a verification result (deleted/hidden/restricted/...). Content is kept.
 func (s *Tx) SetWorkStatus(ctx context.Context, workID int64, status model.WorkStatus) error {
 	now := s.unix()
