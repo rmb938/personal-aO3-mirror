@@ -14,6 +14,40 @@ func (s *ProblemStatusCode) Error() string {
 	return fmt.Sprintf("code %d: %+v", s.StatusCode, s.Response)
 }
 
+type AcceptQuery string
+
+const (
+	AcceptQueryApplicationJSON AcceptQuery = "application/json"
+)
+
+// AllValues returns all AcceptQuery values.
+func (AcceptQuery) AllValues() []AcceptQuery {
+	return []AcceptQuery{
+		AcceptQueryApplicationJSON,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AcceptQuery) MarshalText() ([]byte, error) {
+	switch s {
+	case AcceptQueryApplicationJSON:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AcceptQuery) UnmarshalText(data []byte) error {
+	switch AcceptQuery(data) {
+	case AcceptQueryApplicationJSON:
+		*s = AcceptQueryApplicationJSON
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/Backfill
 type Backfill struct {
 	// 0 once the listing walk is done.
@@ -467,6 +501,33 @@ func (s *ChapterRef) SetPublishedOn(val OptDate) {
 // ConfirmSourceNoContent is response for ConfirmSource operation.
 type ConfirmSourceNoContent struct{}
 
+// An inclusive counter range; an absent end is open, and min must not be above max.
+// Ref: #/components/schemas/CountRange
+type CountRange struct {
+	Min OptInt `json:"min"`
+	Max OptInt `json:"max"`
+}
+
+// GetMin returns the value of Min.
+func (s *CountRange) GetMin() OptInt {
+	return s.Min
+}
+
+// GetMax returns the value of Max.
+func (s *CountRange) GetMax() OptInt {
+	return s.Max
+}
+
+// SetMin sets the value of Min.
+func (s *CountRange) SetMin(val OptInt) {
+	s.Min = val
+}
+
+// SetMax sets the value of Max.
+func (s *CountRange) SetMax(val OptInt) {
+	s.Max = val
+}
+
 // Ref: #/components/schemas/Daemon
 type Daemon struct {
 	// A heartbeat within 2 minutes that is not a clean stop.
@@ -685,6 +746,33 @@ func (s *DaemonPhase) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// An inclusive range of days; an absent end is open, and from must not be after to.
+// Ref: #/components/schemas/DateRange
+type DateRange struct {
+	From OptDate `json:"from"`
+	To   OptDate `json:"to"`
+}
+
+// GetFrom returns the value of From.
+func (s *DateRange) GetFrom() OptDate {
+	return s.From
+}
+
+// GetTo returns the value of To.
+func (s *DateRange) GetTo() OptDate {
+	return s.To
+}
+
+// SetFrom sets the value of From.
+func (s *DateRange) SetFrom(val OptDate) {
+	s.From = val
+}
+
+// SetTo sets the value of To.
+func (s *DateRange) SetTo(val OptDate) {
+	s.To = val
 }
 
 type Duration time.Duration
@@ -2319,6 +2407,52 @@ func (o NilWorkDetailStatus) Or(d WorkDetailStatus) WorkDetailStatus {
 	return d
 }
 
+// NewOptAcceptQuery returns new OptAcceptQuery with value set to v.
+func NewOptAcceptQuery(v AcceptQuery) OptAcceptQuery {
+	return OptAcceptQuery{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptAcceptQuery is optional AcceptQuery.
+type OptAcceptQuery struct {
+	Value AcceptQuery
+	Set   bool
+}
+
+// IsSet returns true if OptAcceptQuery was set.
+func (o OptAcceptQuery) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptAcceptQuery) Reset() {
+	var v AcceptQuery
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptAcceptQuery) SetTo(v AcceptQuery) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptAcceptQuery) Get() (v AcceptQuery, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptAcceptQuery) Or(d AcceptQuery) AcceptQuery {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptBackfill returns new OptBackfill with value set to v.
 func NewOptBackfill(v Backfill) OptBackfill {
 	return OptBackfill{
@@ -2457,6 +2591,52 @@ func (o OptBool) Or(d bool) bool {
 	return d
 }
 
+// NewOptCountRange returns new OptCountRange with value set to v.
+func NewOptCountRange(v CountRange) OptCountRange {
+	return OptCountRange{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCountRange is optional CountRange.
+type OptCountRange struct {
+	Value CountRange
+	Set   bool
+}
+
+// IsSet returns true if OptCountRange was set.
+func (o OptCountRange) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCountRange) Reset() {
+	var v CountRange
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCountRange) SetTo(v CountRange) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCountRange) Get() (v CountRange, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCountRange) Or(d CountRange) CountRange {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptDaemonPhase returns new OptDaemonPhase with value set to v.
 func NewOptDaemonPhase(v DaemonPhase) OptDaemonPhase {
 	return OptDaemonPhase{
@@ -2543,6 +2723,52 @@ func (o OptDate) Get() (v time.Time, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptDate) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptDateRange returns new OptDateRange with value set to v.
+func NewOptDateRange(v DateRange) OptDateRange {
+	return OptDateRange{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptDateRange is optional DateRange.
+type OptDateRange struct {
+	Value DateRange
+	Set   bool
+}
+
+// IsSet returns true if OptDateRange was set.
+func (o OptDateRange) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptDateRange) Reset() {
+	var v DateRange
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptDateRange) SetTo(v DateRange) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptDateRange) Get() (v DateRange, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptDateRange) Or(d DateRange) DateRange {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -7399,6 +7625,300 @@ func (s *WorkList) SetPerPage(val int) {
 // SetTotal sets the value of Total.
 func (s *WorkList) SetTotal(val int) {
 	s.Total = val
+}
+
+// WorkListHeaders wraps WorkList with response headers.
+type WorkListHeaders struct {
+	AcceptQuery OptAcceptQuery
+	Response    WorkList
+}
+
+// GetAcceptQuery returns the value of AcceptQuery.
+func (s *WorkListHeaders) GetAcceptQuery() OptAcceptQuery {
+	return s.AcceptQuery
+}
+
+// GetResponse returns the value of Response.
+func (s *WorkListHeaders) GetResponse() WorkList {
+	return s.Response
+}
+
+// SetAcceptQuery sets the value of AcceptQuery.
+func (s *WorkListHeaders) SetAcceptQuery(val OptAcceptQuery) {
+	s.AcceptQuery = val
+}
+
+// SetResponse sets the value of Response.
+func (s *WorkListHeaders) SetResponse(val WorkList) {
+	s.Response = val
+}
+
+// AO3 work_search filters. Every member is optional; absent members match everything. Invalid members
+// are all listed in one `validation-error` (by JSON Pointer).
+// Ref: #/components/schemas/WorkQueryRequest
+type WorkQueryRequest struct {
+	// Every one must match (AO3 `filter_ids`, every tag type in one list). A tag id matches works tagged
+	// with it, a synonym of it, or any of its sub tags (transitively) or their synonyms.
+	TagIds []ID `json:"tag_ids"`
+	// None may match (AO3 `excluded_tag_ids`), matched like `tag_ids`.
+	ExcludeTagIds []ID `json:"exclude_tag_ids"`
+	// AO3 `complete`.
+	Complete OptBool `json:"complete"`
+	// AO3 `crossover`; a crossover has no fandom related to all its others.
+	Crossover OptBool `json:"crossover"`
+	// True keeps works expecting one chapter.
+	SingleChapter OptBool `json:"single_chapter"`
+	// The stored language name, matched exactly. Free text: refused with `reveal-required` unless the
+	// request is revealed.
+	Language OptString `json:"language"`
+	// Any of these local availability states.
+	Statuses []WorkQueryRequestStatusesItem `json:"statuses"`
+	// True keeps works whose page was fetched; false, works known only from listing blurbs.
+	Fetched   OptBool       `json:"fetched"`
+	Words     OptCountRange `json:"words"`
+	Kudos     OptCountRange `json:"kudos"`
+	Hits      OptCountRange `json:"hits"`
+	Comments  OptCountRange `json:"comments"`
+	Bookmarks OptCountRange `json:"bookmarks"`
+	// The last update (AO3 `date_from` / `date_to`).
+	Revised OptDateRange `json:"revised"`
+	// The first publication; excludes works with no known date (blurb-only).
+	Published OptDateRange `json:"published"`
+	Sort      OptWorkSort  `json:"sort"`
+	// Omitted, ascending for `title` and `creator` and descending for the rest.
+	Direction OptSortDirection `json:"direction"`
+}
+
+// GetTagIds returns the value of TagIds.
+func (s *WorkQueryRequest) GetTagIds() []ID {
+	return s.TagIds
+}
+
+// GetExcludeTagIds returns the value of ExcludeTagIds.
+func (s *WorkQueryRequest) GetExcludeTagIds() []ID {
+	return s.ExcludeTagIds
+}
+
+// GetComplete returns the value of Complete.
+func (s *WorkQueryRequest) GetComplete() OptBool {
+	return s.Complete
+}
+
+// GetCrossover returns the value of Crossover.
+func (s *WorkQueryRequest) GetCrossover() OptBool {
+	return s.Crossover
+}
+
+// GetSingleChapter returns the value of SingleChapter.
+func (s *WorkQueryRequest) GetSingleChapter() OptBool {
+	return s.SingleChapter
+}
+
+// GetLanguage returns the value of Language.
+func (s *WorkQueryRequest) GetLanguage() OptString {
+	return s.Language
+}
+
+// GetStatuses returns the value of Statuses.
+func (s *WorkQueryRequest) GetStatuses() []WorkQueryRequestStatusesItem {
+	return s.Statuses
+}
+
+// GetFetched returns the value of Fetched.
+func (s *WorkQueryRequest) GetFetched() OptBool {
+	return s.Fetched
+}
+
+// GetWords returns the value of Words.
+func (s *WorkQueryRequest) GetWords() OptCountRange {
+	return s.Words
+}
+
+// GetKudos returns the value of Kudos.
+func (s *WorkQueryRequest) GetKudos() OptCountRange {
+	return s.Kudos
+}
+
+// GetHits returns the value of Hits.
+func (s *WorkQueryRequest) GetHits() OptCountRange {
+	return s.Hits
+}
+
+// GetComments returns the value of Comments.
+func (s *WorkQueryRequest) GetComments() OptCountRange {
+	return s.Comments
+}
+
+// GetBookmarks returns the value of Bookmarks.
+func (s *WorkQueryRequest) GetBookmarks() OptCountRange {
+	return s.Bookmarks
+}
+
+// GetRevised returns the value of Revised.
+func (s *WorkQueryRequest) GetRevised() OptDateRange {
+	return s.Revised
+}
+
+// GetPublished returns the value of Published.
+func (s *WorkQueryRequest) GetPublished() OptDateRange {
+	return s.Published
+}
+
+// GetSort returns the value of Sort.
+func (s *WorkQueryRequest) GetSort() OptWorkSort {
+	return s.Sort
+}
+
+// GetDirection returns the value of Direction.
+func (s *WorkQueryRequest) GetDirection() OptSortDirection {
+	return s.Direction
+}
+
+// SetTagIds sets the value of TagIds.
+func (s *WorkQueryRequest) SetTagIds(val []ID) {
+	s.TagIds = val
+}
+
+// SetExcludeTagIds sets the value of ExcludeTagIds.
+func (s *WorkQueryRequest) SetExcludeTagIds(val []ID) {
+	s.ExcludeTagIds = val
+}
+
+// SetComplete sets the value of Complete.
+func (s *WorkQueryRequest) SetComplete(val OptBool) {
+	s.Complete = val
+}
+
+// SetCrossover sets the value of Crossover.
+func (s *WorkQueryRequest) SetCrossover(val OptBool) {
+	s.Crossover = val
+}
+
+// SetSingleChapter sets the value of SingleChapter.
+func (s *WorkQueryRequest) SetSingleChapter(val OptBool) {
+	s.SingleChapter = val
+}
+
+// SetLanguage sets the value of Language.
+func (s *WorkQueryRequest) SetLanguage(val OptString) {
+	s.Language = val
+}
+
+// SetStatuses sets the value of Statuses.
+func (s *WorkQueryRequest) SetStatuses(val []WorkQueryRequestStatusesItem) {
+	s.Statuses = val
+}
+
+// SetFetched sets the value of Fetched.
+func (s *WorkQueryRequest) SetFetched(val OptBool) {
+	s.Fetched = val
+}
+
+// SetWords sets the value of Words.
+func (s *WorkQueryRequest) SetWords(val OptCountRange) {
+	s.Words = val
+}
+
+// SetKudos sets the value of Kudos.
+func (s *WorkQueryRequest) SetKudos(val OptCountRange) {
+	s.Kudos = val
+}
+
+// SetHits sets the value of Hits.
+func (s *WorkQueryRequest) SetHits(val OptCountRange) {
+	s.Hits = val
+}
+
+// SetComments sets the value of Comments.
+func (s *WorkQueryRequest) SetComments(val OptCountRange) {
+	s.Comments = val
+}
+
+// SetBookmarks sets the value of Bookmarks.
+func (s *WorkQueryRequest) SetBookmarks(val OptCountRange) {
+	s.Bookmarks = val
+}
+
+// SetRevised sets the value of Revised.
+func (s *WorkQueryRequest) SetRevised(val OptDateRange) {
+	s.Revised = val
+}
+
+// SetPublished sets the value of Published.
+func (s *WorkQueryRequest) SetPublished(val OptDateRange) {
+	s.Published = val
+}
+
+// SetSort sets the value of Sort.
+func (s *WorkQueryRequest) SetSort(val OptWorkSort) {
+	s.Sort = val
+}
+
+// SetDirection sets the value of Direction.
+func (s *WorkQueryRequest) SetDirection(val OptSortDirection) {
+	s.Direction = val
+}
+
+type WorkQueryRequestStatusesItem string
+
+const (
+	WorkQueryRequestStatusesItemOk         WorkQueryRequestStatusesItem = "ok"
+	WorkQueryRequestStatusesItemDeleted    WorkQueryRequestStatusesItem = "deleted"
+	WorkQueryRequestStatusesItemHidden     WorkQueryRequestStatusesItem = "hidden"
+	WorkQueryRequestStatusesItemRestricted WorkQueryRequestStatusesItem = "restricted"
+	WorkQueryRequestStatusesItemUnrevealed WorkQueryRequestStatusesItem = "unrevealed"
+)
+
+// AllValues returns all WorkQueryRequestStatusesItem values.
+func (WorkQueryRequestStatusesItem) AllValues() []WorkQueryRequestStatusesItem {
+	return []WorkQueryRequestStatusesItem{
+		WorkQueryRequestStatusesItemOk,
+		WorkQueryRequestStatusesItemDeleted,
+		WorkQueryRequestStatusesItemHidden,
+		WorkQueryRequestStatusesItemRestricted,
+		WorkQueryRequestStatusesItemUnrevealed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WorkQueryRequestStatusesItem) MarshalText() ([]byte, error) {
+	switch s {
+	case WorkQueryRequestStatusesItemOk:
+		return []byte(s), nil
+	case WorkQueryRequestStatusesItemDeleted:
+		return []byte(s), nil
+	case WorkQueryRequestStatusesItemHidden:
+		return []byte(s), nil
+	case WorkQueryRequestStatusesItemRestricted:
+		return []byte(s), nil
+	case WorkQueryRequestStatusesItemUnrevealed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WorkQueryRequestStatusesItem) UnmarshalText(data []byte) error {
+	switch WorkQueryRequestStatusesItem(data) {
+	case WorkQueryRequestStatusesItemOk:
+		*s = WorkQueryRequestStatusesItemOk
+		return nil
+	case WorkQueryRequestStatusesItemDeleted:
+		*s = WorkQueryRequestStatusesItemDeleted
+		return nil
+	case WorkQueryRequestStatusesItemHidden:
+		*s = WorkQueryRequestStatusesItemHidden
+		return nil
+	case WorkQueryRequestStatusesItemRestricted:
+		*s = WorkQueryRequestStatusesItemRestricted
+		return nil
+	case WorkQueryRequestStatusesItemUnrevealed:
+		*s = WorkQueryRequestStatusesItemUnrevealed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // A series the work is in, with how much of it is mirrored. `complete_locally` is false for a partial

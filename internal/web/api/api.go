@@ -26,12 +26,14 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 		listener = "admin"
 	}
 	r.With(a.SourceAddRateLimit(listener, admin)).Post(route.Sources, a.Handle(h.AddSource(admin)))
+	search := a.SearchRateLimit(listener, admin) // one budget for every QUERY search route
 	r.Get(route.Source, a.Handle(h.GetSource))
 	r.Get(route.SourceAdd, a.Handle(h.GetSourceAdd))
 	r.Get(route.Jobs, a.Handle(h.ListJobs))
 	r.Get(route.Job, a.Handle(h.GetJob))
 	r.Get(route.Status, a.Handle(h.Status))
-	r.Get(route.Works, a.Handle(h.ListWorks))
+	r.With(runtime.AcceptQuery).Get(route.Works, a.Handle(h.ListWorks))
+	r.With(runtime.AcceptQuery, search).Query(route.Works, a.Handle(h.QueryWorks))
 	r.Get(route.Work, a.Handle(h.GetWork))
 	r.Get(route.WorkSkin, a.Handle(h.GetWorkSkin))
 	r.Get(route.Chapters, a.Handle(h.GetWorkChapters))

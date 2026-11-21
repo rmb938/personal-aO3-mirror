@@ -1023,7 +1023,7 @@ Status: tick when the PR merges.
       each (`TestWorksPagePlans` covers both sorts). Its backfill is a Go step.
     - `BenchmarkSortKeys` at 200k works: the backfill (clear, compute and write every row in one
       transaction) ~2.3 s, recomputing with keys current ~0.4 s, one work ~0.09 ms.
-- [ ] **10. Works list + QUERY API**
+- [x] **10. Works list + QUERY API**
   - `GET /works?page&per_page&sort` (simple listing).
   - `QUERY /works` with the body filter object (structured fields only in this stage).
   - Search rate limit.
@@ -1051,10 +1051,26 @@ Status: tick when the PR merges.
       (`DetailWorkSort`, `DetailDirection`). A convert test keeps the dto enums equal to
       `model.WorkSorts()` and the model directions; the integration test checks
       `runtime.MaxPerPage` ≤ `store.MaxWorkBatch`.
-  - [ ] **10c. `QUERY /works`**: a `request.WorkQuery` body with the stage 9 filters, sort and
+  - [x] **10c. `QUERY /works`**: a `request.WorkQuery` body with the stage 9 filters, sort and
     direction; `page` / `per_page` stay query params, as on `GET`. `language` is free text (the
     stored AO3 display name), so it is reveal-only (400 `reveal-required` in hashed mode). The
-    search rate limit (`search_per_min`) and `Accept-Query: application/json`.
+    search rate limit (`search_per_min`) and `Accept-Query: application/json`. As built:
+    - `request.WorkQuery`: `tag_ids` / `exclude_tag_ids` (one list each, as in 9b; at most 20
+      distinct ids of 1..2^53-1), `complete`, `crossover`, `fetched` (absent = either),
+      `single_chapter`, `language`, `statuses` (each at most once), `words` / `kudos` / `hits` /
+      `comments` / `bookmarks` as `{min, max}` (0..2^31-1, min ≤ max), `revised` / `published`
+      as `{from, to}` (`YYYY-MM-DD`, from ≤ to), `sort`, `direction`. `{}` is the `GET` listing.
+      `convert.WorkFilter` maps it to `model.WorkFilter`; a test keeps the tag cap equal to
+      `model.MaxWorkFilterTags`.
+    - The handler validates first (one 422 listing parameters and body pointers), then
+      `WorkQuery.NeedsReveal` with the new `runtime.Revealed`: 400 `reveal-required`
+      (`DetailFreeText`). Stage 11's `q` joins `NeedsReveal`.
+    - `runtime.SearchRateLimit` (new `Options.SearchPerMin`, admin socket 10x) is built once per
+      listener in `registerRoutes`, so every QUERY search route shares one budget.
+    - `runtime.AcceptQuery` sets `Accept-Query: application/json` on every `/works` response
+      (`GET` and `QUERY`), besides the existing 415 case. chi v5.5.0 routes `QUERY` natively
+      (`r.Query`), and ogen v1.25.0 generates the OpenAPI 3.2 `query` operation
+      (`apiclient.QueryWorks`).
 - [ ] **11. Full-text search**
   - Add `q` to the QUERY body (reveal-only). Sanitized FTS5 MATCH joined with the stage 9
     filters; total count; ranking.

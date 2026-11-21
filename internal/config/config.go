@@ -58,7 +58,7 @@ type API struct {
 }
 
 // APIRate holds the per-client rate limits of the public listener (the admin socket's are
-// higher). SearchPerMin takes effect with the search routes.
+// higher). SearchPerMin is shared by the QUERY search routes.
 type APIRate struct {
 	GeneralPerMin    int `yaml:"general_per_min"`
 	SearchPerMin     int `yaml:"search_per_min"`
