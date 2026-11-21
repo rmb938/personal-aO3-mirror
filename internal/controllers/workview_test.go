@@ -51,17 +51,35 @@ func TestListWorks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	require.Len(t, page, 1)
-	assert.Equal(t, int64(1), page[0].ID, "same revised date: higher id first")
-	assert.Equal(t, "Fixture Title View", page[0].Title)
+	b := page[0]
+	assert.Equal(t, int64(1), b.Work.ID, "same revised date: higher id first")
+	assert.Equal(t, "Fixture Title View", b.Work.Title)
+	require.Len(t, b.Creators, 1)
+	assert.Equal(t, "fixture_pseud", b.Creators[0].Pseud)
+	require.Len(t, b.Tags, 2)
+	assert.Equal(t, "Fixture Rating", b.Tags[0].Name, "page order")
+	assert.Equal(t, []store.SeriesPart{{ID: 77, Title: "Fixture Series", Position: 2}}, b.Series)
+
+	page, total, err = e.svc.ListWorks(ctx, model.WorkFilter{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, page, 2)
+	assert.Equal(t, []int64{2, 1}, []int64{page[0].Work.ID, page[1].Work.ID}, "relations keep the page order")
+	assert.Empty(t, page[0].Creators, "the blurb-only work has no relations")
+	assert.Empty(t, page[0].Tags)
+	assert.Empty(t, page[0].Series)
+	assert.Len(t, page[1].Tags, 2)
 
 	page, total, err = e.svc.ListWorks(ctx, model.WorkFilter{Fetched: new(false), Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	require.Len(t, page, 1)
-	assert.Equal(t, int64(2), page[0].ID)
+	assert.Equal(t, int64(2), page[0].Work.ID)
 
 	_, _, err = e.svc.ListWorks(ctx, model.WorkFilter{})
 	require.Error(t, err)
+	_, _, err = e.svc.ListWorks(ctx, model.WorkFilter{Limit: store.MaxWorkBatch + 1})
+	require.ErrorContains(t, err, "batch", "a page larger than a batch is refused")
 }
 
 func TestGetWork(t *testing.T) {
