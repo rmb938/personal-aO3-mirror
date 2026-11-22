@@ -242,10 +242,9 @@ func decodePHC(s string) (Argon2Params, []byte, []byte, error) {
 	m, okM := phcParam(kv[0], "m=", maxArgon2Memory)
 	t, okT := phcParam(kv[1], "t=", maxArgon2Time)
 	th, okP := phcParam(kv[2], "p=", maxArgon2Threads)
-	salt, err1 := phcB64.Strict().DecodeString(parts[4])
-	key, err2 := phcB64.Strict().DecodeString(parts[5])
-	if !okM || !okT || !okP || err1 != nil || err2 != nil ||
-		len(salt) > maxArgon2Bytes || len(key) > maxArgon2Bytes {
+	salt, okS := phcBytes(parts[4])
+	key, okK := phcBytes(parts[5])
+	if !okM || !okT || !okP || !okS || !okK {
 		return Argon2Params{}, nil, nil, ErrMalformedHash
 	}
 	p := Argon2Params{
@@ -266,6 +265,19 @@ func phcParam(s, name string, maxVal uint64) (uint64, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// phcBytes decodes a salt or hash field of at most maxArgon2Bytes in its one canonical form.
+// Strict decoding still skips CR and LF, so the re-encoding must give s back.
+func phcBytes(s string) ([]byte, bool) {
+	if len(s) > phcB64.EncodedLen(maxArgon2Bytes) {
+		return nil, false
+	}
+	b, err := phcB64.Strict().DecodeString(s)
+	if err != nil || phcB64.EncodeToString(b) != s {
+		return nil, false
+	}
+	return b, true
 }
 
 // randomBytes returns n bytes from crypto/rand (which never fails; it crashes the program

@@ -68,19 +68,30 @@ func NewRecoveryCodes() []string {
 	return codes
 }
 
-// NormalizeRecoveryCode returns the 16-character form of a typed code: case folded, dashes and
-// spaces removed. It is false when the result isn't 16 base32 characters.
+// NormalizeRecoveryCode returns the 16-character form of a typed code: ASCII letters lower-cased,
+// dashes and spaces removed. It is false when the result isn't 16 base32 characters. Only ASCII
+// is folded (strings.ToLower would take the Kelvin sign U+212A as 'k').
 func NormalizeRecoveryCode(code string) (string, bool) {
 	if len(code) > 4*recoveryCodeChars {
 		return "", false
 	}
-	s := strings.ToLower(strings.NewReplacer("-", "", " ", "").Replace(code))
+	s := make([]byte, 0, recoveryCodeChars)
+	for i := range len(code) {
+		switch c := code[i]; {
+		case c == '-' || c == ' ':
+		case c >= 'A' && c <= 'Z':
+			s = append(s, c-'A'+'a')
+		default:
+			s = append(s, c)
+		}
+	}
 	if len(s) != recoveryCodeChars {
 		return "", false
 	}
-	// 16 characters are exactly 80 bits, so there are no trailing bits to be non-canonical.
-	if b, err := recoveryB32.DecodeString(s); err != nil || len(b) != recoveryCodeBytes {
+	// 16 characters are exactly 80 bits, so there are no trailing bits to be non-canonical, and
+	// the length check above already counted any CR or LF the decoder would skip.
+	if b, err := recoveryB32.DecodeString(string(s)); err != nil || len(b) != recoveryCodeBytes {
 		return "", false
 	}
-	return s, true
+	return string(s), true
 }

@@ -42,6 +42,39 @@ var fuzzTargets = []fuzzTarget{
 	{http.MethodGet, "/api/v1/images/%s", false},
 	{http.MethodPost, route.Sources, true},
 	{http.MethodPatch, route.Path(route.Source, seedTagSource), true},
+	// Stage 16: the auth entry points, the signed-in account and the admin user routes that
+	// take a body.
+	{http.MethodPost, route.AuthSignup, false},
+	{http.MethodPost, route.AuthSignupConfirm, false},
+	{http.MethodPost, route.AuthReset, false},
+	{http.MethodPost, route.AuthResetConfirm, false},
+	{http.MethodPost, route.AuthLogin, false},
+	{http.MethodPost, route.AuthLoginTOTP, false},
+	{http.MethodPost, route.AuthRefresh, false},
+	{http.MethodPut, route.AccountPassword, false},
+	{http.MethodPost, route.AccountRecoveryCodes, false},
+	{http.MethodPost, route.AdminInvites, true},
+	{http.MethodPost, route.Path(route.AdminUserReset, seedUser), true},
+}
+
+// fuzzAuthBodies are stage 16 request bodies for FuzzRoutes: the seeded tokens and codes (so
+// some reach the store), near misses, and the sentinel as a password (which must never reach
+// a response or the logs).
+func fuzzAuthBodies() []string {
+	return []string{
+		`{"invite_token":"` + seedInviteToken + `","username":"Fixture_Fuzz","password":"` + sentinel + `fixture pass"}`,
+		`{"invite_token":"` + seedResetToken + `","password":"` + sentinel + `"}`,
+		`{"enrollment_token":"` + seedSignupEnrollToken + `","code":"` + seedTOTPCode + `"}`,
+		`{"enrollment_token":"` + seedResetEnrollToken + `","code":"000000"}`,
+		`{"username":"` + seedUserName + `","password":"` + fixturePassword + `"}`,
+		`{"username":"` + seedOtherName + `","password":"` + sentinel + `"}`,
+		`{"challenge_token":"` + seedChallengeToken + `","code":"` + seedTOTPCode + `"}`,
+		`{"challenge_token":"` + seedChallengeToken + `","recovery_code":" FIXT-UREC-OVRY-CODE"}`,
+		`{"challenge_token":"chl_` + sentinel + `","code":"123456","recovery_code":"` + sentinel + `"}`,
+		`{"refresh_token":"` + seedRefreshToken + `"}`, `{"refresh_token":"rt_` + sentinel + `"}`,
+		`{"current_password":"` + fixturePassword + `","password":"` + sentinel + `new pass","code":"` + seedTOTPCode + `"}`,
+		`{"code":"` + seedTOTPCode + `"}`, `{"ttl":"1h"}`, `{"scope":"both","ttl":"168h"}`, `{"scope":"totp","ttl":"1s"}`,
+	}
 }
 
 // FuzzRoutes sends fuzzed query strings, bodies and path segments to the routes that parse
@@ -64,6 +97,12 @@ func FuzzRoutes(f *testing.F) {
 			{"", `null`, "\x00"},
 		} {
 			f.Add(uint8(k), s.query, []byte(s.body), s.seg, k%2 == 0)
+		}
+		if strings.Contains(fuzzTargets[k].path, "/auth/") || strings.Contains(fuzzTargets[k].path, "/account/") ||
+			strings.Contains(fuzzTargets[k].path, "/admin/") {
+			for i, b := range fuzzAuthBodies() {
+				f.Add(uint8(k), "", []byte(b), "", i%2 == 0)
+			}
 		}
 	}
 	var logs bytes.Buffer

@@ -175,7 +175,9 @@ var errUnknownKey = errors.New("unknown kid")
 // Verify checks a token's signature (EdDSA only, a known kid) and claims (iss, aud, exp, nbf,
 // iat, sub, sid, jti), and returns them. Every refusal is a *TokenError.
 func (v *Verifier) Verify(token string) (AccessClaims, error) {
-	if len(token) > MaxAccessTokenBytes {
+	// Only base64url and dots: Go's base64 decoders skip CR and LF, so without this check a
+	// signature with a newline in it would verify as the issued one.
+	if len(token) > MaxAccessTokenBytes || !compactJWS(token) {
 		return AccessClaims{}, &TokenError{Reason: TokenMalformed}
 	}
 	var c jwtClaims
@@ -219,6 +221,18 @@ func tokenReason(err error) TokenReason {
 	default:
 		return TokenBadClaims
 	}
+}
+
+// compactJWS reports whether s holds only the characters of a compact JWS: the base64url
+// alphabet and '.'.
+func compactJWS(s string) bool {
+	for i := range len(s) {
+		c := s[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // parseID parses a positive decimal ID in canonical form (no sign, no leading zeros).
