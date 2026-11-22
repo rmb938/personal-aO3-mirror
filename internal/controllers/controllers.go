@@ -63,6 +63,10 @@ type Options struct {
 	TagInfoTTL    time.Duration // refetch tag info after this long (default 30d)
 	SeriesInfo    bool          // fetch pages of series that mirrored works belong to
 	SeriesInfoTTL time.Duration // refresh those at least this often (default 30d)
+
+	// Auth is the accounts controller over users.db (NewAuth). Only `serve` opens users.db; it
+	// is nil for every other command.
+	Auth *Auth
 }
 
 // Controllers runs the mirror's business operations. It is safe to share; it holds no
@@ -100,6 +104,9 @@ func New(opts Options) *Controllers {
 	}
 	return &Controllers{options: opts, store: opts.Store, log: opts.Logger}
 }
+
+// Auth is the accounts controller given in Options.Auth (nil outside `serve`).
+func (c *Controllers) Auth() *Auth { return c.options.Auth }
 
 // logger returns the request-scoped logger (job attrs from the scheduler) or the default one.
 func (c *Controllers) logger(ctx context.Context) *slog.Logger { return logx.From(ctx, c.log) }

@@ -1815,7 +1815,17 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       - Logs: `auth event` with `event`, `reason` (closed set) and IDs; a test runs every flow
         with sentinel names, passwords, tokens, codes and secrets and finds none in the logs.
     - [ ] **16e. Admin API + CLI**: socket routes, OpenAPI (`x-admin-only`), `make generate`, CLI
-      commands.
+      commands. Three PRs: config and serve wiring, the admin routes, the CLI. As built:
+      - Config: the `auth:` section replaces the `enabled` placeholder (an old config with
+        `auth.enabled` no longer parses). `api.public_url` defaults to `http://localhost:8080`;
+        config validation (so every command, not only `serve`) refuses one that isn't an http(s)
+        origin with a lower-case host (`dto.InviteURL` needs it) from `api.allowed_hosts`.
+        `auth.totp_issuer` may not start or end with a space. The invite TTL bounds are
+        `controllers.MinInviteTTL`/`MaxInviteTTL`, checked equal by a test.
+      - `serve` opens `auth.key` and users.db in the admin socket's directory (checked private
+        first, the same check as the socket's), builds `controllers.NewAuth` and passes it as
+        `controllers.Options.Auth` (`Controllers.Auth()`; nil in every other command). The
+        startup log adds `public_url` and the auth TTLs. The "no auth yet" warning stays until 16g.
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
       auth rate limits; `Cache-Control: no-store`.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
