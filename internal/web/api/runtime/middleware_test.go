@@ -68,6 +68,48 @@ func TestClientRequestID(t *testing.T) {
 	}
 }
 
+// A well-formed Cf-Ray is logged as cf_ray; anything else is dropped without a trace, and it
+// is never echoed.
+func TestCFRay(t *testing.T) {
+	cases := []struct {
+		name  string
+		vals  []string
+		valid bool
+	}{
+		{"cloudflare shape", []string{"8f3a1b2c4d5e6f70-ORD"}, true},
+		{"max length", []string{strings.Repeat("a", MaxCFRayBytes)}, true},
+		{"too long", []string{strings.Repeat("a", MaxCFRayBytes+1)}, false},
+		{"bad chars", []string{"8f3a1b2c4d5e6f70_ORD"}, false},
+		{"space", []string{"8f3a 1b2c"}, false},
+		{"sentinel with space", []string{sentinel + " x"}, false},
+		{"empty", []string{""}, false},
+		{"repeated", []string{"8f3a-ORD", "8f3b-ORD"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/healthz", nil)
+			for _, v := range c.vals {
+				req.Header.Add(HeaderCFRay, v)
+			}
+			w := testutil.Do(t, a.Public(), req)
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Empty(t, w.Header().Get(HeaderCFRay))
+			line := testutil.AccessLine(t, logs)
+			if c.valid {
+				assert.Equal(t, c.vals[0], line["cf_ray"])
+			} else {
+				assert.NotContains(t, line, "cf_ray")
+				for _, v := range c.vals {
+					if v != "" {
+						assert.NotContains(t, logs.String(), v)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestClientIPTrust(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -110,7 +152,6 @@ func TestAccessLogIsContentFree(t *testing.T) {
 	a.Router(false).Get("/items/{id}/parts/{position}", a.Handle(func(*http.Request) (any, error) { return nil, problem.New(dto.TypeNotFound) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/items/42/parts/"+sentinel+"part?page="+sentinel+"v&"+sentinel+"n=1", nil)
-	req.Header.Set(HeaderFunnel, "?1")
 	testutil.Do(t, a.Router(false), req)
 	line := testutil.AccessLine(t, logs)
 	assert.Equal(t, "/items/{id}/parts/{position}", line["route"])
@@ -120,7 +161,7 @@ func TestAccessLogIsContentFree(t *testing.T) {
 	assert.Equal(t, true, line["path_position_invalid"])
 	assert.Equal(t, []any{"page"}, line["params"])
 	assert.InDelta(t, 1, line["other_params"], 0)
-	assert.Equal(t, true, line["funnel"])
+	assert.NotContains(t, line, "cf_ray")
 	assert.Equal(t, false, line["reveal"])
 	assert.InDelta(t, http.StatusNotFound, line["status"], 0)
 

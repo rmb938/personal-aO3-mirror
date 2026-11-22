@@ -166,8 +166,9 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    - A reveal-mode subtest checks that the content is actually returned (positive control).
 8. **Logs**:
    - access log: `req_id`, method, **route pattern**, numeric path IDs, status, bytes, duration,
-     client IP, `funnel` bool (replaced by `cf_ray` in stage 16g), `reveal` bool, query param
-     **names** only; from stage 16g also `user_id` and `session_id` (never usernames);
+     client IP, `cf_ray` when Cloudflare's `Cf-Ray` is well formed (stage 16g; was a `funnel`
+     bool), `reveal` bool, query param **names** only; from stage 16f also `auth`, and
+     `user_id` and `session_id` when signed in (never usernames);
    - never query values, bodies or response strings.
 
 ### HTTP hardening
@@ -226,8 +227,10 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
   - Gap 3: any local process can connect from loopback and send its own XFF. That is the same
     trust as the admin socket's host, and auth (stage 16) still applies.
   - Do **not** use chi's `RealIP`, because it trusts headers blindly.
-  - `Tailscale-Funnel-Request: ?1` marks internet requests in the logs until stage 16g, which
-    logs `Cf-Ray` (`cf_ray`, ≤ 64 bytes of `[A-Za-z0-9-]`, else dropped) instead.
+  - The access log records `Cf-Ray` as `cf_ray` when it is sent once and is ≤ 64 bytes of
+    `[A-Za-z0-9-]`; anything else is dropped (stage 16g; it replaced the
+    `Tailscale-Funnel-Request` flag). It ties a line to Cloudflare's logs but proves nothing,
+    since any client can send it.
 - **Rate limits** (httprate, keyed by trusted IP, configurable): general 120/min; QUERY search
   30/min; `POST /sources` 10/hour. 429 responses carry `Retry-After`. The admin socket has its own,
   higher limits.
@@ -1928,7 +1931,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `seedRefreshToken`) on the public listener and expects 401 on the socket;
         `TestRequestProblems` sends those routes' body checks to the public listener with a
         token; `bearer_test.go` covers the header parser.
-    - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
+    - [x] **16g. Require auth on the public listener**: the middleware, 401 and
       `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit
       exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the
       `cf_ray` log field, and the OWASP API1/API2/API5 write-up. `RequireAuth` and the
@@ -1963,6 +1966,42 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `TestPublicRoutesNeedToken` checks every non-anonymous public route is 401 without a
         token, also with the reveal param; `runtime.TestAuthenticate` covers anonymous
         patterns, 405s, unrouted paths and the socket.
+      - Part 2 (`cf_ray` and OWASP): the access log drops `funnel` and logs `cf_ray` (see
+        "Client IP"; `validHeaderID` is shared with `client_req_id`). It is logged on both
+        listeners and never echoed. `runtime.TestCFRay` covers the shape, length, repeats and
+        that a dropped value never reaches the logs.
+      - OWASP API Security Top 10 (2023), the auth items 15d left to stage 16:
+        - **API1 Broken Object Level Authorization**: covered. Mirror objects (sources, works,
+          tags, creators, series, collections, jobs, images) are shared by design: every user
+          is equal and sees the whole mirror, so there is no per-user object to check. A user
+          owns only their account and sessions. `/account` and `/auth/logout` act on the
+          token's own user and session, never on an ID from input; the one ID-taking route,
+          `DELETE /account/sessions/{id}`, runs `WHERE id=? AND user_id=?`, so another user's
+          session is 404 like a missing one and is left alone (`account_test.go`). Every other
+          user or session ID route is `/admin/*`, on the socket only.
+        - **API2 Broken Authentication**: covered. Every public route but `healthz` and the
+          seven entry points (`route.Anonymous`) needs an access token, checked before routing
+          and before reveal (an unrouted path is 401 too); `TestPublicRoutesNeedToken` walks
+          the router. Tokens: Ed25519 JWTs, one algorithm, `iss`/`aud`/`exp`/`nbf` required, a
+          known `kid`, and the session and user re-checked in users.db on every request, so
+          logout, disable and reset take effect at once; refresh tokens rotate and reuse
+          revokes the session. Credentials: Argon2id passwords with NIST's policy, mandatory
+          TOTP with replay blocked, single-use login challenges with 5 tries, per-account
+          backoff and disable after 100 failures, the same answer and timing for unknown
+          users, and per-IP limits on every entry point. Tokens travel in headers and bodies
+          only (invite tokens in the URL fragment), responses are `no-store`, and logs carry
+          `user_id`/`session_id`, never usernames, passwords, codes or tokens. A password change
+          needs the current password and TOTP and revokes the other sessions.
+        - **API5 Broken Function Level Authorization**: covered. There are no roles: a
+          signed-in user may call every public route, and every admin function (invites,
+          users, resets, other users' sessions, key rotation, source confirm/pause/resume/
+          cancel/refresh, debug) exists only on the socket, whose 0700 directory and 0600
+          socket are the credential. `TestRoutesMatchOpenAPI` checks both routers against the
+          spec's `x-admin-only`, `TestOpenAPISecurity` checks `security: []` against
+          `route.Anonymous`, and PATCH/DELETE `/sources/{id}` stay 405 publicly.
+        - API6 follow-up: source adds now need a signed-in, invited user, so 15d's accepted gap
+          (a public add may set `priority` and `poll_interval`) is limited to users the admin
+          invited.
     - [ ] **16h. Automatic signing-key rotation** (asked for by the user 2026-11-22). `serve`
       rotates the access-token signing key once it is `auth.signing_key_rotation` old
       (default 30d, allowed 1d..365d), so a leaked key that nobody noticed stops working without
