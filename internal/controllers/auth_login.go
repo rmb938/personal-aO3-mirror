@@ -59,7 +59,9 @@ func (a *Auth) Login(ctx context.Context, username, password string) (LoginChall
 		if err := a.verifyDummy(ctx, password); err != nil {
 			return LoginChallenge{}, err
 		}
-		a.names.fail(mac, now)
+		if wait, ok := a.names.fail(mac, now); ok { // a concurrent attempt failed
+			return LoginChallenge{}, RateLimitedError{RetryAfter: wait}
+		}
 		a.event(ctx, slog.LevelInfo, "login_failed", "reason", reasonUnknownUser)
 		return LoginChallenge{}, ErrInvalidCredentials
 	}

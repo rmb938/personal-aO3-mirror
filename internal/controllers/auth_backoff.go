@@ -101,11 +101,19 @@ func (b *nameBackoff) next(key [32]byte) time.Time {
 	return time.Time{}
 }
 
-// fail counts a failed attempt for key, exactly as recordFailure does for an account.
-func (b *nameBackoff) fail(key [32]byte, now time.Time) {
+// fail counts a failed attempt for key, exactly as Login does for an account: when a
+// concurrent attempt failed first (key is backed off at now), it counts nothing and returns
+// that wait instead, so parallel attempts on an unknown name count one failure, as on an
+// account.
+func (b *nameBackoff) fail(key [32]byte, now time.Time) (time.Duration, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	e, ok := b.m[key]
+	if ok {
+		if wait, ok := waitFor(e.Value.(*nameEntry).next, now); ok {
+			return wait, true
+		}
+	}
 	if !ok {
 		e = b.ll.PushFront(&nameEntry{key: key})
 		b.m[key] = e
@@ -120,4 +128,5 @@ func (b *nameBackoff) fail(key [32]byte, now time.Time) {
 	ne := e.Value.(*nameEntry)
 	ne.failures++
 	ne.next = nextAttempt(now, ne.failures)
+	return 0, false
 }

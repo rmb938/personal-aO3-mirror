@@ -43,11 +43,19 @@ func TestNameBackoffEvicts(t *testing.T) {
 	b := newNameBackoff(2)
 	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 	k := func(i byte) [32]byte { return [32]byte{i} }
-	b.fail(k(1), now)
-	b.fail(k(1), now)
-	b.fail(k(2), now)
+	fail := func(key [32]byte, now time.Time) {
+		_, refused := b.fail(key, now)
+		require.False(t, refused)
+	}
+	fail(k(1), now)
+	wait, refused := b.fail(k(1), now) // backed off: not counted
+	assert.True(t, refused)
+	assert.Equal(t, time.Second, wait)
+	now = now.Add(time.Second)
+	fail(k(1), now)
+	fail(k(2), now)
 	assert.Equal(t, now.Add(2*time.Second), b.next(k(1))) // k(1) is now the most recent
-	b.fail(k(3), now)
+	fail(k(3), now)
 	assert.True(t, b.next(k(2)).IsZero(), "least recently used evicted")
 	assert.False(t, b.next(k(1)).IsZero())
 }

@@ -192,34 +192,60 @@ func TestRateLimitForwardedFor(t *testing.T) {
 		}
 		return req
 	}
-	const clients = 3
-	client := func(c int) string { return fmt.Sprintf("203.0.113.%d", c+1) }
 
 	// An untrusted peer naming a different client in every request still has one bucket,
 	// and its forged clients' buckets are untouched.
 	ws := burst(t, h, burstFactor*loadLimit, func(i int) *http.Request {
-		return get("198.51.100.7:4000", client(i%clients))
+		return get("198.51.100.7:4000", forwardedClient(i%forwardedClients))
 	})
 	requireBurst(t, ws, loadLimit, http.StatusOK, time.Minute, "untrusted peer")
 
-	// Behind the trusted proxy each forwarded client has its own full bucket, keyed by the
-	// rightmost untrusted entry: a client-supplied entry to its left changes nothing.
-	ws = burst(t, h, clients*2*loadLimit, func(i int) *http.Request {
-		return get("127.0.0.1:4000", fmt.Sprintf("192.0.2.%d, %s", i+1, client(i%clients)))
-	})
-	for c := range clients {
-		var mine []*httptest.ResponseRecorder
-		for i, w := range ws {
-			if i%clients == c {
-				mine = append(mine, w)
-			}
-		}
-		requireBurst(t, mine, loadLimit, http.StatusOK, time.Minute, client(c))
-	}
+	requireForwardedBuckets(t, h, limitGroup{window: time.Minute, okCode: http.StatusOK,
+		request: func(int) *http.Request { return httptest.NewRequest(http.MethodGet, route.Healthz, nil) }})
 
 	// Local clients without X-Forwarded-For (v4 and v6 loopback) share one bucket.
 	ws = burst(t, h, burstFactor*loadLimit, func(i int) *http.Request {
 		return get([]string{"127.0.0.1:4000", "[::1]:4000"}[i%2], "")
 	})
 	requireBurst(t, ws, loadLimit, http.StatusOK, time.Minute, "local")
+}
+
+// forwardedClients is how many clients requireForwardedBuckets sends through the proxy.
+const forwardedClients = 3
+
+func forwardedClient(c int) string { return fmt.Sprintf("203.0.113.%d", c+1) }
+
+// requireForwardedBuckets bursts g's requests through the trusted proxy (127.0.0.1) for
+// forwardedClients clients, twice each one's loadLimit: each forwarded client has its own full
+// bucket, keyed by the rightmost untrusted entry, so a client-supplied entry to its left
+// changes nothing.
+func requireForwardedBuckets(t *testing.T, h http.Handler, g limitGroup) {
+	t.Helper()
+	ws := burst(t, h, forwardedClients*2*loadLimit, func(i int) *http.Request {
+		req := g.request(i)
+		req.RemoteAddr = "127.0.0.1:4000"
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("192.0.2.%d, %s", i+1, forwardedClient(i%forwardedClients)))
+		return req
+	})
+	for c := range forwardedClients {
+		var mine []*httptest.ResponseRecorder
+		for i, w := range ws {
+			if i%forwardedClients == c {
+				mine = append(mine, w)
+			}
+		}
+		requireBurst(t, mine, loadLimit, g.okCode, g.window, forwardedClient(c))
+	}
+}
+
+// TestRateLimitAuthForwardedFor: behind the trusted proxy each forwarded client has its own
+// bucket on every auth entry point too (stage 17b).
+func TestRateLimitAuthForwardedFor(t *testing.T) {
+	for _, name := range []string{"signup", "login", "login totp", "refresh"} {
+		t.Run(name, func(t *testing.T) {
+			g := limitGroups[name]
+			a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { g.set(o, loadLimit) })
+			requireForwardedBuckets(t, a.Public(), g)
+		})
+	}
 }
