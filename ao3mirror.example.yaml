@@ -53,8 +53,13 @@ images:
 content:
   keep_versions: 1         # raw page versions kept per work (last good copy always kept)
 
+# API user accounts (docs/part2-api.md stage 16). Invite-only; auth can't be turned off.
 auth:
-  enabled: false           # future: log in to see archive-locked works
+  access_ttl: 15m          # access token lifetime (5m-1h)
+  refresh_ttl: 720h        # idle limit: each refresh extends the session by this (1h-2160h)
+  max_session_age: 2160h   # a session ends this long after login (refresh_ttl-8760h)
+  invite_ttl: 24h          # default lifetime of invite and reset links (1m-168h)
+  totp_issuer: ao3mirror   # name authenticator apps show (1-32 of A-Z a-z 0-9 space . _ -)
 
 # `ao3mirror serve`: the JSON API (docs/part2-api.md). Every fanwork string is hashed unless a
 # request asks to reveal it; `serve --no-reveal` refuses even that.
@@ -65,6 +70,7 @@ api:
   allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # Host names the public listener answers (no port); add the tunnel's domain
   request_timeout: 10s          # per-request deadline (1s-50s)
   hash_key_rotation: 24h        # in-memory random hash key; 0 = once per process; min 1h
+  public_url: http://localhost:8080  # origin users reach the API at: token issuer, invite links; host must be in allowed_hosts
   rate:                         # per client IP, public listener (the admin socket allows 10x)
     general_per_min: 120
     search_per_min: 30          # QUERY search routes together (QUERY /works, ...)

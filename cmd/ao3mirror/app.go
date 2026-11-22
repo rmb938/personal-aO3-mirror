@@ -53,6 +53,11 @@ func openApp(cfg config.Config) (*app, error) {
 // newControllers builds the business layer. client is nil for offline commands (reparse, serve):
 // no HTTP client is ever built for them, and any AO3 fetch fails with controllers.ErrOffline.
 func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client *httpx.Client) *controllers.Controllers {
+	return controllers.New(controllerOptions(cfg, log, st, client))
+}
+
+// controllerOptions are newControllers' options, for a caller that adds to them (serve's Auth).
+func controllerOptions(cfg config.Config, log *slog.Logger, st *store.Store, client *httpx.Client) controllers.Options {
 	o := controllers.Options{
 		Store: st, Logger: log, Now: time.Now,
 		DataDir: cfg.DataDir, KeepVersions: cfg.Content.KeepVersions, QueueImages: cfg.Images.Enabled,
@@ -63,7 +68,7 @@ func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client
 	if client != nil { // a typed nil would defeat the controllers' offline check
 		o.Client = client
 	}
-	return controllers.New(o)
+	return o
 }
 
 // newAO3Client builds the one AO3 client of a fetching process (`run`, `fetch-work --now`). Every

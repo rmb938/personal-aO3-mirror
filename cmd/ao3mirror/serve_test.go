@@ -16,7 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
@@ -87,6 +90,11 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	st, err = os.Stat(filepath.Dir(sockPath))
 	require.NoError(t, err)
 	assert.Equal(t, fs.FileMode(0o700), st.Mode().Perm(), "socket dir mode")
+	for _, name := range []string{store.UsersFile, auth.KeyFileName} {
+		st, err := os.Stat(filepath.Join(filepath.Dir(sockPath), name))
+		require.NoError(t, err, name)
+		assert.Equal(t, fs.FileMode(0o600), st.Mode().Perm(), name)
+	}
 
 	// A second server must not take over a live socket.
 	_, err = newServer(ctx, cfg, slog.New(slog.DiscardHandler), true)
@@ -111,6 +119,45 @@ func TestServeListenerFailureStopsBoth(t *testing.T) {
 	require.Error(t, s.serve(t.Context()))
 	_, err = os.Lstat(cfg.Path(cfg.API.AdminSocket))
 	assert.ErrorIs(t, err, fs.ErrNotExist, "admin socket closed too")
+}
+
+// TestOpenAuth checks the accounts are opened from config: invite links start with
+// api.public_url, auth.key and users.db survive a restart, and a non-private directory is refused.
+func TestOpenAuth(t *testing.T) {
+	cfg := serveConfig(t)
+	cfg.API.AllowedHosts = append(cfg.API.AllowedHosts, "mirror.example.com")
+	cfg.API.PublicURL = "https://mirror.example.com"
+	cfg.Auth.InviteTTL = 2 * time.Hour
+	log := slog.New(slog.DiscardHandler)
+
+	users, ctl, err := openAuth(t.Context(), cfg, log)
+	require.NoError(t, err)
+	before := time.Now()
+	link, err := ctl.CreateInvite(t.Context(), 0)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(link.URL, "https://mirror.example.com/signup#token="), "public_url is the link base")
+	assert.WithinDuration(t, before.Add(2*time.Hour), link.ExpiresAt, time.Minute, "auth.invite_ttl is the default")
+	require.NoError(t, users.Close())
+
+	// A restart reads the same users.db (and auth.key, or NewAuth could not load its keys).
+	users, ctl, err = openAuth(t.Context(), cfg, log)
+	require.NoError(t, err)
+	invites, err := ctl.ListInvites(t.Context())
+	require.NoError(t, err)
+	require.Len(t, invites, 1)
+	assert.Equal(t, link.ID, invites[0].ID)
+	require.NoError(t, users.Close())
+
+	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
+	require.NoError(t, os.Chmod(dir, 0o750)) //nolint:gosec // deliberately unsafe mode under test
+	_, _, err = openAuth(t.Context(), cfg, log)
+	require.ErrorContains(t, err, "chmod 700")
+}
+
+// TestAuthBoundsMatchController keeps config's invite TTL bounds in step with the controller's.
+func TestAuthBoundsMatchController(t *testing.T) {
+	assert.Equal(t, controllers.MinInviteTTL, config.MinInviteTTL)
+	assert.Equal(t, controllers.MaxInviteTTL, config.MaxInviteTTL)
 }
 
 func TestAdminSocketChecks(t *testing.T) {

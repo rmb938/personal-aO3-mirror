@@ -17,7 +17,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
@@ -64,20 +66,22 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger, args []s
 	return 0
 }
 
-// server is the API bound to its two listeners, not yet serving. It owns the store: serve
-// closes it when it returns.
+// server is the API bound to its two listeners, not yet serving. It owns the store and users.db:
+// serve closes them when it returns.
 type server struct {
 	log           *slog.Logger
-	cfg           config.API
+	cfg           config.Config
 	noReveal      bool
 	store         *store.Store
+	users         *store.Users
 	tcp, sock     net.Listener
 	public, admin *http.Server
 }
 
-// newServer opens the store, builds the API over offline controllers (no AO3 client) and binds
-// both listeners. ctx is every request's base context, so a signal cancels in-flight requests
-// while shutdown waits for them. On an error, everything opened so far is closed.
+// newServer opens the store and the accounts (users.db and auth.key, in the admin socket's
+// private directory), builds the API over offline controllers (no AO3 client) and binds both
+// listeners. ctx is every request's base context, so a signal cancels in-flight requests while
+// shutdown waits for them. On an error, everything opened so far is closed.
 func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool) (s *server, err error) {
 	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
 	if err != nil {
@@ -88,6 +92,17 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 			err = errors.Join(err, st.Close())
 		}
 	}()
+	users, authCtl, err := openAuth(ctx, cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, users.Close())
+		}
+	}()
+	ctlOpts := controllerOptions(cfg, log, st, nil)
+	ctlOpts.Auth = authCtl
 	a, err := api.New(runtime.Options{
 		Version:          version,
 		NoReveal:         noReveal,
@@ -98,7 +113,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		GeneralPerMin:    cfg.API.Rate.GeneralPerMin,
 		SourceAddPerHour: cfg.API.Rate.SourceAddPerHour,
 		SearchPerMin:     cfg.API.Rate.SearchPerMin,
-	}, log, newControllers(cfg, log, st, nil))
+	}, log, controllers.New(ctlOpts))
 	if err != nil {
 		return nil, err
 	}
@@ -112,10 +127,60 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		return nil, errors.Join(fmt.Errorf("admin socket: %w", err), tcp.Close())
 	}
 	return &server{
-		log: log, cfg: cfg.API, noReveal: noReveal, store: st, tcp: tcp, sock: sock,
+		log: log, cfg: cfg, noReveal: noReveal, store: st, users: users, tcp: tcp, sock: sock,
 		public: newHTTPServer(ctx, a.Public(), log),
 		admin:  newHTTPServer(ctx, a.Admin(), log),
 	}, nil
+}
+
+// openAuth opens users.db and auth.key in the admin socket's directory (private to this user,
+// like the socket) and builds the Auth controller over them. On an error, users.db is closed.
+func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (users *store.Users, ctl *controllers.Auth, err error) {
+	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
+	if err := privateDir(dir); err != nil {
+		return nil, nil, err
+	}
+	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
+	if err != nil {
+		return nil, nil, err
+	}
+	hasher, err := auth.NewHasher(auth.HasherOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	users, err = store.OpenUsers(ctx, dir, store.Options{Logger: log})
+	if err != nil {
+		return nil, nil, err
+	}
+	ctl, err = controllers.NewAuth(ctx, controllers.AuthOptions{
+		Users: users, Secrets: secrets, Hasher: hasher, Logger: log, Now: time.Now,
+		PublicURL:     cfg.API.PublicURL,
+		AccessTTL:     cfg.Auth.AccessTTL,
+		RefreshTTL:    cfg.Auth.RefreshTTL,
+		MaxSessionAge: cfg.Auth.MaxSessionAge,
+		InviteTTL:     cfg.Auth.InviteTTL,
+		TOTPIssuer:    cfg.Auth.TOTPIssuer,
+	})
+	if err != nil {
+		return nil, nil, errors.Join(err, users.Close())
+	}
+	return users, ctl, nil
+}
+
+// privateDir creates dir (0700) if needed and refuses it when group or others can reach it:
+// it holds the admin socket, users.db and auth.key.
+func privateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("directory %s has mode %s; it must be private to this user (chmod 700)", dir, st.Mode().Perm())
+	}
+	return nil
 }
 
 func newHTTPServer(ctx context.Context, h http.Handler, log *slog.Logger) *http.Server {
@@ -140,16 +205,8 @@ func listenAdminSocket(ctx context.Context, path string) (net.Listener, error) {
 	if len(path) > maxSocketPath {
 		return nil, fmt.Errorf("path %s is %d bytes, over the %d-byte unix socket limit", path, len(path), maxSocketPath)
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := privateDir(filepath.Dir(path)); err != nil {
 		return nil, err
-	}
-	st, err := os.Stat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if st.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("directory %s has mode %s; it must be private to this user (chmod 700)", dir, st.Mode().Perm())
 	}
 	if err := removeStaleSocket(ctx, path); err != nil {
 		return nil, err
@@ -188,13 +245,16 @@ func removeStaleSocket(ctx context.Context, path string) error {
 // serve runs both listeners until ctx ends or one fails, then shuts both down gracefully and
 // closes the store.
 func (s *server) serve(ctx context.Context) (err error) {
-	defer func() { err = errors.Join(err, s.store.Close()) }()
+	defer func() { err = errors.Join(err, s.store.Close(), s.users.Close()) }()
+	ac, au := s.cfg.API, s.cfg.Auth
 	attrs := []any{
 		"listen", s.tcp.Addr().String(), "admin_socket", s.sock.Addr().String(),
-		"trusted_proxies", s.cfg.TrustedProxies, "allowed_hosts", s.cfg.AllowedHosts, "no_reveal", s.noReveal,
-		"request_timeout", s.cfg.RequestTimeout.String(), "hash_key_rotation", s.cfg.HashKeyRotation.String(),
-		"general_per_min", s.cfg.Rate.GeneralPerMin, "search_per_min", s.cfg.Rate.SearchPerMin,
-		"source_add_per_hour", s.cfg.Rate.SourceAddPerHour,
+		"trusted_proxies", ac.TrustedProxies, "allowed_hosts", ac.AllowedHosts, "no_reveal", s.noReveal,
+		"request_timeout", ac.RequestTimeout.String(), "hash_key_rotation", ac.HashKeyRotation.String(),
+		"general_per_min", ac.Rate.GeneralPerMin, "search_per_min", ac.Rate.SearchPerMin,
+		"source_add_per_hour", ac.Rate.SourceAddPerHour,
+		"public_url", ac.PublicURL, "access_ttl", au.AccessTTL.String(), "refresh_ttl", au.RefreshTTL.String(),
+		"max_session_age", au.MaxSessionAge.String(), "invite_ttl", au.InviteTTL.String(),
 	}
 	s.log.Info("api serving", attrs...)
 	if ap, err := netip.ParseAddrPort(s.tcp.Addr().String()); err == nil && !ap.Addr().IsLoopback() {

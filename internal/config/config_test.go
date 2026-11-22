@@ -73,6 +73,80 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func TestAuthDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\n"))
+	require.NoError(t, err)
+	assert.Equal(t, Auth{AccessTTL: 15 * time.Minute, RefreshTTL: 720 * time.Hour, MaxSessionAge: 2160 * time.Hour,
+		InviteTTL: 24 * time.Hour, TOTPIssuer: "ao3mirror"}, cfg.Auth)
+
+	for _, yml := range []string{
+		"access_ttl: 5m", "access_ttl: 1h", "refresh_ttl: 1h", "refresh_ttl: 2160h",
+		"refresh_ttl: 2160h, max_session_age: 2160h", "max_session_age: 8760h",
+		"invite_ttl: 1m", "invite_ttl: 168h", "totp_issuer: \"My Mirror 2.0_x-y\"", "totp_issuer: a",
+		"totp_issuer: " + strings.Repeat("a", 32),
+	} {
+		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\nauth: {" + yml + "}\n"))
+		require.NoError(t, err, yml)
+	}
+	for yml, want := range map[string]string{
+		"access_ttl: 4m":                          "auth.access_ttl",
+		"access_ttl: 61m":                         "auth.access_ttl",
+		"refresh_ttl: 59m":                        "auth.refresh_ttl",
+		"refresh_ttl: 2161h":                      "auth.refresh_ttl",
+		"max_session_age: 719h":                   "auth.max_session_age",
+		"max_session_age: 8761h":                  "auth.max_session_age",
+		"invite_ttl: 59s":                         "auth.invite_ttl",
+		"invite_ttl: 169h":                        "auth.invite_ttl",
+		"totp_issuer: \"\"":                       "auth.totp_issuer",
+		"totp_issuer: \" lead\"":                  "auth.totp_issuer",
+		"totp_issuer: \"trail \"":                 "auth.totp_issuer",
+		"totp_issuer: \"a:b\"":                    "auth.totp_issuer",
+		"totp_issuer: \"é\"":                      "auth.totp_issuer",
+		"totp_issuer: " + strings.Repeat("a", 33): "auth.totp_issuer",
+		"enabled: false":                          "field enabled not found",
+	} {
+		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\nauth: {" + yml + "}\n"))
+		assert.ErrorContains(t, err, want, yml)
+	}
+}
+
+func TestPublicURL(t *testing.T) {
+	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:8080", cfg.API.PublicURL)
+
+	const hosts = `allowed_hosts: ["127.0.0.1", "::1", "localhost", "mirror.example.com"]`
+	for _, u := range []string{
+		"https://mirror.example.com", "https://mirror.example.com/", "http://mirror.example.com:8443",
+		"http://127.0.0.1", "http://[::1]:8080",
+	} {
+		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\napi: {" + hosts + ", public_url: \"" + u + "\"}\n"))
+		require.NoError(t, err, u)
+	}
+	for u, want := range map[string]string{
+		"":                                 "http(s) origin",
+		"mirror.example.com":               "http(s) origin",
+		"ftp://mirror.example.com":         "http(s) origin",
+		"https://":                         "http(s) origin",
+		"https://u:p@mirror.example.com":   "http(s) origin",
+		"https://mirror.example.com/api":   "http(s) origin",
+		"https://mirror.example.com?":      "http(s) origin",
+		"https://mirror.example.com?a=1":   "http(s) origin",
+		"https://mirror.example.com#":      "http(s) origin",
+		"https://mirror.example.com#x":     "http(s) origin",
+		"https://Mirror.example.com":       "lower-case",
+		"https://bad_host.example.com":     "lower-case host name",
+		"https://mirror.example.com:0":     "port must be",
+		"https://mirror.example.com:99999": "port must be",
+		"https://mirror.example.com:":      "empty port",
+		"https://other.example.com":        "must be in api.allowed_hosts",
+		"http://[::2]":                     "must be in api.allowed_hosts",
+	} {
+		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\napi: {" + hosts + ", public_url: \"" + u + "\"}\n"))
+		assert.ErrorContains(t, err, want, u)
+	}
+}
+
 func TestUserAgentSuffixAppendsOnly(t *testing.T) {
 	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\nuser_agent_suffix: extra\n"))
 	require.NoError(t, err)

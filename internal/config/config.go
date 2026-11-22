@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,7 +58,11 @@ type API struct {
 	RequestTimeout time.Duration `yaml:"request_timeout"`
 	// HashKeyRotation is the in-memory hash key lifetime; 0 means one key per process.
 	HashKeyRotation time.Duration `yaml:"hash_key_rotation"`
-	Rate            APIRate       `yaml:"rate"`
+	// PublicURL is the origin users reach the API at (scheme, lower-case host, optional port;
+	// no path): the access tokens' issuer and the base of invite links. Its host must be in
+	// AllowedHosts.
+	PublicURL string  `yaml:"public_url"`
+	Rate      APIRate `yaml:"rate"`
 }
 
 // APIRate holds the per-client rate limits of the public listener (the admin socket's are
@@ -122,9 +127,32 @@ type Content struct {
 	KeepVersions int `yaml:"keep_versions"`
 }
 
+// Auth configures the API's user accounts (docs/part2-api.md stage 16). Auth can't be turned
+// off: every public route but healthz and the auth entry points needs a token.
 type Auth struct {
-	Enabled bool `yaml:"enabled"`
+	AccessTTL  time.Duration `yaml:"access_ttl"`  // access token lifetime
+	RefreshTTL time.Duration `yaml:"refresh_ttl"` // idle limit: each refresh extends the session by it
+	// MaxSessionAge ends a session this long after its login however often it is refreshed.
+	MaxSessionAge time.Duration `yaml:"max_session_age"`
+	InviteTTL     time.Duration `yaml:"invite_ttl"`  // default lifetime of a new invite or reset link
+	TOTPIssuer    string        `yaml:"totp_issuer"` // the issuer authenticator apps show
 }
+
+// Auth bounds (docs/part2-api.md stage 16 "Config"). MinInviteTTL and MaxInviteTTL match
+// controllers.MinInviteTTL and MaxInviteTTL.
+const (
+	MinAccessTTL     = 5 * time.Minute
+	MaxAccessTTL     = time.Hour
+	MinRefreshTTL    = time.Hour
+	MaxRefreshTTL    = 2160 * time.Hour
+	MaxMaxSessionAge = 8760 * time.Hour
+	MinInviteTTL     = time.Minute
+	MaxInviteTTL     = 168 * time.Hour
+)
+
+// totpIssuer is auth.totp_issuer: 1-32 of letters, digits, space, '.', '_' and '-', not
+// starting or ending with a space.
+var totpIssuer = regexp.MustCompile(`^[A-Za-z0-9._-]([A-Za-z0-9 ._-]{0,30}[A-Za-z0-9._-])?$`)
 
 // Default returns the default config. Contact.Discord is intentionally empty: it is required.
 func Default() Config {
@@ -142,6 +170,13 @@ func Default() Config {
 		Series:  Series{Info: true, InfoTTL: 30 * 24 * time.Hour},
 		Images:  Images{Enabled: true, PerHostInterval: 3 * time.Second, MaxBytes: 25 << 20},
 		Content: Content{KeepVersions: 1},
+		Auth: Auth{
+			AccessTTL:     15 * time.Minute,
+			RefreshTTL:    720 * time.Hour,
+			MaxSessionAge: 2160 * time.Hour,
+			InviteTTL:     24 * time.Hour,
+			TOTPIssuer:    "ao3mirror",
+		},
 		API: API{
 			Listen:          "127.0.0.1:8080",
 			AdminSocket:     "api/admin.sock",
@@ -149,6 +184,7 @@ func Default() Config {
 			AllowedHosts:    []string{"127.0.0.1", "::1", "localhost"},
 			RequestTimeout:  10 * time.Second,
 			HashKeyRotation: 24 * time.Hour,
+			PublicURL:       "http://localhost:8080",
 			Rate:            APIRate{GeneralPerMin: 120, SearchPerMin: 30, SourceAddPerHour: 10},
 		},
 	}
@@ -242,11 +278,57 @@ func (c Config) Validate() error {
 	if c.Content.KeepVersions < 1 {
 		add("content.keep_versions must be >= 1")
 	}
-	if c.Auth.Enabled {
-		add("auth.enabled: login is not implemented yet")
-	}
+	errs = append(errs, c.Auth.validate()...)
 	errs = append(errs, c.API.validate()...)
 	return errors.Join(errs...)
+}
+
+func (a Auth) validate() []error {
+	var errs []error
+	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	if a.AccessTTL < MinAccessTTL || a.AccessTTL > MaxAccessTTL {
+		add("auth.access_ttl %s must be between %s and %s", a.AccessTTL, MinAccessTTL, MaxAccessTTL)
+	}
+	if a.RefreshTTL < MinRefreshTTL || a.RefreshTTL > MaxRefreshTTL {
+		add("auth.refresh_ttl %s must be between %s and %s", a.RefreshTTL, MinRefreshTTL, MaxRefreshTTL)
+	}
+	if a.MaxSessionAge < a.RefreshTTL || a.MaxSessionAge > MaxMaxSessionAge {
+		add("auth.max_session_age %s must be between auth.refresh_ttl (%s) and %s", a.MaxSessionAge, a.RefreshTTL, MaxMaxSessionAge)
+	}
+	if a.InviteTTL < MinInviteTTL || a.InviteTTL > MaxInviteTTL {
+		add("auth.invite_ttl %s must be between %s and %s", a.InviteTTL, MinInviteTTL, MaxInviteTTL)
+	}
+	if !totpIssuer.MatchString(a.TOTPIssuer) {
+		add("auth.totp_issuer %q must be 1-32 of letters, digits, space, '.', '_' or '-', not starting or ending with a space", a.TOTPIssuer)
+	}
+	return errs
+}
+
+// validatePublicURL checks api.public_url: an http(s) origin with a lower-case host from
+// allowed_hosts (the invite links built from it must match dto.InviteURL).
+func (a API) validatePublicURL() error {
+	u, err := url.Parse(a.PublicURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Opaque != "" ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(a.PublicURL, "#") {
+		return fmt.Errorf("api.public_url %q must be an http(s) origin with no path, query or fragment (e.g. https://mirror.example.com)", a.PublicURL)
+	}
+	host := u.Hostname()
+	if host != strings.ToLower(host) || !ValidHost(host) {
+		return fmt.Errorf("api.public_url %q: the host must be a lower-case host name or IP address", a.PublicURL)
+	}
+	if port := u.Port(); port != "" {
+		if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+			return fmt.Errorf("api.public_url %q: port must be 1-65535", a.PublicURL)
+		}
+	} else if strings.HasSuffix(u.Host, ":") {
+		return fmt.Errorf("api.public_url %q: empty port", a.PublicURL)
+	}
+	for _, h := range a.AllowedHosts {
+		if strings.EqualFold(h, host) {
+			return nil
+		}
+	}
+	return fmt.Errorf("api.public_url %q: host %q must be in api.allowed_hosts", a.PublicURL, host)
 }
 
 func (a API) validate() []error {
@@ -284,6 +366,9 @@ func (a API) validate() []error {
 	}
 	if a.Rate.GeneralPerMin < 1 || a.Rate.SearchPerMin < 1 || a.Rate.SourceAddPerHour < 1 {
 		add("api.rate.general_per_min, search_per_min and source_add_per_hour must be >= 1")
+	}
+	if err := a.validatePublicURL(); err != nil {
+		errs = append(errs, err)
 	}
 	return errs
 }
