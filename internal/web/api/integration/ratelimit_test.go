@@ -164,7 +164,7 @@ func TestRateLimitBurst(t *testing.T) {
 			// testOptions' 1000, out of the way.
 			a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { g.set(o, loadLimit) })
 			for listener, n := range map[string]int{"public": loadLimit, "admin": loadLimit * runtime.AdminRateFactor} {
-				h := a.Public()
+				h := signedIn(t, a)
 				if listener == "admin" {
 					h = a.Admin()
 				}

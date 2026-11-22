@@ -17,7 +17,7 @@ import (
 // TestGetCollection reads seedCollection, which holds seedFetchedWork.
 func TestGetCollection(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	work := getJSON[dto.Work](t, h, route.Path(route.Work, seedFetchedWork))
 	path := route.Path(route.Collection, seedCollection)
 
@@ -42,7 +42,7 @@ func TestGetCollection(t *testing.T) {
 
 func TestCollectionWorks(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 2 })
-	h := a.Public()
+	h := signedIn(t, a)
 	path := route.Path(route.CollectionWorks, seedCollection)
 
 	g := testutil.Get(t, h, path)

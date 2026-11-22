@@ -7,7 +7,10 @@
 #   and a problem's type is one of the Problem response's `x-problems` (any operation) or the
 #   operation's own `x-problems`;
 # - on a full run, every declared status and every operation's own `x-problems` was produced
-#   by some test.
+#   by some test;
+# - `security: []` is on exactly the operations the public listener serves without a token
+#   (route.Anonymous) and the `x-admin-only` ones; every other operation inherits the global
+#   bearer requirement.
 # Problems stay under `default`, so the generated client (internal/apiclient) returns them as
 # one convenient error type. OpenAPI 3.2 is used for its native `query` operation (RFC 10008).
 openapi: 3.2.0
@@ -26,6 +29,17 @@ info:
     Problem response lists the types any operation can return; each operation's `x-problems`
     lists the others it can.
 
+    Auth: on the public listener every operation needs `Authorization: Bearer <access_token>`
+    (`bearerAuth`) except the ones with `security: []`: the health check and the auth entry
+    points (signup, reset, login, refresh). Without bearer credentials it is 401
+    `unauthorized`; a malformed `Authorization` is 400 `bad-request`; a refused token (expired,
+    revoked session, disabled account) is 401 `unauthorized` with `error="invalid_token"` in
+    `WWW-Authenticate`. The check runs before the reveal parameter is read, so a request
+    without a valid token never gets revealed content, and before routing, so an unknown path
+    is also 401 without a token. The admin socket (a unix socket only its Linux user can open)
+    never reads `Authorization` and needs no token; there the signed-in user's own operations
+    (`/api/v1/account`, logout) are always 401, since it has no user.
+
     Limits: per client IP (IPv6 by /64; behind a trusted proxy, the rightmost untrusted
     `X-Forwarded-For` entry), `api.rate.general_per_min` requests a minute (default 120) on
     every route, plus `api.rate.search_per_min` (30) shared by every `QUERY` search route,
@@ -42,6 +56,8 @@ info:
     421 `misdirected-request`.
 servers:
   - url: /
+security:
+  - bearerAuth: []
 # Headers the middleware sets, on any response (Allow only on a 405). OpenAPI has no global
 # response headers, and declaring these on each response would add them to every generated
 # client result, so they are listed once here; the integration tests check every response
@@ -62,6 +78,7 @@ paths:
     get:
       operationId: getHealthz
       summary: Liveness check.
+      security: []
       responses:
         "200":
           description: The server is up.
@@ -160,6 +177,7 @@ paths:
         interval takes effect at once (the next poll moves earlier if needed). GET the source
         for the new settings. On the public listener it is 405 `method-not-allowed`.
       x-admin-only: true
+      security: []
       x-problems:
         [invalid-body, body-too-large, unsupported-media-type, forbidden, not-found, method-not-allowed]
       parameters:
@@ -177,6 +195,7 @@ paths:
       summary: Remove a source and its memberships; mirrored works are kept.
       description: On the public listener it is 405 `method-not-allowed`.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found, method-not-allowed]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -189,6 +208,7 @@ paths:
       summary: Activate a source waiting for confirmation (pending_confirm → active).
       description: Any other state is 409 `state-conflict`.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -202,6 +222,7 @@ paths:
       description: |
         Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -214,6 +235,7 @@ paths:
       summary: Re-activate a paused source (paused → active).
       description: Any other state is 409 `state-conflict`.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -226,6 +248,7 @@ paths:
       summary: Stop a source for good and drop its queued jobs; mirrored works are kept.
       description: An already cancelled source is 409 `state-conflict`.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -246,6 +269,7 @@ paths:
         Only active and done_backfill sources can be refreshed; any other state is 409
         `state-conflict`. The running daemon picks the change up within seconds.
       x-admin-only: true
+      security: []
       x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, not-found, state-conflict]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -874,6 +898,7 @@ paths:
       operationId: debugJob
       summary: One job's content-free trace, with its events and requests.
       x-admin-only: true
+      security: []
       x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -890,6 +915,7 @@ paths:
       summary: One work's numbers, dates and states, with its fetch jobs and requests.
       description: No content (title, names, tags, text) is included, even when revealed.
       x-admin-only: true
+      security: []
       x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -904,6 +930,7 @@ paths:
     post:
       operationId: signup
       summary: Start a signup with an invite.
+      security: []
       description: |
         Takes the invite link's token (after `#token=`), a username and a password, and returns
         a new TOTP secret to add to an authenticator app plus the enrollment token to confirm it
@@ -930,6 +957,7 @@ paths:
     post:
       operationId: confirmSignup
       summary: Finish a signup with a TOTP code.
+      security: []
       description: |
         Creates the account, uses up the invite and returns 10 single-use recovery codes, shown
         only here. Then log in. A wrong code or an unusable enrollment token is 401
@@ -951,6 +979,7 @@ paths:
     post:
       operationId: startReset
       summary: Start a reset with a reset link.
+      security: []
       description: |
         Takes the reset link's token and, exactly when the link's scope replaces the password,
         the new password (else a 422 at `/password`). When the scope replaces the TOTP secret
@@ -973,6 +1002,7 @@ paths:
     post:
       operationId: confirmReset
       summary: Finish a reset with a TOTP code.
+      security: []
       description: |
         Applies the new password and/or TOTP secret, clears the login backoff, revokes every
         session of the account and uses up the link. A reset that replaced the TOTP secret
@@ -996,6 +1026,7 @@ paths:
     post:
       operationId: login
       summary: Log in, step 1 of 2 - username and password.
+      security: []
       description: |
         Returns a challenge token to send with a second factor to `/api/v1/auth/login/totp`
         before `expires_at` (5 minutes). An unknown username, a wrong password and a disabled
@@ -1022,6 +1053,7 @@ paths:
     post:
       operationId: loginTOTP
       summary: Log in, step 2 of 2 - TOTP code or recovery code.
+      security: []
       description: |
         Takes the challenge token and exactly one of a TOTP code (never one used before) or an
         unused recovery code (used up here), and starts a session. A wrong factor is 401
@@ -1046,6 +1078,7 @@ paths:
     post:
       operationId: refresh
       summary: Trade a refresh token for a new token pair.
+      security: []
       description: |
         Each refresh token works once: the response holds the next one, and the session's end
         moves to `auth.refresh_ttl` from now (never past `auth.max_session_age` after the
@@ -1066,9 +1099,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TokenPair" }
         default: { $ref: "#/components/responses/Problem" }
-  # The signed-in user's own account. Each route needs `Authorization: Bearer <access_token>`
-  # (401 unauthorized without a usable one, 400 bad-request for a malformed header). The admin
-  # socket never reads Authorization, so there they are always 401.
+  # The signed-in user's own account. Like every operation without `security: []`, each needs
+  # a bearer access token; the admin socket has no user, so there they are always 401.
   /api/v1/auth/logout:
     post:
       operationId: logout
@@ -1076,7 +1108,7 @@ paths:
       description: |
         The session's refresh token stops working, and so does its access token (every request
         checks the session). Needs a bearer access token.
-      x-problems: [forbidden, unauthorized]
+      x-problems: [forbidden]
       responses:
         "204": { description: The session is ended. }
         default: { $ref: "#/components/responses/Problem" }
@@ -1085,7 +1117,6 @@ paths:
       operationId: getAccount
       summary: The signed-in user's account.
       description: Needs a bearer access token.
-      x-problems: [unauthorized]
       responses:
         "200":
           description: The account.
@@ -1102,7 +1133,7 @@ paths:
         code is 403 `forbidden` and counts against the account like a failed login (too many
         is 429 `rate-limited` with `Retry-After`). The new password must meet the policy (422
         on `/password`). This session stays signed in.
-      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, unauthorized]
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden]
       requestBody:
         required: true
         content:
@@ -1119,7 +1150,7 @@ paths:
         Needs a bearer access token and a TOTP code. The new codes are in this response only;
         the old ones stop working. A wrong code is 403 `forbidden` and counts against the
         account like a failed login (too many is 429 `rate-limited` with `Retry-After`).
-      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, unauthorized]
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden]
       requestBody:
         required: true
         content:
@@ -1137,7 +1168,6 @@ paths:
       operationId: listAccountSessions
       summary: The signed-in user's active sessions, newest first.
       description: Needs a bearer access token.
-      x-problems: [unauthorized]
       responses:
         "200":
           description: The sessions.
@@ -1152,7 +1182,7 @@ paths:
       description: |
         Needs a bearer access token. Another account's session is 404, like a missing one.
         Revoking a revoked session is a no-op (still 204).
-      x-problems: [forbidden, unauthorized, not-found]
+      x-problems: [forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
       responses:
@@ -1167,6 +1197,7 @@ paths:
         stored as a hash and never shown again. It is single use and stays usable for `ttl`
         (default `auth.invite_ttl`).
       x-admin-only: true
+      security: []
       x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden]
       requestBody:
         required: true
@@ -1184,6 +1215,7 @@ paths:
       operationId: listInvites
       summary: Every signup and reset invite, newest first.
       x-admin-only: true
+      security: []
       responses:
         "200":
           description: The invites (never their tokens).
@@ -1197,6 +1229,7 @@ paths:
       summary: Revoke an unused invite and drop its pending signup or reset.
       description: A used or already revoked invite is left as it is (still 204).
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1208,6 +1241,7 @@ paths:
       operationId: listUsers
       summary: Every account, by id, without its secrets.
       x-admin-only: true
+      security: []
       responses:
         "200":
           description: The accounts.
@@ -1220,6 +1254,7 @@ paths:
       operationId: deleteUser
       summary: Delete an account with its sessions, recovery codes and reset invites.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1232,6 +1267,7 @@ paths:
       summary: Disable an account and revoke its sessions.
       description: Disabling a disabled account keeps its first disabled_at (still 204).
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1243,6 +1279,7 @@ paths:
       operationId: enableUser
       summary: Enable an account and clear its failed attempts and login backoff.
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1258,6 +1295,7 @@ paths:
         reset revokes every session of the account; a scope with `totp` also issues new
         recovery codes.
       x-admin-only: true
+      security: []
       x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1278,6 +1316,7 @@ paths:
       operationId: listUserSessions
       summary: An account's active sessions, newest first.
       x-admin-only: true
+      security: []
       x-problems: [not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1294,6 +1333,7 @@ paths:
       summary: Revoke any account's session; its access tokens stop working at once.
       description: Revoking a revoked session is a no-op (still 204).
       x-admin-only: true
+      security: []
       x-problems: [forbidden, not-found]
       parameters:
         - $ref: "#/components/parameters/ID"
@@ -1308,11 +1348,21 @@ paths:
         Tokens signed by the old key keep verifying until they expire (`auth.access_ttl`);
         new tokens use the new key.
       x-admin-only: true
+      security: []
       x-problems: [forbidden]
       responses:
         "204": { description: The new key is active. }
         default: { $ref: "#/components/responses/Problem" }
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        An access token (valid for `auth.access_ttl`, default 15 minutes) from `POST
+        /api/v1/auth/login/totp` or `/api/v1/auth/refresh` (RFC 6750 §2.1). Every request checks its session, so logout, a revoked session or a
+        disabled account stop it at once. Only the public listener reads it.
   parameters:
     ID:
       name: id
@@ -1385,9 +1435,10 @@ components:
     Problem:
       description: |
         An RFC 9457 problem. Every field is an enumerable value. `x-problems` are the types any
-        operation can return; an operation's own `x-problems` adds the rest.
+        operation can return (`unauthorized` only those needing `bearerAuth`); an operation's
+        own `x-problems` adds the rest.
       x-problems:
-        [bad-request, misdirected-request, validation-error, reveal-disabled, uri-too-long, rate-limited, unavailable, internal-error]
+        [bad-request, misdirected-request, validation-error, reveal-disabled, uri-too-long, rate-limited, unavailable, internal-error, unauthorized]
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
         WWW-Authenticate: { $ref: "#/components/headers/WWWAuthenticate" }

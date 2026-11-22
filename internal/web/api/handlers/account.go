@@ -12,8 +12,9 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
-// The signed-in user's own account (stage 16f). Every route runs behind runtime.RequireAuth and
-// acts only on its Principal's account and sessions.
+// The signed-in user's own account (stage 16f). Every route acts only on the account and
+// sessions of runtime.Principal, which the public router's token check sets (on the admin
+// socket these routes are always 401).
 
 // Logout is POST /api/v1/auth/logout (204): ends the access token's session; its refresh token
 // stops working and so does the access token.

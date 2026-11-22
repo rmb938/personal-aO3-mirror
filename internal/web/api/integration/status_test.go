@@ -13,7 +13,7 @@ import (
 
 func TestStatus(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	s := getJSON[dto.Status](t, h, "/api/v1/status")
 	d := s.Daemon

@@ -42,7 +42,7 @@ func TestQueryWorks(t *testing.T) {
 	require.Equal(t, int64(runtime.MaxID), int64(request.MaxID), "body ids have the query's range")
 
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	g := testutil.Get(t, h, "/api/v1/works")
 	assert.Equal(t, runtime.ContentTypeJSON, g.Header().Get(runtime.HeaderAcceptQuery), "GET advertises QUERY")
@@ -135,7 +135,7 @@ func TestQueryWorks(t *testing.T) {
 // hashed mode and an unknown scope with 404.
 func TestScopedQueryProblems(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	for pattern, detail := range map[string]problem.Detail{
 		route.TagWorks:        runtime.DetailNoTag,
 		route.CreatorWorks:    runtime.DetailNoCreator,
@@ -155,7 +155,7 @@ func TestScopedQueryProblems(t *testing.T) {
 // SENTINEL-title, only seedFetchedWork is in a series and only seedWork has a freeform tag.
 func TestQueryWorksSearch(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	for body, want := range map[string][]int64{
 		`{"q":"series"}`:                                   {seedFetchedWork},
 		`{"q":"tag"}`:                                      {seedWork},
@@ -175,12 +175,12 @@ func TestQueryWorksSearch(t *testing.T) {
 
 func TestQueryWorksRateLimit(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 1 })
-	queryWorks(t, a.Public(), "/api/v1/works", `{}`)
-	w := queryJSON(t, a.Public(), "/api/v1/works", `{}`)
+	queryWorks(t, signedIn(t, a), "/api/v1/works", `{}`)
+	w := queryJSON(t, signedIn(t, a), "/api/v1/works", `{}`)
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, dto.TypeRateLimited, testutil.DecodeProblem(t, w).Type)
 	assert.NotEmpty(t, w.Header().Get("Retry-After"))
-	assert.Equal(t, http.StatusOK, testutil.Get(t, a.Public(), "/api/v1/works").Code, "GET keeps the general limit")
+	assert.Equal(t, http.StatusOK, testutil.Get(t, signedIn(t, a), "/api/v1/works").Code, "GET keeps the general limit")
 
 	// The admin socket has a separate bucket with a 10x limit.
 	for range 10 {

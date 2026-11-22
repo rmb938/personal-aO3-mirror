@@ -111,11 +111,11 @@ func TestDebugWork(t *testing.T) {
 	testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/debug/works/x"), dto.ParamID, "bad id")
 }
 
-// The debug routes do not exist on the public listener.
+// The debug routes do not exist on the public listener, even signed in.
 func TestDebugNotPublic(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	for _, target := range []string{"/api/v1/debug/jobs/4", "/api/v1/debug/works/7"} {
-		w := testutil.Get(t, a.Public(), target)
+		w := testutil.Get(t, signedIn(t, a), target)
 		require.Equal(t, http.StatusNotFound, w.Code, target)
 		assert.Equal(t, dto.TypeNotFound, testutil.DecodeProblem(t, w).Type, target)
 	}

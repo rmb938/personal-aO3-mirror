@@ -17,7 +17,7 @@ import (
 // TestListMedia lists the seed's one medium: seedTag's parent, with seedTag as its fandom.
 func TestListMedia(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	tag := getJSON[dto.Tag](t, h, route.Path(route.Tag, seedTag))
 
 	l := getJSON[dto.List[dto.Medium]](t, h, route.Media)
@@ -52,7 +52,7 @@ func TestListMedia(t *testing.T) {
 
 func TestListMediumFandoms(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	path := route.Path(route.MediumFandoms, seedMedium)
 
 	for _, q := range []string{"", "?sort=uses", "?sort=name&direction=desc&per_page=1"} {

@@ -14,7 +14,6 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
-	api "github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
@@ -23,7 +22,7 @@ import (
 
 func TestGetWork(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	w := getJSON[dto.Work](t, h, "/api/v1/works/9")
 	assert.Equal(t, seedFetchedWork, w.ID)
@@ -85,7 +84,7 @@ func TestGetWork(t *testing.T) {
 
 func TestGetChapter(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	c := getJSON[dto.Chapter](t, h, "/api/v1/works/9/chapters/2")
 	assert.Equal(t, int64(92), c.ID)
@@ -118,7 +117,7 @@ func TestGetChapter(t *testing.T) {
 
 func TestGetWorkChapters(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	all := getJSON[dto.WorkChapters](t, h, "/api/v1/works/9/chapters")
 	require.Len(t, all.Chapters, 2)
@@ -150,9 +149,9 @@ func TestGetWorkChaptersTooLarge(t *testing.T) {
 	}
 	a, _ := testutil.NewAPI(t, testOptions, func(t *testing.T, opts runtime.Options, log *slog.Logger) (*runtime.API, error) {
 		t.Helper()
-		return api.New(opts, log, newTestControllers(t, log, big))
+		return newAPI(t, opts, log, newTestControllers(t, log, big))
 	}, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	w := testutil.Get(t, h, route.Path(route.Chapters, seedWork))
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
@@ -164,7 +163,7 @@ func TestGetWorkChaptersTooLarge(t *testing.T) {
 
 func TestGetWorkSkin(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	s := getJSON[dto.WorkSkin](t, h, "/api/v1/works/9/skin")
 	assert.True(t, isHash(t, s.CSS), "skin hashed")

@@ -13,13 +13,13 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
-// New builds the API over c, whose Auth controller (the admin socket's account routes) is
-// required.
+// New builds the API over c, whose Auth controller is required: every public route but the
+// route.Anonymous ones needs an access token, and the admin socket manages the accounts.
 func New(opts runtime.Options, log *slog.Logger, c *controllers.Controllers) (*runtime.API, error) {
 	if c.Auth() == nil {
 		return nil, errors.New("api: no Auth controller")
 	}
-	return runtime.New(opts, log, c, registerRoutes)
+	return runtime.New(opts, log, c, registerRoutes, route.Anonymous)
 }
 
 func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admin bool) {
@@ -71,9 +71,12 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.With(a.LoginRateLimit(listener, admin)).Post(route.AuthLogin, a.Handle(h.Login))
 	r.With(a.LoginRateLimit(listener, admin)).Post(route.AuthLoginTOTP, a.Handle(h.LoginSecondFactor))
 	r.With(a.RefreshRateLimit(listener, admin)).Post(route.AuthRefresh, a.Handle(h.Refresh))
-	// The signed-in user's account: always 401 on the admin socket, which has no user.
+	// The signed-in user's account. The public router has already authenticated the request;
+	// the admin socket has no user, so there they are always 401.
 	r.Group(func(r chi.Router) {
-		r.Use(a.RequireAuth(admin))
+		if admin {
+			r.Use(a.NoAccount)
+		}
 		r.Post(route.AuthLogout, a.Handle(h.Logout))
 		r.Get(route.Account, a.Handle(h.Account))
 		r.Put(route.AccountPassword, a.Handle(h.ChangePassword))

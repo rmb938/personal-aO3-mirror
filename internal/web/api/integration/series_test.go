@@ -18,7 +18,7 @@ import (
 // fetched, seedSeriesOther (part 3) known from the series page only.
 func TestGetSeries(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	work := getJSON[dto.Work](t, h, route.Path(route.Work, seedFetchedWork))
 	path := route.Path(route.Series, seedSeries)
 
@@ -58,7 +58,7 @@ func TestGetSeries(t *testing.T) {
 
 func TestListSeriesWorks(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	path := route.Path(route.SeriesWorks, seedSeries)
 
 	l := getJSON[dto.List[dto.WorkBlurb]](t, h, path)
