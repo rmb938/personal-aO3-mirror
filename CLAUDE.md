@@ -136,9 +136,9 @@ Design rules for API code:
 - A controller uses one transaction per step; an AO3 fetch ends a step. Typical shape: read
   (InReadTx) → fetch → write (InTx, re-reading anything the fetch may have raced with). Writes
   that belong together go in the same transaction. This is a design rule, checked in review.
-- Two rules are enforced at runtime (`store.ErrTxMisuse`, txguard.go): never fetch from AO3
-  inside a transaction (it would hold the SQLite write lock across the request), and never open
-  a transaction inside another.
+- Three rules are enforced at runtime (`store.ErrTxMisuse`, txguard.go): never fetch from AO3
+  or hash a password inside a transaction (either would hold the SQLite write lock across slow
+  work; call `store.NotInTx(ctx, "<what>")` first), and never open a transaction inside another.
 - Internal helpers take the caller's `*store.Tx` and never open their own transaction; an
   exported controller never calls another exported controller inside a transaction.
 - One intent = one controller call. A database-only operation is an unexported helper taking
