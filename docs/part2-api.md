@@ -1769,7 +1769,19 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         in the body or logs. No route uses the types yet (16e adds the first).
     - [ ] **16d. users.db store + `Auth` controller**: schema, `OpenUsers`, transactions, every
       controller method, with clock-driven tests (expiry, replay, backoff, key rotation,
-      refresh reuse).
+      refresh reuse). Two PRs: the store, then the controller. As built:
+      - Store: `store.Users` (`users.go`, queries in `users_accounts.go`, `users_invites.go`,
+        `users_sessions.go`), `ReadUsersValue`/`WriteUsersValue`; row types in
+        `model/auth.go`. The migration runner moved onto the shared `core`. A users.db readable
+        by group or others is refused, like `auth.key`. The store takes every time from the
+        caller (the controller's clock); IDs are `AUTOINCREMENT` (never reused: `sub`, `sid`).
+        A users transaction inside a Store one (or the reverse) is `ErrTxMisuse`.
+        `store.NotInTx(ctx, what)` now names the work it guards ("AO3 fetch", and in the
+        controller PR "password hash").
+      - Schema: `login_challenges.user_id` is NOT NULL: an unknown user fails step 1, so it
+        never gets a challenge. `enrollments` has `username` '' for a reset, `password_phc` ''
+        and `totp_secret_enc` NULL for "keep the current one". `invites.reset_scope` is '' for
+        signup (a CHECK ties kind, target and scope).
     - [ ] **16e. Admin API + CLI**: socket routes, OpenAPI (`x-admin-only`), `make generate`, CLI
       commands.
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
