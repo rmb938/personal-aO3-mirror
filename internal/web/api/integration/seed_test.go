@@ -67,7 +67,7 @@ func newTestControllers(tb testing.TB, log *slog.Logger, more ...func(context.Co
 	seedImages(tb, st, imageDir)
 	cfg := config.Default()
 	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime },
-		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: imageDir})
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: imageDir, Auth: newTestAuth(tb, log)})
 }
 
 // seedImageBody is the downloaded image's bytes, a sentinel (no real image: the API serves the

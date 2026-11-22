@@ -10,7 +10,9 @@ import (
 )
 
 var regexMap = map[string]ogenregex.Regexp{
-	"^[0-9a-f]{64}$": ogenregex.MustCompile("^[0-9a-f]{64}$"),
+	"^[0-9a-f]{64}$":     ogenregex.MustCompile("^[0-9a-f]{64}$"),
+	"^[a-z0-9_-]{3,32}$": ogenregex.MustCompile("^[a-z0-9_-]{3,32}$"),
+	"^https?://(?:(?:[a-z0-9-]{1,63}\\.){0,7}[a-z0-9-]{1,63}|\\[[0-9a-f:.]{2,45}\\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$": ogenregex.MustCompile("^https?://(?:(?:[a-z0-9-]{1,63}\\.){0,7}[a-z0-9-]{1,63}|\\[[0-9a-f:.]{2,45}\\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"),
 }
 
 type (

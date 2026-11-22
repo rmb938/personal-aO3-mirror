@@ -1827,6 +1827,20 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `controllers.Options.Auth` (`Controllers.Auth()`; nil in every other command). The
         startup log adds `public_url` and the auth TTLs. The "no auth yet" warning stays until 16g.
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
+      - Admin routes (socket only, `handlers/admin_users.go`, route constants `route.Admin*`):
+        `POST|GET /admin/invites`, `DELETE /admin/invites/{id}`, `GET /admin/users`,
+        `DELETE /admin/users/{id}`, `POST /admin/users/{id}/disable|enable|reset`,
+        `GET /admin/users/{id}/sessions`, `DELETE /admin/sessions/{id}`,
+        `POST /admin/signing-keys/rotate`. A new invite or reset is 201 `{id, url, expires_at}`
+        (`dto.InviteLink`, `url` a `dto.InviteURL`) with no `Location` (no route serves one
+        invite); the changes and the rotation are 204 (the new kid is not returned). Lists are
+        unpaged `{items}` (`dto.Items[T]`; one owner's accounts are few). Bodies:
+        `request.CreateInvite {ttl?}`, `request.CreateReset {scope, ttl?}`; the TTL bounds are
+        `request.MinInviteTTL`/`MaxInviteTTL`, checked equal to the controller's in convert's
+        tests. Missing accounts, invites and sessions are 404 with their own details. `api.New`
+        refuses controllers without `Auth`; `handlers.SourceAction` became `IDAction`, shared
+        by the source and account changes. The integration seed adds a users.db with two
+        accounts (one disabled), a session and an invite (`seed_auth_test.go`).
       auth rate limits; `Cache-Control: no-store`.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
       `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit

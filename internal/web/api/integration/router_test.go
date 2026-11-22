@@ -198,6 +198,23 @@ var routeSamples = map[string]routeSample{
 	"DELETE /api/v1/sources/{id}":  {target: "/api/v1/sources/1", status: http.StatusNoContent, fresh: true},
 	"GET /api/v1/debug/jobs/{id}":  {target: "/api/v1/debug/jobs/4", status: http.StatusOK, content: true},
 	"GET /api/v1/debug/works/{id}": {target: "/api/v1/debug/works/7", status: http.StatusOK, content: true},
+	// Accounts (seed_auth_test.go): no fanwork, so no revealed control.
+	"POST /api/v1/admin/invites": {target: "/api/v1/admin/invites", status: http.StatusCreated, fresh: true,
+		body: `{"ttl":"1h"}`},
+	"GET /api/v1/admin/invites":         {target: "/api/v1/admin/invites", status: http.StatusOK},
+	"DELETE /api/v1/admin/invites/{id}": {target: "/api/v1/admin/invites/1", status: http.StatusNoContent, fresh: true},
+	"GET /api/v1/admin/users":           {target: "/api/v1/admin/users", status: http.StatusOK},
+	"DELETE /api/v1/admin/users/{id}":   {target: "/api/v1/admin/users/2", status: http.StatusNoContent, fresh: true},
+	"POST /api/v1/admin/users/{id}/disable": {target: "/api/v1/admin/users/1/disable", status: http.StatusNoContent,
+		fresh: true},
+	"POST /api/v1/admin/users/{id}/enable": {target: "/api/v1/admin/users/2/enable", status: http.StatusNoContent,
+		fresh: true},
+	"POST /api/v1/admin/users/{id}/reset": {target: "/api/v1/admin/users/1/reset", status: http.StatusCreated,
+		fresh: true, body: `{"scope":"both","ttl":"2h"}`},
+	"GET /api/v1/admin/users/{id}/sessions": {target: "/api/v1/admin/users/1/sessions", status: http.StatusOK},
+	"DELETE /api/v1/admin/sessions/{id}":    {target: "/api/v1/admin/sessions/1", status: http.StatusNoContent, fresh: true},
+	"POST /api/v1/admin/signing-keys/rotate": {target: "/api/v1/admin/signing-keys/rotate", status: http.StatusNoContent,
+		fresh: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.

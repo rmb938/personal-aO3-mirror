@@ -82,8 +82,8 @@ or a response that is not JSON (e.g. an image), which is only served revealed.
 
 ## not-found
 
-**404 Not Found.** No route matches the path, or the resource (source, job, work, chapter, ...)
-does not exist.
+**404 Not Found.** No route matches the path, or the resource (source, job, work, chapter, ...,
+and on the admin socket an account, invite or session) does not exist.
 
 ## method-not-allowed
 

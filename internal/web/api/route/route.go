@@ -52,6 +52,18 @@ const (
 	SourceRefresh = "/api/v1/sources/{id}/refresh"
 	DebugJob      = "/api/v1/debug/jobs/{id}"
 	DebugWork     = "/api/v1/debug/works/{id}"
+
+	// Admin socket only: accounts (stage 16).
+	AdminInvites          = "/api/v1/admin/invites"
+	AdminInvite           = "/api/v1/admin/invites/{id}"
+	AdminUsers            = "/api/v1/admin/users"
+	AdminUser             = "/api/v1/admin/users/{id}"
+	AdminUserDisable      = "/api/v1/admin/users/{id}/disable"
+	AdminUserEnable       = "/api/v1/admin/users/{id}/enable"
+	AdminUserReset        = "/api/v1/admin/users/{id}/reset"
+	AdminUserSessions     = "/api/v1/admin/users/{id}/sessions"
+	AdminSession          = "/api/v1/admin/sessions/{id}"
+	AdminSigningKeyRotate = "/api/v1/admin/signing-keys/rotate"
 )
 
 // Path fills pattern's {param} segments with ids, in order: Path(Source, 3) is

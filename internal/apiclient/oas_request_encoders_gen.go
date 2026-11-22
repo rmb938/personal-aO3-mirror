@@ -24,6 +24,34 @@ func encodeAddSourceRequest(
 	return nil
 }
 
+func encodeCreateInviteRequest(
+	req *CreateInviteRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeCreateResetRequest(
+	req *CreateResetRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeQueryCollectionWorksRequest(
 	req *WorkQueryRequest,
 	r *http.Request,

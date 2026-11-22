@@ -28,5 +28,7 @@ func Types() []any {
 		WorkQuery{},
 		TagQuery{},
 		CreatorQuery{},
+		CreateInvite{},
+		CreateReset{},
 	}
 }
