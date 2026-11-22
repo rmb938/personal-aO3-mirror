@@ -12,6 +12,11 @@ type ConfirmSourceParams struct {
 	ID ID
 }
 
+// CreateResetParams is parameters of createReset operation.
+type CreateResetParams struct {
+	ID ID
+}
+
 // DebugJobParams is parameters of debugJob operation.
 type DebugJobParams struct {
 	ID ID
@@ -19,6 +24,21 @@ type DebugJobParams struct {
 
 // DebugWorkParams is parameters of debugWork operation.
 type DebugWorkParams struct {
+	ID ID
+}
+
+// DeleteUserParams is parameters of deleteUser operation.
+type DeleteUserParams struct {
+	ID ID
+}
+
+// DisableUserParams is parameters of disableUser operation.
+type DisableUserParams struct {
+	ID ID
+}
+
+// EnableUserParams is parameters of enableUser operation.
+type EnableUserParams struct {
 	ID ID
 }
 
@@ -171,6 +191,11 @@ type ListTagWorksParams struct {
 	PerPage OptInt `json:",omitempty,omitzero"`
 }
 
+// ListUserSessionsParams is parameters of listUserSessions operation.
+type ListUserSessionsParams struct {
+	ID ID
+}
+
 // ListWorksParams is parameters of listWorks operation.
 type ListWorksParams struct {
 	// `best_match` needs a search query, which only `QUERY` takes: 422 here.
@@ -244,6 +269,16 @@ type RemoveSourceParams struct {
 
 // ResumeSourceParams is parameters of resumeSource operation.
 type ResumeSourceParams struct {
+	ID ID
+}
+
+// RevokeInviteParams is parameters of revokeInvite operation.
+type RevokeInviteParams struct {
+	ID ID
+}
+
+// RevokeSessionParams is parameters of revokeSession operation.
+type RevokeSessionParams struct {
 	ID ID
 }
 

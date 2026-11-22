@@ -368,6 +368,7 @@ func FuzzDecodeJSON(f *testing.F) {
 		`{"statuses":["x","fetched","fetched"],"hits":{"max":-1},"published":{"from":"2021-01-02","to":"2021-01-01"}}`,
 		`{"name":"fixture tag","types":["fandom","fandom","x"],"canonical":true,"parent_ids":[1],"sort":"name","direction":"desc"}`,
 		`{"name":" ","sort":"works","direction":"up"}`,
+		`{"ttl":"1h"}`, `{"ttl":"59s"}`, `{"scope":"both","ttl":"168h"}`, `{"scope":"Totp","ttl":"-1m"}`,
 	} {
 		for k := range types {
 			f.Add(uint8(k), []byte(s))
@@ -511,6 +512,11 @@ func requireInBounds(t *testing.T, body any) {
 		requireNameWords(t, b.Name, request.MaxCreatorNameQueryRunes, request.MaxCreatorNameQueryWords)
 		requireEnumOrEmpty(t, b.Sort)
 		requireEnumOrEmpty(t, b.Direction)
+	case *request.CreateInvite:
+		requireInviteTTL(t, b.TTL)
+	case *request.CreateReset:
+		require.Contains(t, b.Scope.EnumValues(), string(b.Scope))
+		requireInviteTTL(t, b.TTL)
 	default:
 		t.Fatalf("requireInBounds: no bounds for %T; add them", body)
 	}
@@ -552,6 +558,12 @@ func requirePollInterval(t *testing.T, d dto.Duration) {
 	t.Helper()
 	p := d.Duration()
 	require.True(t, p == 0 || (p >= request.MinPollInterval && p <= request.MaxPollInterval))
+}
+
+func requireInviteTTL(t *testing.T, d dto.Duration) {
+	t.Helper()
+	p := d.Duration()
+	require.True(t, p == 0 || (p >= request.MinInviteTTL && p <= request.MaxInviteTTL))
 }
 
 func requireNameWords(t *testing.T, name string, maxRunes, maxWords int) {

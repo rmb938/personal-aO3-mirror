@@ -897,6 +897,160 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/WorkDebug" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/invites:
+    post:
+      operationId: createInvite
+      summary: Create a signup invite.
+      description: |
+        The link (`{api.public_url}/signup#token=…`) is in this response only: the token is
+        stored as a hash and never shown again. It is single use and stays usable for `ttl`
+        (default `auth.invite_ttl`).
+      x-admin-only: true
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInviteRequest" }
+      responses:
+        "201":
+          description: The new invite and its link.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InviteLink" }
+        default: { $ref: "#/components/responses/Problem" }
+    get:
+      operationId: listInvites
+      summary: Every signup and reset invite, newest first.
+      x-admin-only: true
+      responses:
+        "200":
+          description: The invites (never their tokens).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InviteList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/invites/{id}:
+    delete:
+      operationId: revokeInvite
+      summary: Revoke an unused invite and drop its pending signup or reset.
+      description: A used or already revoked invite is left as it is (still 204).
+      x-admin-only: true
+      x-problems: [forbidden, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The invite can no longer be used. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/users:
+    get:
+      operationId: listUsers
+      summary: Every account, by id, without its secrets.
+      x-admin-only: true
+      responses:
+        "200":
+          description: The accounts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/users/{id}:
+    delete:
+      operationId: deleteUser
+      summary: Delete an account with its sessions, recovery codes and reset invites.
+      x-admin-only: true
+      x-problems: [forbidden, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The account is gone; its id is never reused. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/users/{id}/disable:
+    post:
+      operationId: disableUser
+      summary: Disable an account and revoke its sessions.
+      description: Disabling a disabled account keeps its first disabled_at (still 204).
+      x-admin-only: true
+      x-problems: [forbidden, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The account is disabled. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/users/{id}/enable:
+    post:
+      operationId: enableUser
+      summary: Enable an account and clear its failed attempts and login backoff.
+      x-admin-only: true
+      x-problems: [forbidden, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The account is enabled. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/users/{id}/reset:
+    post:
+      operationId: createReset
+      summary: Create a reset link for an account's password, TOTP secret or both.
+      description: |
+        The link (`{api.public_url}/reset#token=…`) is in this response only. Confirming the
+        reset revokes every session of the account; a scope with `totp` also issues new
+        recovery codes.
+      x-admin-only: true
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateResetRequest" }
+      responses:
+        "201":
+          description: The new reset invite and its link.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InviteLink" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/users/{id}/sessions:
+    get:
+      operationId: listUserSessions
+      summary: An account's active sessions, newest first.
+      x-admin-only: true
+      x-problems: [not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: The sessions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/sessions/{id}:
+    delete:
+      operationId: revokeSession
+      summary: Revoke any account's session; its access tokens stop working at once.
+      description: Revoking a revoked session is a no-op (still 204).
+      x-admin-only: true
+      x-problems: [forbidden, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The session is revoked. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/signing-keys/rotate:
+    post:
+      operationId: rotateSigningKey
+      summary: Start a new access-token signing key.
+      description: |
+        Tokens signed by the old key keep verifying until they expire (`auth.access_ttl`);
+        new tokens use the new key.
+      x-admin-only: true
+      x-problems: [forbidden]
+      responses:
+        "204": { description: The new key is active. }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
     ID:
@@ -2812,3 +2966,106 @@ components:
             type: string,
             description: "Untrusted CSS (hashed); omitted when the work has none.",
           }
+    CreateInviteRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        ttl:
+          allOf: [{ $ref: "#/components/schemas/Duration" }]
+          description: How long the invite stays usable, 1m..168h; omitted is `auth.invite_ttl`.
+    CreateResetRequest:
+      type: object
+      required: [scope]
+      additionalProperties: false
+      properties:
+        scope: { $ref: "#/components/schemas/ResetScope" }
+        ttl:
+          allOf: [{ $ref: "#/components/schemas/Duration" }]
+          description: How long the link stays usable, 1m..168h; omitted is `auth.invite_ttl`.
+    ResetScope:
+      type: string
+      description: What a reset replaces.
+      enum: [password, totp, both]
+    InviteLink:
+      type: object
+      required: [id, url, expires_at]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        url:
+          type: string
+          description: |
+            `{api.public_url}/signup#token=…` or `/reset#token=…` (verbatim; the token is in the
+            fragment, so it never reaches a proxy or server log). Shown only here.
+          pattern: '^https?://(?:(?:[a-z0-9-]{1,63}\.){0,7}[a-z0-9-]{1,63}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+    Invite:
+      type: object
+      required: [id, kind, created_at, expires_at]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        kind: { type: string, enum: [signup, reset] }
+        user_id:
+          allOf: [{ $ref: "#/components/schemas/ID" }]
+          description: A reset's account; omitted for a signup.
+        scope:
+          allOf: [{ $ref: "#/components/schemas/ResetScope" }]
+          description: What a reset replaces; omitted for a signup.
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+        used_at: { $ref: "#/components/schemas/Timestamp" }
+        used_by:
+          allOf: [{ $ref: "#/components/schemas/ID" }]
+          description: The account the invite created or reset; omitted when unused or that account was deleted.
+        revoked_at: { $ref: "#/components/schemas/Timestamp" }
+    InviteList:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Invite" } }
+    User:
+      type: object
+      required: [id, username, created_at, failed_attempts, recovery_codes_left]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        username:
+          type: string
+          description: Verbatim (an account name, not fanwork).
+          pattern: "^[a-z0-9_-]{3,32}$"
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        last_login_at: { $ref: "#/components/schemas/Timestamp" }
+        password_changed_at: { $ref: "#/components/schemas/Timestamp" }
+        disabled_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: When the account was disabled; omitted when it is enabled.
+        failed_attempts:
+          { type: integer, minimum: 0, description: "Consecutive failed password or second-factor attempts." }
+        recovery_codes_left: { type: integer, minimum: 0 }
+    UserList:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/User" } }
+    Session:
+      type: object
+      required: [id, created_at, last_used_at, expires_at]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        last_used_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: The last login or refresh.
+        expires_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: When the session ends unless refreshed (never past the login plus `auth.max_session_age`).
+    SessionList:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Session" } }

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
@@ -83,22 +82,6 @@ func (a *Handlers) AddSource(admin bool) runtime.HandlerFunc {
 		}
 		return &runtime.Response{Status: http.StatusAccepted, Location: route.Path(route.SourceAdd, added.JobID),
 			Body: convert.QueuedSourceAdd(added)}, nil
-	}
-}
-
-// sourceAction is an admin-socket source change with no result body (204): POST
-// /api/v1/sources/{id}/confirm|pause|resume and DELETE /api/v1/sources/{id}. A source not in a
-// state the change allows is 409 state-conflict.
-func (a *Handlers) SourceAction(op func(ctx context.Context, id int64) error) runtime.HandlerFunc {
-	return func(r *http.Request) (any, error) {
-		id, err := runtime.OnlyPathID(r, dto.ParamID)
-		if err != nil {
-			return nil, err
-		}
-		if err := op(r.Context(), id); err != nil {
-			return nil, err
-		}
-		return runtime.NoContent(), nil
 	}
 }
 

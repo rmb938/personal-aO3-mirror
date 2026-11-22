@@ -104,6 +104,20 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/confirm
 	ConfirmSource(ctx context.Context, params ConfirmSourceParams, options ...RequestOption) error
+	// CreateInvite invokes createInvite operation.
+	//
+	// The link (`{api.public_url}/signup#token=…`) is in this response only: the token is stored as a
+	// hash and never shown again. It is single use and stays usable for `ttl` (default `auth.invite_ttl`).
+	//
+	// POST /api/v1/admin/invites
+	CreateInvite(ctx context.Context, request *CreateInviteRequest, options ...RequestOption) (*InviteLink, error)
+	// CreateReset invokes createReset operation.
+	//
+	// The link (`{api.public_url}/reset#token=…`) is in this response only. Confirming the reset revokes
+	// every session of the account; a scope with `totp` also issues new recovery codes.
+	//
+	// POST /api/v1/admin/users/{id}/reset
+	CreateReset(ctx context.Context, request *CreateResetRequest, params CreateResetParams, options ...RequestOption) (*InviteLink, error)
 	// DebugJob invokes debugJob operation.
 	//
 	// One job's content-free trace, with its events and requests.
@@ -116,6 +130,24 @@ type Invoker interface {
 	//
 	// GET /api/v1/debug/works/{id}
 	DebugWork(ctx context.Context, params DebugWorkParams, options ...RequestOption) (*WorkDebug, error)
+	// DeleteUser invokes deleteUser operation.
+	//
+	// Delete an account with its sessions, recovery codes and reset invites.
+	//
+	// DELETE /api/v1/admin/users/{id}
+	DeleteUser(ctx context.Context, params DeleteUserParams, options ...RequestOption) error
+	// DisableUser invokes disableUser operation.
+	//
+	// Disabling a disabled account keeps its first disabled_at (still 204).
+	//
+	// POST /api/v1/admin/users/{id}/disable
+	DisableUser(ctx context.Context, params DisableUserParams, options ...RequestOption) error
+	// EnableUser invokes enableUser operation.
+	//
+	// Enable an account and clear its failed attempts and login backoff.
+	//
+	// POST /api/v1/admin/users/{id}/enable
+	EnableUser(ctx context.Context, params EnableUserParams, options ...RequestOption) error
 	// GetChapter invokes getChapter operation.
 	//
 	// Content strings are hashed unless revealed; HTML is untrusted. 404 `not-found` when no chapter is
@@ -244,6 +276,12 @@ type Invoker interface {
 	//
 	// GET /api/v1/creators/{id}/works
 	ListCreatorWorks(ctx context.Context, params ListCreatorWorksParams, options ...RequestOption) (*WorkListHeaders, error)
+	// ListInvites invokes listInvites operation.
+	//
+	// Every signup and reset invite, newest first.
+	//
+	// GET /api/v1/admin/invites
+	ListInvites(ctx context.Context, options ...RequestOption) (*InviteList, error)
 	// ListJobs invokes listJobs operation.
 	//
 	// One page of jobs, newest first (state=queued lists them in queue order).
@@ -290,6 +328,18 @@ type Invoker interface {
 	//
 	// GET /api/v1/tags/{id}/works
 	ListTagWorks(ctx context.Context, params ListTagWorksParams, options ...RequestOption) (*WorkListHeaders, error)
+	// ListUserSessions invokes listUserSessions operation.
+	//
+	// An account's active sessions, newest first.
+	//
+	// GET /api/v1/admin/users/{id}/sessions
+	ListUserSessions(ctx context.Context, params ListUserSessionsParams, options ...RequestOption) (*SessionList, error)
+	// ListUsers invokes listUsers operation.
+	//
+	// Every account, by id, without its secrets.
+	//
+	// GET /api/v1/admin/users
+	ListUsers(ctx context.Context, options ...RequestOption) (*UserList, error)
 	// ListWorks invokes listWorks operation.
 	//
 	// Each item is a listing blurb: no notes, collections or chapter list (see `GET /api/v1/works/{id}`).
@@ -376,6 +426,25 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/resume
 	ResumeSource(ctx context.Context, params ResumeSourceParams, options ...RequestOption) error
+	// RevokeInvite invokes revokeInvite operation.
+	//
+	// A used or already revoked invite is left as it is (still 204).
+	//
+	// DELETE /api/v1/admin/invites/{id}
+	RevokeInvite(ctx context.Context, params RevokeInviteParams, options ...RequestOption) error
+	// RevokeSession invokes revokeSession operation.
+	//
+	// Revoking a revoked session is a no-op (still 204).
+	//
+	// DELETE /api/v1/admin/sessions/{id}
+	RevokeSession(ctx context.Context, params RevokeSessionParams, options ...RequestOption) error
+	// RotateSigningKey invokes rotateSigningKey operation.
+	//
+	// Tokens signed by the old key keep verifying until they expire (`auth.access_ttl`); new tokens use
+	// the new key.
+	//
+	// POST /api/v1/admin/signing-keys/rotate
+	RotateSigningKey(ctx context.Context, options ...RequestOption) error
 	// SetSourceSettings invokes setSourceSettings operation.
 	//
 	// An absent member keeps its current value, so `{}` changes nothing. A shorter poll interval takes
@@ -646,6 +715,158 @@ func (c *Client) sendConfirmSource(ctx context.Context, params ConfirmSourcePara
 	return result, nil
 }
 
+// CreateInvite invokes createInvite operation.
+//
+// The link (`{api.public_url}/signup#token=…`) is in this response only: the token is stored as a
+// hash and never shown again. It is single use and stays usable for `ttl` (default `auth.invite_ttl`).
+//
+// POST /api/v1/admin/invites
+func (c *Client) CreateInvite(ctx context.Context, request *CreateInviteRequest, options ...RequestOption) (*InviteLink, error) {
+	res, err := c.sendCreateInvite(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendCreateInvite(ctx context.Context, request *CreateInviteRequest, requestOptions ...RequestOption) (res *InviteLink, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/admin/invites"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateInviteRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeCreateInviteResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CreateReset invokes createReset operation.
+//
+// The link (`{api.public_url}/reset#token=…`) is in this response only. Confirming the reset revokes
+// every session of the account; a scope with `totp` also issues new recovery codes.
+//
+// POST /api/v1/admin/users/{id}/reset
+func (c *Client) CreateReset(ctx context.Context, request *CreateResetRequest, params CreateResetParams, options ...RequestOption) (*InviteLink, error) {
+	res, err := c.sendCreateReset(ctx, request, params, options...)
+	return res, err
+}
+
+func (c *Client) sendCreateReset(ctx context.Context, request *CreateResetRequest, params CreateResetParams, requestOptions ...RequestOption) (res *InviteLink, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/admin/users/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/reset"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateResetRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeCreateResetResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // DebugJob invokes debugJob operation.
 //
 // One job's content-free trace, with its events and requests.
@@ -803,6 +1024,254 @@ func (c *Client) sendDebugWork(ctx context.Context, params DebugWorkParams, requ
 	}
 
 	result, err := decodeDebugWorkResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// DeleteUser invokes deleteUser operation.
+//
+// Delete an account with its sessions, recovery codes and reset invites.
+//
+// DELETE /api/v1/admin/users/{id}
+func (c *Client) DeleteUser(ctx context.Context, params DeleteUserParams, options ...RequestOption) error {
+	_, err := c.sendDeleteUser(ctx, params, options...)
+	return err
+}
+
+func (c *Client) sendDeleteUser(ctx context.Context, params DeleteUserParams, requestOptions ...RequestOption) (res *DeleteUserNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/admin/users/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeDeleteUserResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// DisableUser invokes disableUser operation.
+//
+// Disabling a disabled account keeps its first disabled_at (still 204).
+//
+// POST /api/v1/admin/users/{id}/disable
+func (c *Client) DisableUser(ctx context.Context, params DisableUserParams, options ...RequestOption) error {
+	_, err := c.sendDisableUser(ctx, params, options...)
+	return err
+}
+
+func (c *Client) sendDisableUser(ctx context.Context, params DisableUserParams, requestOptions ...RequestOption) (res *DisableUserNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/admin/users/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/disable"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeDisableUserResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// EnableUser invokes enableUser operation.
+//
+// Enable an account and clear its failed attempts and login backoff.
+//
+// POST /api/v1/admin/users/{id}/enable
+func (c *Client) EnableUser(ctx context.Context, params EnableUserParams, options ...RequestOption) error {
+	_, err := c.sendEnableUser(ctx, params, options...)
+	return err
+}
+
+func (c *Client) sendEnableUser(ctx context.Context, params EnableUserParams, requestOptions ...RequestOption) (res *EnableUserNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/admin/users/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/enable"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeEnableUserResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -2402,6 +2871,67 @@ func (c *Client) sendListCreatorWorks(ctx context.Context, params ListCreatorWor
 	return result, nil
 }
 
+// ListInvites invokes listInvites operation.
+//
+// Every signup and reset invite, newest first.
+//
+// GET /api/v1/admin/invites
+func (c *Client) ListInvites(ctx context.Context, options ...RequestOption) (*InviteList, error) {
+	res, err := c.sendListInvites(ctx, options...)
+	return res, err
+}
+
+func (c *Client) sendListInvites(ctx context.Context, requestOptions ...RequestOption) (res *InviteList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/admin/invites"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListInvitesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListJobs invokes listJobs operation.
 //
 // One page of jobs, newest first (state=queued lists them in queue order).
@@ -3181,6 +3711,150 @@ func (c *Client) sendListTagWorks(ctx context.Context, params ListTagWorksParams
 	}
 
 	result, err := decodeListTagWorksResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListUserSessions invokes listUserSessions operation.
+//
+// An account's active sessions, newest first.
+//
+// GET /api/v1/admin/users/{id}/sessions
+func (c *Client) ListUserSessions(ctx context.Context, params ListUserSessionsParams, options ...RequestOption) (*SessionList, error) {
+	res, err := c.sendListUserSessions(ctx, params, options...)
+	return res, err
+}
+
+func (c *Client) sendListUserSessions(ctx context.Context, params ListUserSessionsParams, requestOptions ...RequestOption) (res *SessionList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [3]string
+	pathParts[0] = "/api/v1/admin/users/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/sessions"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListUserSessionsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListUsers invokes listUsers operation.
+//
+// Every account, by id, without its secrets.
+//
+// GET /api/v1/admin/users
+func (c *Client) ListUsers(ctx context.Context, options ...RequestOption) (*UserList, error) {
+	res, err := c.sendListUsers(ctx, options...)
+	return res, err
+}
+
+func (c *Client) sendListUsers(ctx context.Context, requestOptions ...RequestOption) (res *UserList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/admin/users"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListUsersResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -4339,6 +5013,232 @@ func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams
 	}
 
 	result, err := decodeResumeSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RevokeInvite invokes revokeInvite operation.
+//
+// A used or already revoked invite is left as it is (still 204).
+//
+// DELETE /api/v1/admin/invites/{id}
+func (c *Client) RevokeInvite(ctx context.Context, params RevokeInviteParams, options ...RequestOption) error {
+	_, err := c.sendRevokeInvite(ctx, params, options...)
+	return err
+}
+
+func (c *Client) sendRevokeInvite(ctx context.Context, params RevokeInviteParams, requestOptions ...RequestOption) (res *RevokeInviteNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/admin/invites/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRevokeInviteResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RevokeSession invokes revokeSession operation.
+//
+// Revoking a revoked session is a no-op (still 204).
+//
+// DELETE /api/v1/admin/sessions/{id}
+func (c *Client) RevokeSession(ctx context.Context, params RevokeSessionParams, options ...RequestOption) error {
+	_, err := c.sendRevokeSession(ctx, params, options...)
+	return err
+}
+
+func (c *Client) sendRevokeSession(ctx context.Context, params RevokeSessionParams, requestOptions ...RequestOption) (res *RevokeSessionNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/admin/sessions/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRevokeSessionResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RotateSigningKey invokes rotateSigningKey operation.
+//
+// Tokens signed by the old key keep verifying until they expire (`auth.access_ttl`); new tokens use
+// the new key.
+//
+// POST /api/v1/admin/signing-keys/rotate
+func (c *Client) RotateSigningKey(ctx context.Context, options ...RequestOption) error {
+	_, err := c.sendRotateSigningKey(ctx, options...)
+	return err
+}
+
+func (c *Client) sendRotateSigningKey(ctx context.Context, requestOptions ...RequestOption) (res *RotateSigningKeyNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/admin/signing-keys/rotate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRotateSigningKeyResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

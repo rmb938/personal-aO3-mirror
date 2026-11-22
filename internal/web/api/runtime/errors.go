@@ -46,6 +46,12 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoCollection)
 	case errors.Is(err, store.ErrNoImage):
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoImage)
+	case errors.Is(err, store.ErrNoUser):
+		e = problem.WithDetail(dto.TypeNotFound, DetailNoUser)
+	case errors.Is(err, store.ErrNoInvite):
+		e = problem.WithDetail(dto.TypeNotFound, DetailNoInvite)
+	case errors.Is(err, store.ErrNoSession):
+		e = problem.WithDetail(dto.TypeNotFound, DetailNoSession)
 	case errors.Is(err, store.ErrNoRawPage):
 		e = problem.New(dto.TypeNotFound)
 	case errors.Is(err, store.ErrStateConflict):

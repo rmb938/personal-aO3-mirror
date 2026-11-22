@@ -2,6 +2,7 @@
 package api
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/go-chi/chi/v5"
@@ -12,7 +13,12 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
 
+// New builds the API over c, whose Auth controller (the admin socket's account routes) is
+// required.
 func New(opts runtime.Options, log *slog.Logger, c *controllers.Controllers) (*runtime.API, error) {
+	if c.Auth() == nil {
+		return nil, errors.New("api: no Auth controller")
+	}
 	return runtime.New(opts, log, c, registerRoutes)
 }
 
@@ -56,14 +62,27 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.With(runtime.AcceptQuery, search).Query(route.CollectionWorks, a.Handle(h.QueryCollectionWorks))
 	r.Get(route.Image, a.Handle(h.GetImage))
 	if admin {
-		r.Post(route.SourceConfirm, a.Handle(h.SourceAction(c.ConfirmSource)))
-		r.Post(route.SourcePause, a.Handle(h.SourceAction(c.PauseSource)))
-		r.Post(route.SourceResume, a.Handle(h.SourceAction(c.ResumeSource)))
+		r.Post(route.SourceConfirm, a.Handle(h.IDAction(c.ConfirmSource)))
+		r.Post(route.SourcePause, a.Handle(h.IDAction(c.PauseSource)))
+		r.Post(route.SourceResume, a.Handle(h.IDAction(c.ResumeSource)))
 		r.Post(route.SourceCancel, a.Handle(h.CancelSource))
 		r.Post(route.SourceRefresh, a.Handle(h.RefreshSource))
 		r.Patch(route.Source, a.Handle(h.SetSourceSettings))
-		r.Delete(route.Source, a.Handle(h.SourceAction(c.RemoveSource)))
+		r.Delete(route.Source, a.Handle(h.IDAction(c.RemoveSource)))
 		r.Get(route.DebugJob, a.Handle(h.DebugJob))
 		r.Get(route.DebugWork, a.Handle(h.DebugWork))
+
+		ac := c.Auth()
+		r.Post(route.AdminInvites, a.Handle(h.CreateInvite))
+		r.Get(route.AdminInvites, a.Handle(h.ListInvites))
+		r.Delete(route.AdminInvite, a.Handle(h.IDAction(ac.RevokeInvite)))
+		r.Get(route.AdminUsers, a.Handle(h.ListUsers))
+		r.Delete(route.AdminUser, a.Handle(h.IDAction(ac.DeleteUser)))
+		r.Post(route.AdminUserDisable, a.Handle(h.IDAction(ac.DisableUser)))
+		r.Post(route.AdminUserEnable, a.Handle(h.IDAction(ac.EnableUser)))
+		r.Post(route.AdminUserReset, a.Handle(h.CreateReset))
+		r.Get(route.AdminUserSessions, a.Handle(h.UserSessions))
+		r.Delete(route.AdminSession, a.Handle(h.IDAction(ac.RevokeSession)))
+		r.Post(route.AdminSigningKeyRotate, a.Handle(h.RotateSigningKey))
 	}
 }

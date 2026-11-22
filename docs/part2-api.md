@@ -1589,7 +1589,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     | Topic | Decision |
     |---|---|
     | Tokens | Access JWT, 15m, whose `sid` is checked against users.db on every request (revocation is immediate). Opaque refresh token, 30d, stored as SHA-256, rotated on each use; presenting the previous one revokes the session (reuse detection). |
-    | Signing | Ed25519 (`EdDSA`) via `github.com/golang-jwt/jwt/v5` (v5.3.1 when planned; run `go list -m …@latest` again). The key is stored in users.db with a `kid`. Rotation keeps the old public key for verification until `rotated_at + access_ttl`. |
+    | Signing | Ed25519 (`EdDSA`) via `github.com/golang-jwt/jwt/v5` (v5.3.1 when planned; run `go list -m …@latest` again). The key is stored in users.db with a `kid`. Rotation keeps the old public key for verification until `rotated_at + access_ttl`. `serve` also rotates automatically every `auth.signing_key_rotation` (default 30d; NIST SP 800-57 caps a signature key at about 1–3 years) (16h). |
     | Enforcer | New verbatim **pattern types** in `dto` (`Token`, `Username`, `TOTPSecret`, `OTPAuthURI`, `RecoveryCode`, `InviteURL`): named string types with a `VerbatimPattern() string` method, found by reflection like `EnumValues`. The enforcer passes a value only on a full regex match, else 500 (fail closed). Plain `string` fields are still always hashed. Approved by the user as a change to the enforcer. |
     | Password | 8..128 runes after NFKC (NIST SP 800-63B-4's minimum with MFA), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL). Argon2id with RFC 9106 §4's second recommended option (m=64 MiB, t=3, p=4; changed from OWASP's m=19 MiB, t=2, p=1 in 16b), in PHC string format; rehashed on login when the parameters change. |
     | TOTP | Mandatory. Hand-rolled RFC 4226/6238 on `crypto/hmac` (SHA1, 6 digits, 30s, ±1 step, 20-byte secret), tested with the RFC appendix vectors. It returns the matched step and `last_totp_step` blocks replay (pquerna/otp v1.5.0's `totp.ValidateCustom` returns only a bool). |
@@ -1701,6 +1701,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       max_session_age: 2160h   # refresh_ttl..8760h; a session ends this long after login (16d)
       invite_ttl: 24h          # default; max 168h
       totp_issuer: ao3mirror   # [A-Za-z0-9 ._-]{1,32}
+      signing_key_rotation: 720h  # 24h..8760h; serve rotates the JWT signing key this often (16h)
     ```
   - **CLI** (admin socket clients, regenerated `internal/apiclient`):
     `ao3mirror invite create [--ttl 24h] | list | revoke <id>`;
@@ -1711,7 +1712,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     ingress rule for the custom domain to `http://127.0.0.1:8080`, leaving the Host header as
     sent (no `httpHostHeader` override). Add the domain to `api.allowed_hosts` and set
     `api.public_url`. Check the startup log's trusted prefixes and one request's `client_ip`.
-  - Split into seven PRs (the box is ticked by the last one):
+  - Split into eight PRs (the box is ticked by the last one):
     - [x] **16a. Docs**: this design; Cloudflare Tunnel replaces Tailscale Funnel in the docs;
       CLAUDE.md auth rules.
     - [x] **16b. `internal/auth` primitives**: password, TOTP, secrets, tokens, JWT, the
@@ -1826,12 +1827,50 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         first, the same check as the socket's), builds `controllers.NewAuth` and passes it as
         `controllers.Options.Auth` (`Controllers.Auth()`; nil in every other command). The
         startup log adds `public_url` and the auth TTLs. The "no auth yet" warning stays until 16g.
+      - Admin routes (socket only, `handlers/admin_users.go`, route constants `route.Admin*`):
+        `POST|GET /admin/invites`, `DELETE /admin/invites/{id}`, `GET /admin/users`,
+        `DELETE /admin/users/{id}`, `POST /admin/users/{id}/disable|enable|reset`,
+        `GET /admin/users/{id}/sessions`, `DELETE /admin/sessions/{id}`,
+        `POST /admin/signing-keys/rotate`. A new invite or reset is 201 `{id, url, expires_at}`
+        (`dto.InviteLink`, `url` a `dto.InviteURL`) with no `Location` (no route serves one
+        invite); the changes and the rotation are 204 (the new kid is not returned). Lists are
+        unpaged `{items}` (`dto.Items[T]`; one owner's accounts are few). Bodies:
+        `request.CreateInvite {ttl?}`, `request.CreateReset {scope, ttl?}`; the TTL bounds are
+        `request.MinInviteTTL`/`MaxInviteTTL`, checked equal to the controller's in convert's
+        tests. Missing accounts, invites and sessions are 404 with their own details. `api.New`
+        refuses controllers without `Auth`; `handlers.SourceAction` became `IDAction`, shared
+        by the source and account changes. The integration seed adds a users.db with two
+        accounts (one disabled), a session and an invite (`seed_auth_test.go`).
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
       auth rate limits; `Cache-Control: no-store`.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
       `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit
       exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the
       `cf_ray` log field, and the OWASP API1/API2/API5 write-up.
+    - [ ] **16h. Automatic signing-key rotation** (asked for by the user 2026-11-22). `serve`
+      rotates the access-token signing key once it is `auth.signing_key_rotation` old
+      (default 30d, allowed 1d..365d), so a leaked key that nobody noticed stops working without
+      an admin having to act. `POST /admin/signing-keys/rotate` stays for rotating at once.
+      - Why 30d: NIST SP 800-57 Part 1 Rev. 5 §5.3.6 / Table 1 recommends a private
+        signature key's originator-usage period be "a maximum cryptoperiod of about one to three
+        years", and says shorter periods may be warranted depending on the application. That is
+        an upper limit, not a target, so the config maximum is 365d (the low end of that range).
+        Rotating costs almost nothing here: a retired key only has to verify for
+        `access_ttl + auth.JWTLeeway` (about 15m), clients never pin it (there is no public
+        JWKS) and nothing has to be redistributed. So the default is much shorter than the
+        ceiling, which keeps the window small if users.db leaks.
+      - Controller: `RotateSigningKeyIfDue(ctx) (rotated bool, err error)` on `Auth`. It checks
+        the active key's `created_at + signing_key_rotation <= now` and rotates under `keysMu`
+        in the same flow as `RotateSigningKey` (one transaction; the check is repeated inside it
+        so two triggers can't rotate twice). It is clock-driven, so tests fake the clock: not
+        due, due, due twice in a row (one rotation), and a manual rotation resets the age.
+      - `serve`: one check at startup (a server that was down past the due date rotates
+        straight away), then a ticker (hourly; the rotation timing only needs to be within an
+        hour), stopped on shutdown. Each rotation logs the existing `auth event`
+        `signing_key_rotated` with `reason=scheduled` (or `admin` for the route); a failed
+        check logs at warn and is retried on the next tick. The kid isn't logged.
+      - Config: `auth.signing_key_rotation` (a duration, validated 24h..8760h), in
+        `ao3mirror.example.yaml`, the `auth:` block above and the startup log.
   - Verification beyond `make check`:
     - Unit: RFC 6238 Appendix B and RFC 4226 Appendix D vectors; Argon2 PHC round trip and
       rehash; JWT rejects `alg:none`, HS256 keyed with the public key, an unknown `kid`, a wrong

@@ -597,6 +597,49 @@ func (s *CountRange) SetMax(val OptInt) {
 	s.Max = val
 }
 
+// Ref: #/components/schemas/CreateInviteRequest
+type CreateInviteRequest struct {
+	// How long the invite stays usable, 1m..168h; omitted is `auth.invite_ttl`.
+	TTL OptDuration `json:"ttl"`
+}
+
+// GetTTL returns the value of TTL.
+func (s *CreateInviteRequest) GetTTL() OptDuration {
+	return s.TTL
+}
+
+// SetTTL sets the value of TTL.
+func (s *CreateInviteRequest) SetTTL(val OptDuration) {
+	s.TTL = val
+}
+
+// Ref: #/components/schemas/CreateResetRequest
+type CreateResetRequest struct {
+	Scope ResetScope `json:"scope"`
+	// How long the link stays usable, 1m..168h; omitted is `auth.invite_ttl`.
+	TTL OptDuration `json:"ttl"`
+}
+
+// GetScope returns the value of Scope.
+func (s *CreateResetRequest) GetScope() ResetScope {
+	return s.Scope
+}
+
+// GetTTL returns the value of TTL.
+func (s *CreateResetRequest) GetTTL() OptDuration {
+	return s.TTL
+}
+
+// SetScope sets the value of Scope.
+func (s *CreateResetRequest) SetScope(val ResetScope) {
+	s.Scope = val
+}
+
+// SetTTL sets the value of TTL.
+func (s *CreateResetRequest) SetTTL(val OptDuration) {
+	s.TTL = val
+}
+
 // A stored creator: one AO3 pseud, as the `creators` items of a work. `user`, `pseud` and
 // `mirror_source_url` are content, hashed unless revealed; hashes match a work's `creators` in the
 // same key epoch.
@@ -1074,7 +1117,16 @@ func (s *DateRange) SetTo(val OptDate) {
 	s.To = val
 }
 
+// DeleteUserNoContent is response for DeleteUser operation.
+type DeleteUserNoContent struct{}
+
+// DisableUserNoContent is response for DisableUser operation.
+type DisableUserNoContent struct{}
+
 type Duration time.Duration
+
+// EnableUserNoContent is response for EnableUser operation.
+type EnableUserNoContent struct{}
 
 // Ref: #/components/schemas/Estimate
 type Estimate struct {
@@ -1259,6 +1311,207 @@ func (s *HealthStatus) UnmarshalText(data []byte) error {
 }
 
 type ID int
+
+// Ref: #/components/schemas/Invite
+type Invite struct {
+	ID   ID         `json:"id"`
+	Kind InviteKind `json:"kind"`
+	// A reset's account; omitted for a signup.
+	UserID OptID `json:"user_id"`
+	// What a reset replaces; omitted for a signup.
+	Scope     OptResetScope `json:"scope"`
+	CreatedAt Timestamp     `json:"created_at"`
+	ExpiresAt Timestamp     `json:"expires_at"`
+	UsedAt    OptTimestamp  `json:"used_at"`
+	// The account the invite created or reset; omitted when unused or that account was deleted.
+	UsedBy    OptID        `json:"used_by"`
+	RevokedAt OptTimestamp `json:"revoked_at"`
+}
+
+// GetID returns the value of ID.
+func (s *Invite) GetID() ID {
+	return s.ID
+}
+
+// GetKind returns the value of Kind.
+func (s *Invite) GetKind() InviteKind {
+	return s.Kind
+}
+
+// GetUserID returns the value of UserID.
+func (s *Invite) GetUserID() OptID {
+	return s.UserID
+}
+
+// GetScope returns the value of Scope.
+func (s *Invite) GetScope() OptResetScope {
+	return s.Scope
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *Invite) GetCreatedAt() Timestamp {
+	return s.CreatedAt
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *Invite) GetExpiresAt() Timestamp {
+	return s.ExpiresAt
+}
+
+// GetUsedAt returns the value of UsedAt.
+func (s *Invite) GetUsedAt() OptTimestamp {
+	return s.UsedAt
+}
+
+// GetUsedBy returns the value of UsedBy.
+func (s *Invite) GetUsedBy() OptID {
+	return s.UsedBy
+}
+
+// GetRevokedAt returns the value of RevokedAt.
+func (s *Invite) GetRevokedAt() OptTimestamp {
+	return s.RevokedAt
+}
+
+// SetID sets the value of ID.
+func (s *Invite) SetID(val ID) {
+	s.ID = val
+}
+
+// SetKind sets the value of Kind.
+func (s *Invite) SetKind(val InviteKind) {
+	s.Kind = val
+}
+
+// SetUserID sets the value of UserID.
+func (s *Invite) SetUserID(val OptID) {
+	s.UserID = val
+}
+
+// SetScope sets the value of Scope.
+func (s *Invite) SetScope(val OptResetScope) {
+	s.Scope = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *Invite) SetCreatedAt(val Timestamp) {
+	s.CreatedAt = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *Invite) SetExpiresAt(val Timestamp) {
+	s.ExpiresAt = val
+}
+
+// SetUsedAt sets the value of UsedAt.
+func (s *Invite) SetUsedAt(val OptTimestamp) {
+	s.UsedAt = val
+}
+
+// SetUsedBy sets the value of UsedBy.
+func (s *Invite) SetUsedBy(val OptID) {
+	s.UsedBy = val
+}
+
+// SetRevokedAt sets the value of RevokedAt.
+func (s *Invite) SetRevokedAt(val OptTimestamp) {
+	s.RevokedAt = val
+}
+
+type InviteKind string
+
+const (
+	InviteKindSignup InviteKind = "signup"
+	InviteKindReset  InviteKind = "reset"
+)
+
+// AllValues returns all InviteKind values.
+func (InviteKind) AllValues() []InviteKind {
+	return []InviteKind{
+		InviteKindSignup,
+		InviteKindReset,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s InviteKind) MarshalText() ([]byte, error) {
+	switch s {
+	case InviteKindSignup:
+		return []byte(s), nil
+	case InviteKindReset:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *InviteKind) UnmarshalText(data []byte) error {
+	switch InviteKind(data) {
+	case InviteKindSignup:
+		*s = InviteKindSignup
+		return nil
+	case InviteKindReset:
+		*s = InviteKindReset
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/InviteLink
+type InviteLink struct {
+	ID ID `json:"id"`
+	// `{api.public_url}/signup#token=…` or `/reset#token=…` (verbatim; the token is in the fragment,
+	// so it never reaches a proxy or server log). Shown only here.
+	URL       string    `json:"url"`
+	ExpiresAt Timestamp `json:"expires_at"`
+}
+
+// GetID returns the value of ID.
+func (s *InviteLink) GetID() ID {
+	return s.ID
+}
+
+// GetURL returns the value of URL.
+func (s *InviteLink) GetURL() string {
+	return s.URL
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *InviteLink) GetExpiresAt() Timestamp {
+	return s.ExpiresAt
+}
+
+// SetID sets the value of ID.
+func (s *InviteLink) SetID(val ID) {
+	s.ID = val
+}
+
+// SetURL sets the value of URL.
+func (s *InviteLink) SetURL(val string) {
+	s.URL = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *InviteLink) SetExpiresAt(val Timestamp) {
+	s.ExpiresAt = val
+}
+
+// Ref: #/components/schemas/InviteList
+type InviteList struct {
+	Items []Invite `json:"items"`
+}
+
+// GetItems returns the value of Items.
+func (s *InviteList) GetItems() []Invite {
+	return s.Items
+}
+
+// SetItems sets the value of Items.
+func (s *InviteList) SetItems(val []Invite) {
+	s.Items = val
+}
 
 // Ref: #/components/schemas/Job
 type Job struct {
@@ -3799,6 +4052,52 @@ func (o OptPollDetail) Or(d PollDetail) PollDetail {
 	return d
 }
 
+// NewOptResetScope returns new OptResetScope with value set to v.
+func NewOptResetScope(v ResetScope) OptResetScope {
+	return OptResetScope{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptResetScope is optional ResetScope.
+type OptResetScope struct {
+	Value ResetScope
+	Set   bool
+}
+
+// IsSet returns true if OptResetScope was set.
+func (o OptResetScope) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptResetScope) Reset() {
+	var v ResetScope
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptResetScope) SetTo(v ResetScope) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptResetScope) Get() (v ResetScope, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptResetScope) Or(d ResetScope) ResetScope {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptSeriesInfoDetail returns new OptSeriesInfoDetail with value set to v.
 func NewOptSeriesInfoDetail(v SeriesInfoDetail) OptSeriesInfoDetail {
 	return OptSeriesInfoDetail{
@@ -4995,8 +5294,67 @@ func (s *RequestKind) UnmarshalText(data []byte) error {
 	}
 }
 
+// What a reset replaces.
+// Ref: #/components/schemas/ResetScope
+type ResetScope string
+
+const (
+	ResetScopePassword ResetScope = "password"
+	ResetScopeTotp     ResetScope = "totp"
+	ResetScopeBoth     ResetScope = "both"
+)
+
+// AllValues returns all ResetScope values.
+func (ResetScope) AllValues() []ResetScope {
+	return []ResetScope{
+		ResetScopePassword,
+		ResetScopeTotp,
+		ResetScopeBoth,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ResetScope) MarshalText() ([]byte, error) {
+	switch s {
+	case ResetScopePassword:
+		return []byte(s), nil
+	case ResetScopeTotp:
+		return []byte(s), nil
+	case ResetScopeBoth:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ResetScope) UnmarshalText(data []byte) error {
+	switch ResetScope(data) {
+	case ResetScopePassword:
+		*s = ResetScopePassword
+		return nil
+	case ResetScopeTotp:
+		*s = ResetScopeTotp
+		return nil
+	case ResetScopeBoth:
+		*s = ResetScopeBoth
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // ResumeSourceNoContent is response for ResumeSource operation.
 type ResumeSourceNoContent struct{}
+
+// RevokeInviteNoContent is response for RevokeInvite operation.
+type RevokeInviteNoContent struct{}
+
+// RevokeSessionNoContent is response for RevokeSession operation.
+type RevokeSessionNoContent struct{}
+
+// RotateSigningKeyNoContent is response for RotateSigningKey operation.
+type RotateSigningKeyNoContent struct{}
 
 // A stored series. Strings other than the `_on`/`_at` dates are content (or a URL), hashed unless
 // revealed. Lists are `[]` when empty; optional fields are omitted when unset. `complete_locally`
@@ -5287,6 +5645,71 @@ func (s *SeriesInfoDetail) SetKnownWorksRefreshed(val NilInt) {
 // SetMembersSeen sets the value of MembersSeen.
 func (s *SeriesInfoDetail) SetMembersSeen(val NilInt) {
 	s.MembersSeen = val
+}
+
+// Ref: #/components/schemas/Session
+type Session struct {
+	ID        ID        `json:"id"`
+	CreatedAt Timestamp `json:"created_at"`
+	// The last login or refresh.
+	LastUsedAt Timestamp `json:"last_used_at"`
+	// When the session ends unless refreshed (never past the login plus `auth.max_session_age`).
+	ExpiresAt Timestamp `json:"expires_at"`
+}
+
+// GetID returns the value of ID.
+func (s *Session) GetID() ID {
+	return s.ID
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *Session) GetCreatedAt() Timestamp {
+	return s.CreatedAt
+}
+
+// GetLastUsedAt returns the value of LastUsedAt.
+func (s *Session) GetLastUsedAt() Timestamp {
+	return s.LastUsedAt
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *Session) GetExpiresAt() Timestamp {
+	return s.ExpiresAt
+}
+
+// SetID sets the value of ID.
+func (s *Session) SetID(val ID) {
+	s.ID = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *Session) SetCreatedAt(val Timestamp) {
+	s.CreatedAt = val
+}
+
+// SetLastUsedAt sets the value of LastUsedAt.
+func (s *Session) SetLastUsedAt(val Timestamp) {
+	s.LastUsedAt = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *Session) SetExpiresAt(val Timestamp) {
+	s.ExpiresAt = val
+}
+
+// Ref: #/components/schemas/SessionList
+type SessionList struct {
+	Items []Session `json:"items"`
+}
+
+// GetItems returns the value of Items.
+func (s *SessionList) GetItems() []Session {
+	return s.Items
+}
+
+// SetItems sets the value of Items.
+func (s *SessionList) SetItems(val []Session) {
+	s.Items = val
 }
 
 // SetSourceSettingsNoContent is response for SetSourceSettings operation.
@@ -7632,6 +8055,116 @@ func (s *TagType) UnmarshalText(data []byte) error {
 }
 
 type Timestamp time.Time
+
+// Ref: #/components/schemas/User
+type User struct {
+	ID ID `json:"id"`
+	// Verbatim (an account name, not fanwork).
+	Username          string       `json:"username"`
+	CreatedAt         Timestamp    `json:"created_at"`
+	LastLoginAt       OptTimestamp `json:"last_login_at"`
+	PasswordChangedAt OptTimestamp `json:"password_changed_at"`
+	// When the account was disabled; omitted when it is enabled.
+	DisabledAt OptTimestamp `json:"disabled_at"`
+	// Consecutive failed password or second-factor attempts.
+	FailedAttempts    int `json:"failed_attempts"`
+	RecoveryCodesLeft int `json:"recovery_codes_left"`
+}
+
+// GetID returns the value of ID.
+func (s *User) GetID() ID {
+	return s.ID
+}
+
+// GetUsername returns the value of Username.
+func (s *User) GetUsername() string {
+	return s.Username
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *User) GetCreatedAt() Timestamp {
+	return s.CreatedAt
+}
+
+// GetLastLoginAt returns the value of LastLoginAt.
+func (s *User) GetLastLoginAt() OptTimestamp {
+	return s.LastLoginAt
+}
+
+// GetPasswordChangedAt returns the value of PasswordChangedAt.
+func (s *User) GetPasswordChangedAt() OptTimestamp {
+	return s.PasswordChangedAt
+}
+
+// GetDisabledAt returns the value of DisabledAt.
+func (s *User) GetDisabledAt() OptTimestamp {
+	return s.DisabledAt
+}
+
+// GetFailedAttempts returns the value of FailedAttempts.
+func (s *User) GetFailedAttempts() int {
+	return s.FailedAttempts
+}
+
+// GetRecoveryCodesLeft returns the value of RecoveryCodesLeft.
+func (s *User) GetRecoveryCodesLeft() int {
+	return s.RecoveryCodesLeft
+}
+
+// SetID sets the value of ID.
+func (s *User) SetID(val ID) {
+	s.ID = val
+}
+
+// SetUsername sets the value of Username.
+func (s *User) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *User) SetCreatedAt(val Timestamp) {
+	s.CreatedAt = val
+}
+
+// SetLastLoginAt sets the value of LastLoginAt.
+func (s *User) SetLastLoginAt(val OptTimestamp) {
+	s.LastLoginAt = val
+}
+
+// SetPasswordChangedAt sets the value of PasswordChangedAt.
+func (s *User) SetPasswordChangedAt(val OptTimestamp) {
+	s.PasswordChangedAt = val
+}
+
+// SetDisabledAt sets the value of DisabledAt.
+func (s *User) SetDisabledAt(val OptTimestamp) {
+	s.DisabledAt = val
+}
+
+// SetFailedAttempts sets the value of FailedAttempts.
+func (s *User) SetFailedAttempts(val int) {
+	s.FailedAttempts = val
+}
+
+// SetRecoveryCodesLeft sets the value of RecoveryCodesLeft.
+func (s *User) SetRecoveryCodesLeft(val int) {
+	s.RecoveryCodesLeft = val
+}
+
+// Ref: #/components/schemas/UserList
+type UserList struct {
+	Items []User `json:"items"`
+}
+
+// GetItems returns the value of Items.
+func (s *UserList) GetItems() []User {
+	return s.Items
+}
+
+// SetItems sets the value of Items.
+func (s *UserList) SetItems(val []User) {
+	s.Items = val
+}
 
 // Ref: #/components/schemas/Version
 type Version struct {
