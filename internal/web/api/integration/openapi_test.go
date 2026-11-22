@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,7 +38,35 @@ type openAPISpec struct {
 	Components    struct {
 		Responses map[string]specResponse `yaml:"responses"`
 		Headers   map[string]specHeader   `yaml:"headers"`
+		Schemas   map[string]specSchema   `yaml:"schemas"`
 	} `yaml:"components"`
+}
+
+// specSchema is the part of a schema TestOpenAPIVerbatimPatterns reads.
+type specSchema struct {
+	Ref        string                `yaml:"$ref"`
+	AllOf      []specSchema          `yaml:"allOf"`
+	Pattern    string                `yaml:"pattern"`
+	Items      *specSchema           `yaml:"items"`
+	Properties map[string]specSchema `yaml:"properties"`
+}
+
+// schema resolves s: a $ref to its component, and a single allOf (a $ref with its own
+// description) to its member, unless s sets the pattern itself.
+func (s *openAPISpec) schema(sc specSchema) specSchema {
+	for range 8 { // refs don't nest deeper
+		switch {
+		case sc.Pattern != "":
+			return sc
+		case sc.Ref != "":
+			sc = s.Components.Schemas[strings.TrimPrefix(sc.Ref, "#/components/schemas/")]
+		case len(sc.AllOf) == 1:
+			sc = sc.AllOf[0]
+		default:
+			return sc
+		}
+	}
+	return sc
 }
 
 // specOp is one operation. Problems (x-problems) are the problem types it returns besides the
@@ -60,6 +89,9 @@ type specResponse struct {
 type specHeader struct {
 	Ref      string `yaml:"$ref"`
 	Required bool   `yaml:"required"`
+	Schema   struct {
+		Enum []string `yaml:"enum"`
+	} `yaml:"schema"`
 }
 
 var openAPIMethods = map[string]string{
@@ -193,6 +225,44 @@ func TestOpenAPIProblemTypes(t *testing.T) {
 	}
 }
 
+// TestOpenAPIVerbatimPatterns: each dto Verbatim field has, in the spec schema named after its
+// type, its VerbatimPattern anchored (^…$), so a generated client accepts exactly what the
+// enforcer passes. (Verbatim fields are only in the auth DTOs listed here.)
+func TestOpenAPIVerbatimPatterns(t *testing.T) {
+	spec, err := loadOpenAPI()
+	require.NoError(t, err)
+	checked := map[reflect.Type]bool{}
+	for _, v := range []any{
+		dto.Enrollment{}, dto.RecoveryCodes{}, dto.LoginChallenge{}, dto.TokenPair{},
+		dto.InviteLink{}, dto.User{}, dto.Account{},
+	} {
+		typ := reflect.TypeOf(v)
+		schema, ok := spec.Components.Schemas[typ.Name()]
+		require.True(t, ok, "components.schemas.%s", typ.Name())
+		for sf := range typ.Fields() {
+			ft := sf.Type
+			if ft.Kind() == reflect.Slice {
+				ft = ft.Elem()
+			}
+			vb, ok := reflect.TypeAssert[interface{ VerbatimPattern() string }](reflect.Zero(ft))
+			if !ok {
+				continue
+			}
+			checked[ft] = true
+			key, _, _ := strings.Cut(sf.Tag.Get("json"), ",")
+			prop, ok := schema.Properties[key]
+			require.True(t, ok, "%s.%s: not in the spec", typ.Name(), key)
+			prop = spec.schema(prop)
+			if sf.Type.Kind() == reflect.Slice {
+				require.NotNil(t, prop.Items, "%s.%s: not an array", typ.Name(), key)
+				prop = spec.schema(*prop.Items)
+			}
+			assert.Equal(t, "^"+vb.VerbatimPattern()+"$", prop.Pattern, "%s.%s (%s)", typ.Name(), key, ft.Name())
+		}
+	}
+	assert.Len(t, checked, 9, "every dto Verbatim type is checked") // dto/verbatim.go
+}
+
 // TestRequestProblems sends every route the requests any route of its kind refuses before the
 // handler: a cross-origin browser request to an unsafe method (403 forbidden), and to a route
 // taking a body, one without the JSON media type (415) and one over the size cap (413).
@@ -245,18 +315,28 @@ func TestRequestProblems(t *testing.T) {
 	}
 }
 
-// standardHeaders are response headers the spec does not declare: entity headers, the security
-// headers every response carries (docs/part2-api.md, "HTTP hardening") and Cache-Control
-// (no-store on revealed responses), which are for browsers and caches, not API clients.
+// standardHeaders are response headers the spec does not declare: entity headers and the
+// security headers every response carries (docs/part2-api.md, "HTTP hardening"), which are for
+// browsers, not API clients. Cache-Control is declared (x-common-headers): no-store is part of
+// the token responses' contract (RFC 6749 §5.1).
 var standardHeaders = []string{
 	"Content-Type", "Content-Length", "Content-Security-Policy", "X-Content-Type-Options",
-	"Referrer-Policy", "Cross-Origin-Resource-Policy", "Cache-Control",
+	"Referrer-Policy", "Cross-Origin-Resource-Policy",
+}
+
+// statusHeaders are headers every response with the status must carry, whatever the operation
+// declares: a 401 names the scheme (RFC 9110 §15.5.2) and a 429 says when to retry (RFC 6585
+// §4; every limit, the login backoff included, knows it).
+var statusHeaders = map[int]string{
+	http.StatusUnauthorized:    "WWW-Authenticate",
+	http.StatusTooManyRequests: "Retry-After",
 }
 
 // specChecker checks every response the integration tests see against docs/api/openapi.yaml
 // (TestMain installs it as the testutil observer). Each response must match its operation: a
-// declared status, a declared content type, only declared headers and every required one, and
-// for a problem a type the operation lists. It also records what it saw, so a full run can
+// declared status, a declared content type, only declared headers, every required one and the
+// statusHeaders, a value from a header's enum when it has one, and for a problem a type the
+// operation lists. It also records what it saw, so a full run can
 // report the statuses and problem types the spec lists but no test produced.
 type specChecker struct {
 	spec   *openAPISpec
@@ -357,6 +437,9 @@ func (c *specChecker) observe(tb testing.TB, req *http.Request, w *httptest.Resp
 	}
 	c.checkContent(tb, rt, status, ct, c.spec.response(resp))
 	c.checkHeaders(tb, rt, status, w.Header(), c.spec.headers(resp))
+	if name, ok := statusHeaders[w.Code]; ok && w.Header().Get(name) == "" {
+		tb.Errorf("openapi: %s %s: header %s is missing", rt, status, name)
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -388,9 +471,15 @@ func (c *specChecker) checkContent(tb testing.TB, rt, status, ct string, resp sp
 
 func (c *specChecker) checkHeaders(tb testing.TB, rt, status string, got http.Header, declared map[string]specHeader) {
 	tb.Helper()
-	for name := range got {
-		if _, ok := declared[name]; !ok && !slices.Contains(standardHeaders, name) {
+	for name, vals := range got {
+		h, ok := declared[name]
+		if !ok && !slices.Contains(standardHeaders, name) {
 			tb.Errorf("openapi: %s %s: header %s is not declared", rt, status, name)
+		}
+		for _, v := range vals {
+			if len(h.Schema.Enum) > 0 && !slices.Contains(h.Schema.Enum, v) {
+				tb.Errorf("openapi: %s %s: header %s: %q is not in its enum", rt, status, name, v)
+			}
 		}
 	}
 	for name, h := range declared {

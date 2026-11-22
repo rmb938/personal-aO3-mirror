@@ -2167,9 +2167,43 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       request deadline; memory stays near 2 × 64 MiB).
     - A curl script the user runs against `serve --no-reveal`, as in 15b (entry-point limits
       only; no live auth flows are run by Claude).
-  - [ ] **17c. OpenAPI audit of stage 16's routes**: statuses, `x-problems`, `security`,
+  - [x] **17c. OpenAPI audit of stage 16's routes**: statuses, `x-problems`, `security`,
     `Cache-Control: no-store`, `Retry-After` and body limits on every auth, account and
-    admin-user operation; fix drift; `make generate`.
+    admin-user operation; fix drift; `make generate`. As built:
+    - Statuses, `x-problems` and `security` were already right. 15c's checker covers them:
+      every listed status and problem type is produced by a test on a full run, no response
+      has an unlisted one, and `TestOpenAPISecurity` ties `security: []` to `route.Anonymous`.
+      Each route's controller errors were also checked against `ProblemFor`, by hand. Accepted:
+      `GET /account`, `GET /account/sessions` and `logout` can give 404 only when the account
+      is deleted between the token check and the handler. The controller's `ErrInviteTTL` and
+      `ErrResetScope` map to 500, but the request types refuse the same values first (a
+      convert test keeps the bounds equal).
+    - `Cache-Control: no-store` is now declared, as the required `x-common-headers` entry
+      `CacheControl` (enum `[no-store]`). Since stage 16 `securityHeaders` sets it on every
+      response, and for token responses it is part of the contract (RFC 6749 §5.1). 15c left
+      it undeclared, back when only revealed responses had it. No client code changes
+      (x-common-headers generates nothing).
+    - The spec checker (`integration/openapi_test.go`) now also requires a header's value to
+      be in its `enum` when it has one (`Cache-Control`, `X-Fanwork`, `Accept-Query`, the
+      three `WWW-Authenticate` forms). It also requires `WWW-Authenticate` on every 401
+      (RFC 9110 §15.5.2) and `Retry-After` on every 429, the login and reauth backoffs
+      included.
+    - Drift fixed: `TokenPair.access_token`'s spec pattern was a loose `eyJ….eyJ….{86}`. It is
+      now dto's `AccessToken` pattern. New `TestOpenAPIVerbatimPatterns`: each Verbatim field
+      of the auth DTOs has its type's `VerbatimPattern()`, anchored, as its spec `pattern`
+      (all 9 types). The client is regenerated (its validator follows the pattern).
+    - Body limits: every body route's 413 and 415 are in `TestRequestProblems` (stage 16 added
+      the auth routes to `routeSamples`). JSON Schema's `maxLength` counts characters but the
+      server counts 2048 bytes. `Password` already said so; `LoginRequest.password` and
+      `current_password` now say so too. The largest auth body inside the request bounds,
+      `PUT /account/password` with two 2048-byte passwords, is about 4.2 KB, under the 16 KiB
+      cap. Accepted: an encoder that escapes `<>&` as `<` (Go's `encoding/json`) can push
+      that body past the cap (413, not 422). This only happens with passwords far over the
+      policy's 128 characters, which are refused anyway.
+    - Kept as stage 16e built it: a new invite, a reset link and a confirmed signup are 201
+      without `Location`. RFC 9110 §15.3.2 makes it optional, and no route serves one invite or
+      the new account to a caller who isn't logged in. The spec's header comment now says
+      only a source add's 201/202/409 carry it.
   - [ ] **17d. Security review**, as in 15d, now including auth:
     - `/security-review` over the whole API, `internal/auth` and the auth controllers (not
       just a branch diff).

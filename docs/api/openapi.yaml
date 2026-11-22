@@ -62,10 +62,12 @@ security:
 # response headers, and declaring these on each response would add them to every generated
 # client result, so they are listed once here; the integration tests check every response
 # against this list plus the response's own headers. Responses declare only the headers a
-# client acts on: Location (201/202/409), Accept-Query on 200s, Retry-After on problems.
+# client acts on: Location (a source add's 201/202/409; a new invite or account has none, as
+# nothing serves it to GET), Accept-Query on 200s, Retry-After on problems.
 x-common-headers:
   Accept-Query: { $ref: "#/components/headers/AcceptQuery" }
   Allow: { $ref: "#/components/headers/Allow" }
+  Cache-Control: { $ref: "#/components/headers/CacheControl" }
   X-Fanwork: { $ref: "#/components/headers/XFanwork" }
   X-Fanwork-Key-Epoch: { $ref: "#/components/headers/XFanworkKeyEpoch" }
   X-Request-Id: { $ref: "#/components/headers/XRequestID" }
@@ -1361,8 +1363,9 @@ components:
       bearerFormat: JWT
       description: |
         An access token (valid for `auth.access_ttl`, default 15 minutes) from `POST
-        /api/v1/auth/login/totp` or `/api/v1/auth/refresh` (RFC 6750 §2.1). Every request checks its session, so logout, a revoked session or a
-        disabled account stop it at once. Only the public listener reads it.
+        /api/v1/auth/login/totp` or `/api/v1/auth/refresh` (RFC 6750 §2.1). Every request
+        checks its session, so logout, a revoked session or a disabled account stop it at once.
+        Only the public listener reads it.
   parameters:
     ID:
       name: id
@@ -1387,6 +1390,13 @@ components:
     Allow:
       description: On a 405, the methods the path takes.
       schema: { type: string }
+    CacheControl:
+      description: |
+        On every response: nothing (tokens, secrets, recovery codes, revealed content) is kept
+        by a browser, proxy or Cloudflare cache (RFC 9111 §5.2.2.5; RFC 6749 §5.1 for token
+        responses).
+      required: true
+      schema: { type: string, enum: [no-store] }
     XFanwork:
       description: "`revealed` only for a request with a valid reveal parameter; otherwise `hashed`."
       required: true
@@ -3424,7 +3434,8 @@ components:
     Password:
       type: string
       description: |
-        8 to 128 characters after Unicode NFKC normalization (at most 2048 bytes as sent), no
+        8 to 128 characters after Unicode NFKC normalization (at most 2048 bytes of UTF-8 as
+        sent; `maxLength` can only count characters, so the server's byte bound is tighter), no
         control characters, not the username and not a common password. There are no
         composition rules.
       minLength: 1
@@ -3496,6 +3507,7 @@ components:
           pattern: "^[A-Za-z0-9_-]{3,32}$"
         password:
           type: string
+          description: At most 2048 bytes of UTF-8 (the server counts bytes, not characters).
           minLength: 1
           maxLength: 2048
     LoginTOTPRequest:
@@ -3529,6 +3541,7 @@ components:
       properties:
         current_password:
           type: string
+          description: At most 2048 bytes of UTF-8 (the server counts bytes, not characters).
           minLength: 1
           maxLength: 2048
         password:
@@ -3565,7 +3578,7 @@ components:
         access_token:
           type: string
           description: An EdDSA-signed JWT (verbatim). Treat it as opaque.
-          pattern: '^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{86}$'
+          pattern: '^eyJhbGciOiJFZERTQSIsImtpZCI6I[A-Za-z0-9_-]{22}iLCJ0eXAiOiJKV1QifQ\.eyJ[A-Za-z0-9_-]{16,700}\.[A-Za-z0-9_-]{85}[AQgw]$'
         token_type: { type: string, enum: [Bearer] }
         expires_in:
           type: integer

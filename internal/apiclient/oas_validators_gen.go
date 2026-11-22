@@ -4383,7 +4383,7 @@ func (s *TokenPair) Validate() error {
 			MaxLengthSet:  false,
 			Email:         false,
 			Hostname:      false,
-			Regex:         regexMap["^eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{86}$"],
+			Regex:         regexMap["^eyJhbGciOiJFZERTQSIsImtpZCI6I[A-Za-z0-9_-]{22}iLCJ0eXAiOiJKV1QifQ\\.eyJ[A-Za-z0-9_-]{16,700}\\.[A-Za-z0-9_-]{85}[AQgw]$"],
 			MinNumeric:    0,
 			MinNumericSet: false,
 			MaxNumeric:    0,

@@ -445,6 +445,7 @@ type ChangePasswordNoContent struct{}
 
 // Ref: #/components/schemas/ChangePasswordRequest
 type ChangePasswordRequest struct {
+	// At most 2048 bytes of UTF-8 (the server counts bytes, not characters).
 	CurrentPassword string `json:"current_password"`
 	// The new password.
 	Password Password `json:"password"`
@@ -2612,6 +2613,7 @@ func (s *LoginChallenge) SetExpiresAt(val Timestamp) {
 type LoginRequest struct {
 	// Letters in either case.
 	Username string `json:"username"`
+	// At most 2048 bytes of UTF-8 (the server counts bytes, not characters).
 	Password string `json:"password"`
 }
 
