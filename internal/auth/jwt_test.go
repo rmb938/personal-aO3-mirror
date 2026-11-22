@@ -157,8 +157,15 @@ func TestVerifyRejects(t *testing.T) {
 	// A tampered signature or payload.
 	tok := signEdDSA(t, key.private, key.ID, good())
 	parts := strings.Split(tok, ".")
+	// Replace the first character with another base64url one: its 6 bits are all signature
+	// bits, so the token still decodes and only the signature check can refuse it. (XOR-ing
+	// can produce '.' or a non-base64url byte, which is malformed, not a bad signature.)
 	sig := []byte(parts[2])
-	sig[0] ^= 'A' ^ 'B'
+	if sig[0] == 'A' {
+		sig[0] = 'B'
+	} else {
+		sig[0] = 'A'
+	}
 	_, err = v.Verify(parts[0] + "." + parts[1] + "." + string(sig))
 	requireReason(t, err, TokenBadSig)
 	forged := signEdDSA(t, other.private, key.ID, with("sub", "99"))
