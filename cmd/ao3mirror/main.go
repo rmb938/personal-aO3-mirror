@@ -36,9 +36,15 @@ commands:
                      (jobs and debug hide paths/errors as hashes unless --names)
   serve [--no-reveal]  run the JSON API (api: config); strings are hashed unless a request
                      asks to reveal; --no-reveal refuses that too (docs/part2-api.md)
+  invite ...         create/list/revoke signup invites
+  user ...           list/disable/enable/delete accounts, reset links, sessions
+  session revoke ID  end one session
+  auth rotate-key    start a new access-token signing key
+                     ('ao3mirror invite' for details of these four)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
 
-source, status, jobs and debug talk to the API's admin socket: 'ao3mirror serve' must be running.
+source, status, jobs, debug, invite, user, session and auth talk to the API's admin socket:
+'ao3mirror serve' must be running.
 `
 
 func main() {
@@ -73,6 +79,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if rest[0] == "source" && (len(rest) == 1 || rest[1] == "help" || rest[1] == "-h" || rest[1] == "--help") {
 		fmt.Fprint(stdout, sourceUsage)
+		return 0
+	}
+	if isAccountCommand(rest[0]) && (len(rest) == 1 || rest[1] == "help" || rest[1] == "-h" || rest[1] == "--help") {
+		fmt.Fprint(stdout, accountUsage)
 		return 0
 	}
 
@@ -132,7 +142,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer st.Close()
 		ctl := newControllers(cfg, logger, st, nil)
 		return runReparse(ctx, ctl, rest[1:], stdout, stderr)
-	case "source", "status", "jobs", "debug":
+	case "source", "status", "jobs", "debug", "invite", "user", "session", "auth":
 		// API clients: they talk to the admin socket of a running serve, never to the store.
 		a, err := openApp(cfg)
 		if err != nil {
@@ -146,8 +156,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runStatus(ctx, a, rest[1:], stdout, stderr)
 		case "jobs":
 			return runJobs(ctx, a, rest[1:], stdout, stderr)
-		default:
+		case "debug":
 			return runDebug(ctx, a, rest[1:], stdout, stderr)
+		default:
+			return runAccount(ctx, a, rest[0], rest[1:], stdout, stderr)
 		}
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", rest[0])
