@@ -14,9 +14,10 @@ Part 1 (the scraper) is done. Part 2 adds a JSON API that:
 - lets users add sources and view sources, jobs and status;
 - replaces the direct DB access of the admin CLI commands.
 
-It will eventually face the internet through Tailscale Funnel, which terminates TLS. So it needs
-rate limiting, strict input validation, bounded sizes and content-free logs from day one. Auth comes
-later (placeholder stage), before Funnel exposure.
+It will face the internet on a custom domain through a **Cloudflare Tunnel** (cloudflared on the
+same host, proxying to the loopback listener; Cloudflare terminates TLS). So it needs rate
+limiting, strict input validation, bounded sizes and content-free logs from day one. Auth (stage
+16) lands before the tunnel is enabled.
 
 The overriding constraint is the CLAUDE.md HARD RULE. The API must never expose fanwork content
 unless a real user asks for it per request. By default, every string the API returns is replaced
@@ -27,13 +28,14 @@ with a keyed hash by a mandatory response enforcer, so a handler bug cannot leak
 | Topic | Decision |
 |---|---|
 | Process | `ao3mirror serve` is a separate process from `run`. It never builds an `httpx` client, so the internet-facing process cannot reach AO3. It shares the DB the same way the CLI does. |
-| Listeners | **Public TCP** (the one Funnel exposes): browse, read, search, view sources/jobs/status, add source. **Admin unix socket** (`data/api/admin.sock`, 0600): every route plus admin ops (confirm, pause, resume, cancel, remove, refresh, settings, debug). |
+| Listeners | **Public TCP** (the one the Cloudflare Tunnel exposes; JWT auth from stage 16): browse, read, search, view sources/jobs/status, add source. **Admin unix socket** (`data/api/admin.sock`, 0600): every route plus admin ops (confirm, pause, resume, cancel, remove, refresh, settings, debug). |
 | CLI | The source, status, jobs and debug commands become API clients of the admin socket. They fail clearly if `serve` isn't running. `run`, `reparse`, `fetch-work`, `config`, `dev` and `version` stay direct. |
 | Reveal | `reveal_fanwork=1` is the only way to get real content, per request, on every route. No flag, config or header reveals globally. |
 | Strict server flag | `serve --no-reveal` makes the server refuse reveal (403 `reveal_disabled`). It can only make the server stricter. The guard forces it on every `serve` that Claude starts. |
 | Search | Free text and complex criteria go in a JSON body using **QUERY** (RFC 10008, June 2026). There is no POST alias. Free-text fields (`q`, name lookups) return 400 `reveal-required` without reveal. |
 | Router | `github.com/go-chi/chi/v5` (v5.5.0) for sub-routers and middleware. It supports QUERY natively (`r.Query(pattern, h)`, `mQUERY` in `tree.go`), so it needs no `RegisterMethod`. `github.com/go-chi/httprate` (v0.16.1) for rate limits. Run `go list -m X@latest` again when adding them. |
-| Auth | Placeholder stage only. No design now. A future `users.db` is separate from meta/content. |
+| Auth | Stage 16: invite-only users in a separate `users.db`, password + mandatory TOTP, short-lived EdDSA JWT bearer tokens plus rotating refresh tokens. The admin socket needs no credential (its file permissions are the boundary). See stage 16. |
+| Exposure | Cloudflare Tunnel on a custom domain (replaces the earlier Tailscale Funnel plan). No Cloudflare Access: the app's own auth is the boundary. |
 
 ## Conventions (every stage follows these)
 
@@ -159,7 +161,8 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
    - A reveal-mode subtest checks that the content is actually returned (positive control).
 8. **Logs**:
    - access log: `req_id`, method, **route pattern**, numeric path IDs, status, bytes, duration,
-     client IP, `funnel` bool, `reveal` bool, query param **names** only;
+     client IP, `funnel` bool (replaced by `cf_ray` in stage 16g), `reveal` bool, query param
+     **names** only; from stage 16g also `user_id` and `session_id` (never usernames);
    - never query values, bodies or response strings.
 
 ### HTTP hardening
@@ -198,21 +201,28 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
   14. routes
 - **Client IP:** use `middleware.ClientIPFromXFF(api.trusted_proxies...)` (default
   `127.0.0.1/32`, `::1/128`) and read the result with `middleware.GetClientIPAddr`. I checked
-  that it matches what we need (chi v5.5.0 `middleware/client_ip.go`, tailscale
-  `ipn/ipnlocal/serve.go`):
-  - tailscaled proxies from loopback and **overwrites** XFF with the real source address
-    (`Header.Set`). With a loopback peer, chi walks XFF right to left past trusted entries and
-    takes the first untrusted one, which is the Funnel or tailnet client.
+  that it matches what we need (chi v5.5.0 `middleware/client_ip.go`; Cloudflare's
+  [HTTP request headers](https://developers.cloudflare.com/fundamentals/reference/http-request-headers/)
+  docs; [cloudflared#1426](https://github.com/cloudflare/cloudflared/issues/1426)):
+  - Cloudflare **appends** the connecting client's IP to any client-sent XFF (or sets XFF to it
+    when there is none), and cloudflared passes it on from a loopback peer. chi walks XFF right
+    to left past trusted entries and stops at the first untrusted one, which is the IP
+    Cloudflare appended. Spoofed entries to its left are never parsed. `CF-Connecting-IP` holds
+    the same IP; we keep chi's XFF walk (decided with the user, stage 16).
   - A non-loopback peer is the client itself, and its XFF is ignored, so it can't be spoofed by
     hitting the port directly. Duplicate XFF headers are merged, v4-mapped and zoned addresses
     are normalised, and a garbage entry fails closed.
   - Gap 1: a loopback peer with no XFF (a local curl), or the unix socket, gets **no** IP set.
     Our rate-limit key function maps that to a fixed `local` key (public listener) or `admin`
     (socket), so missing IPs share one bucket and never bypass the limit.
-  - Gap 2: if tailscaled ever proxied from a non-loopback address, every client would look like
-    one IP. A startup log line prints the trusted prefixes; verify once with a real Funnel request.
+  - Gap 2: if cloudflared ever ran on another host (a non-loopback peer), every client would look
+    like one IP. Keep cloudflared on the same host. A startup log line prints the trusted
+    prefixes; verify once with a real request through the tunnel.
+  - Gap 3: any local process can connect from loopback and send its own XFF. That is the same
+    trust as the admin socket's host, and auth (stage 16) still applies.
   - Do **not** use chi's `RealIP`, because it trusts headers blindly.
-  - `Tailscale-Funnel-Request: ?1` marks internet requests in the logs.
+  - `Tailscale-Funnel-Request: ?1` marks internet requests in the logs until stage 16g, which
+    logs `Cf-Ray` (`cf_ray`, ≤ 64 bytes of `[A-Za-z0-9-]`, else dropped) instead.
 - **Rate limits** (httprate, keyed by trusted IP, configurable): general 120/min; QUERY search
   30/min; `POST /sources` 10/hour. 429 responses carry `Retry-After`. The admin socket has its own,
   higher limits.
@@ -249,7 +259,7 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
 ### Config (`api:` section in `internal/config`, with validation)
 ```yaml
 api:
-  listen: 127.0.0.1:8080     # public listener; Funnel points here
+  listen: 127.0.0.1:8080     # public listener; the Cloudflare Tunnel points here
   admin_socket: api/admin.sock   # relative to data_dir
   trusted_proxies: ["127.0.0.1/32", "::1/128"]   # quoted: bare ::1 breaks a YAML flow list
   allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # public listener's Host names (stage 15d)
@@ -1559,12 +1569,174 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         treats AO3 as untrusted: `httpx` classifies responses (429/5xx/Cloudflare), the parser
         reports selector hits, images are size-capped and stored by hash with a validated
         `image/*` type, and stored text only leaves through the enforcer.
-- [ ] **16. Auth (placeholder, design later)**
-  - Must land before Funnel exposure. Expected: a separate `users.db`.
-  - Revisit then: reveal requiring auth, per-user rate limits, Tailscale identity headers
-    (`Tailscale-User-Login`) as an option for tailnet users, and moving admin ops off the
-    socket.
-  - Nothing is designed now.
+- [ ] **16. Auth** (designed with the user 2026-11-21). It must merge before the Cloudflare
+  Tunnel is enabled; until 16g the public listener stays loopback-only.
+  - **Model.** The admin socket stays credential-free: its 0700 directory and 0600 socket admit
+    only the same Linux user or root, and it ignores `Authorization`. On the public listener
+    every route except `GET /healthz` and the auth entry points needs a bearer JWT. Users are
+    invited by an admin, sign up with a username, password and mandatory TOTP, and log in in two
+    steps. A logged-in user can do everything the public listener offers, reveal included
+    (`--no-reveal` still wins). Everyone is equal: there are no roles, and admin work stays on
+    the socket. A cookie transport for the Part 3 UI comes later; `bearerToken(r)` is the single
+    extraction point so it can be added there.
+  - **Decisions made with the user:**
+
+    | Topic | Decision |
+    |---|---|
+    | Tokens | Access JWT, 15m, whose `sid` is checked against users.db on every request (revocation is immediate). Opaque refresh token, 30d, stored as SHA-256, rotated on each use; presenting the previous one revokes the session (reuse detection). |
+    | Signing | Ed25519 (`EdDSA`) via `github.com/golang-jwt/jwt/v5` (v5.3.1 when planned; run `go list -m …@latest` again). The key is stored in users.db with a `kid`. Rotation keeps the old public key for verification until `rotated_at + access_ttl`. |
+    | Enforcer | New verbatim **pattern types** in `dto` (`Token`, `Username`, `TOTPSecret`, `OTPAuthURI`, `RecoveryCode`, `InviteURL`): named string types with a `VerbatimPattern() string` method, found by reflection like `EnumValues`. The enforcer passes a value only on a full regex match, else 500 (fail closed). Plain `string` fields are still always hashed. Approved by the user as a change to the enforcer. |
+    | Password | 8..128 runes after NFKC (NIST SP 800-63B-4's minimum with MFA), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL). Argon2id with OWASP's m=19 MiB, t=2, p=1, in PHC string format; rehashed on login when the parameters change. |
+    | TOTP | Mandatory. Hand-rolled RFC 4226/6238 on `crypto/hmac` (SHA1, 6 digits, 30s, ±1 step, 20-byte secret), tested with the RFC appendix vectors. It returns the matched step and `last_totp_step` blocks replay (pquerna/otp v1.5.0's `totp.ValidateCustom` returns only a bool). |
+    | TOTP at rest | AES-256-GCM, AAD = user ID, key derived from `data/api/auth.key` (32 random bytes, 0600, in the 0700 socket dir), never stored in users.db. Losing the file means every user needs a 2FA reset: back it up with users.db. |
+    | Recovery | 10 single-use recovery codes (16 base32 chars, `xxxx-xxxx-xxxx-xxxx`), shown once, stored as HMAC values; an admin can also issue a reset link. |
+    | Invites | `{api.public_url}/signup#token=…`. The token is in the fragment, so it never reaches Cloudflare or server logs. Single use, TTL 24h by default (max 7d), stored as SHA-256. |
+    | Lockout | Per-account exponential backoff after failed password or TOTP attempts (1s doubling, capped at 15m), reset on success; 100 consecutive failures disable the account until an admin enables it. A login challenge allows at most 5 TOTP tries. Unknown usernames get identical behaviour through an in-memory LRU keyed by HMAC(username), so responses and timing never reveal whether an account exists. Per-IP limits on the auth routes on top. |
+    | Client IP | Keep chi's `ClientIPFromXFF` from loopback (see "Client IP"). |
+    | Cloudflare Access | Not used. |
+    | Claude | Go tests only (temp stores). Manual checks against the real server are commands the user runs. |
+
+  - **Packages and layering:**
+    - `internal/auth` (new; no SQL, no HTTP): pure primitives, each unit-tested.
+      - `password.go`: Argon2id PHC hash/verify, `NeedsRehash`, the policy check
+        (`golang.org/x/text/unicode/norm`), and the embedded gzipped common-password list
+        (filtered to ≥ 8 chars, from a vetted MIT-licensed list; source and licence recorded
+        beside it). A semaphore allows 2 hashes at once and waits at most 5s (then 503), so a
+        login flood can't exhaust memory. A precomputed dummy hash is verified for unknown users.
+      - `totp.go`: `Generate`, `Verify(secret, code, now, lastStep) (step, ok)` with a
+        constant-time compare, and the `otpauth://` URI.
+      - `secrets.go`: loads or creates `auth.key`; HKDF-SHA256 subkeys `totp-enc`,
+        `recovery-hmac` and `name-hmac`.
+      - `tokens.go`: random opaque tokens (32 bytes, base64url) with prefixes `inv_`, `enr_`,
+        `chl_`, `rt_`, their SHA-256 for storage, and recovery codes.
+      - `jwt.go`: `Issuer`/`Verifier` over golang-jwt. Only `EdDSA` (`WithValidMethods`);
+        `WithIssuer(public_url)`, `WithAudience("ao3mirror-api")`, `WithExpirationRequired`,
+        `WithIssuedAt`, 30s leeway; the `kid` must be known. Claims: `sub` (user ID), `sid`,
+        `jti`, `iat`, `nbf`, `exp`.
+    - `internal/store`: users.db is a separate database with its own handle; `run` never opens
+      it. `store.OpenUsers(ctx, dir, opts) (*Users, error)`, migrations in `migrations/users/`,
+      the file and its -wal/-shm pre-created 0600. Transactions are `Users.InTx`/`InReadTx`
+      (`*UsersTx`/`*UsersReadTx`) under the txguard rules. Reuses `openDB` and `migrateTo`.
+    - `internal/controllers`: an `Auth` controller (`auth_*.go`) over `*store.Users`, the
+      secrets, the issuer/verifier, config and a clock. One exported method per intent plus
+      unexported tx helpers. Password hashing runs between transactions (read → hash → write),
+      never inside one.
+    - `internal/web/api`: handlers in `handlers/auth.go`, `account.go`, `admin_users.go`;
+      `request` types (`Login`, `LoginTOTP`, `Refresh`, `Signup`, `SignupConfirm`, `Reset`,
+      `ChangePassword`, `CreateInvite`, `CreateReset`); `dto` and pattern types; `convert/auth*.go`;
+      routes in `route`; details in `details.go`; problem sections in `docs/api/problems.md`.
+  - **users.db schema** (`0001_init.sql`):
+    - `users`: id, username (UNIQUE, lowercase), password_phc, totp_secret_enc,
+      last_totp_step, created_at, last_login_at, password_changed_at, disabled_at,
+      failed_attempts, next_attempt_at.
+    - `recovery_codes`: user_id, code_hmac, used_at.
+    - `invites`: id, token_sha256 (UNIQUE), kind (`signup`|`reset`), target_user_id,
+      reset_scope (`password`|`totp`|`both`), created_at, expires_at, used_at, used_by,
+      revoked_at.
+    - `enrollments` (a pending signup or reset between its two steps): token_sha256,
+      invite_id, username, password_phc, totp_secret_enc, expires_at (min(invite expiry, +15m)).
+      A new step 1 for the same invite replaces the row.
+    - `login_challenges`: token_sha256, user_id (NULL for an unknown user), expires_at (+5m),
+      attempts.
+    - `sessions`: id, user_id, refresh_sha256, prev_refresh_sha256, created_at, last_used_at
+      (updated on refresh, not per request), expires_at, revoked_at.
+    - `signing_keys`: kid, private_key, created_at, retired_at.
+  - **Flows** (JSON bodies through `runtime.DecodeJSON`; every token in a body, never a URL):
+    - Signup: `POST /api/v1/auth/signup` `{invite_token, username, password}` checks the invite,
+      the username (`[a-z0-9_-]{3,32}`, case-folded) and the password policy, and returns
+      `{enrollment_token, totp_secret, otpauth_uri, expires_at}` (a taken username is 409; signup
+      is invite-gated). `POST /auth/signup/confirm` `{enrollment_token, code}` re-checks the
+      invite and username, creates the user, consumes the invite and deletes the enrollment in
+      one transaction, and returns `{recovery_codes}`. The user then logs in.
+    - Reset: `POST /auth/reset` `{invite_token, password?}` (a new TOTP secret and URI when the
+      scope includes TOTP), then `POST /auth/reset/confirm`, shaped like signup confirm. A reset
+      revokes every session of that user.
+    - Login: `POST /auth/login` `{username, password}` → `{challenge_token, expires_at}`. An
+      unknown user, a wrong password and a disabled account all get the same 401
+      `invalid-credentials` with equal timing; backoff is 429 `rate-limited` with `Retry-After`.
+      `POST /auth/login/totp` `{challenge_token, code | recovery_code}` →
+      `{access_token, token_type: "Bearer", expires_in, refresh_token, refresh_expires_at}`.
+    - Refresh: `POST /auth/refresh` `{refresh_token}` → a new pair (rotation; reuse revokes).
+    - Account (bearer): `POST /auth/logout`; `GET /account` `{id, username, created_at,
+      recovery_codes_left}`; `PUT /account/password` (current password + TOTP; revokes the other
+      sessions); `POST /account/recovery-codes` (TOTP); `GET /account/sessions`;
+      `DELETE /account/sessions/{id}` (`WHERE id=? AND user_id=?`, else 404: API1).
+    - Admin (socket only): `POST|GET /admin/invites`, `DELETE /admin/invites/{id}`;
+      `GET /admin/users`, `POST /admin/users/{id}/disable|enable` (disable revokes sessions),
+      `DELETE /admin/users/{id}`; `POST /admin/users/{id}/reset` `{scope, ttl}` → `invite_url`;
+      `GET /admin/users/{id}/sessions`, `DELETE /admin/sessions/{id}`;
+      `POST /admin/signing-keys/rotate`.
+  - **HTTP integration:**
+    - The auth middleware runs on the public router only, after `crossOrigin` and before
+      `reveal`, so an unauthenticated request is always hashed. `Authorization: Bearer <jwt>`
+      exactly once, ≤ 2 KiB. It verifies the JWT, then one `InReadTx` checks the session (not
+      revoked or expired) and the user (not disabled), and puts `user_id`/`session_id` in
+      `reqState`.
+    - 401 `unauthorized` carries `WWW-Authenticate: Bearer realm="ao3mirror"`, plus
+      `error="invalid_token"` when a token was sent (RFC 6750 §3). New problem types:
+      `unauthorized`, `invalid-credentials`.
+    - Per-IP limits (configurable; admin socket 10×): login 10/min, login/totp 10/min, signup
+      and reset together 5/hour, refresh 30/min.
+    - `securityHeaders` adds `Cache-Control: no-store` to every response (RFC 6749 §5.1 for
+      tokens; Cloudflare must never cache).
+    - Logs: auth events carry `event`, `user_id`, an enum `reason`, `req_id` and the IP; never
+      usernames, passwords, codes or tokens. The sentinel log test covers all of them.
+    - `serve` refuses to start when `public_url`'s host is not in `allowed_hosts`. The
+      "public listener has no auth" startup warning goes.
+  - **Config:**
+    ```yaml
+    api:
+      public_url: https://mirror.example.com  # JWT iss + invite links; host must be in allowed_hosts
+      allowed_hosts: ["127.0.0.1", "::1", "localhost", "mirror.example.com"]
+      rate: { ..., login_per_min: 10, signup_per_hour: 5, refresh_per_min: 30 }
+    auth:   # replaces plan.md's placeholder `auth: { enabled: false }`; auth cannot be turned off
+      access_ttl: 15m          # 5m..1h
+      refresh_ttl: 720h        # 1h..2160h
+      invite_ttl: 24h          # default; max 168h
+      totp_issuer: ao3mirror   # [A-Za-z0-9 ._-]{1,32}
+    ```
+  - **CLI** (admin socket clients, regenerated `internal/apiclient`):
+    `ao3mirror invite create [--ttl 24h] | list | revoke <id>`;
+    `ao3mirror user list | disable <id> | enable <id> | delete <id> | reset <id> --scope … |
+    sessions <id>`; `ao3mirror session revoke <id>`; `ao3mirror auth rotate-key`. Usernames
+    print verbatim (a pattern type, not fanwork).
+  - **Cloudflare Tunnel setup** (the user, after 16g): run cloudflared on the same host with an
+    ingress rule for the custom domain to `http://127.0.0.1:8080`, leaving the Host header as
+    sent (no `httpHostHeader` override). Add the domain to `api.allowed_hosts` and set
+    `api.public_url`. Check the startup log's trusted prefixes and one request's `client_ip`.
+  - Split into seven PRs (the box is ticked by the last one):
+    - [x] **16a. Docs**: this design; Cloudflare Tunnel replaces Tailscale Funnel in the docs;
+      CLAUDE.md auth rules.
+    - [ ] **16b. `internal/auth` primitives**: password, TOTP, secrets, tokens, JWT, the
+      common-password list. New deps: `golang-jwt/jwt/v5`, `golang.org/x/crypto` (argon2,
+      hkdf), `golang.org/x/text` (promoted from indirect).
+    - [ ] **16c. Enforcer pattern types**: the `redact`/`runtime` registry and the dto pattern
+      types. The fuzz test keeps its guarantee (sentinels that can't match a pattern); new
+      tests: a value missing its pattern is a 500, and a pattern key never passes free text.
+    - [ ] **16d. users.db store + `Auth` controller**: schema, `OpenUsers`, transactions, every
+      controller method, with clock-driven tests (expiry, replay, backoff, key rotation,
+      refresh reuse).
+    - [ ] **16e. Admin API + CLI**: socket routes, OpenAPI (`x-admin-only`), `make generate`, CLI
+      commands.
+    - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
+      auth rate limits; `Cache-Control: no-store`.
+    - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
+      `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit
+      exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the
+      `cf_ray` log field, and the OWASP API1/API2/API5 write-up.
+  - Verification beyond `make check`:
+    - Unit: RFC 6238 Appendix B and RFC 4226 Appendix D vectors; Argon2 PHC round trip and
+      rehash; JWT rejects `alg:none`, HS256 keyed with the public key, an unknown `kid`, a wrong
+      `iss`/`aud`, an expired token, a future `nbf` and a tampered signature; AES-GCM AAD
+      mismatch; backoff timing with unknown and known names indistinguishable; refresh reuse
+      revokes; code replay is rejected; an invite can't be used twice or after it expires;
+      user A can't revoke user B's session (404).
+    - Integration: every non-exempt public route is 401 without a token; signup → login → API
+      call → refresh → logout against temp stores (no reveal); the admin socket works without a
+      token; every response matches OpenAPI.
+    - Manual (the user runs it): `ao3mirror invite create`, signup and login with curl against
+      `serve --no-reveal`, a bearer call to `/api/v1/sources`, then one request through the
+      tunnel on the custom domain.
 
 ## Verification (per stage, and overall)
 - `make check` passes (lint, vulncheck, `go test -race ./...`, guard tests). Tests use temp stores
