@@ -29,6 +29,15 @@ const (
 const (
 	prefixInvite     = "inv_"
 	prefixEnrollment = "enr_"
+	prefixChallenge  = "chl_"
+	prefixRefresh    = "rt_"
+)
+
+// Recovery code shape (internal/auth's NormalizeRecoveryCode): 16 base32 characters in either
+// case, with any dashes and spaces, at most maxRecoveryCodeBytes as typed.
+const (
+	recoveryCodeChars    = 16
+	maxRecoveryCodeBytes = 4 * recoveryCodeChars
 )
 
 var (
@@ -41,6 +50,11 @@ var (
 	detailPassword      = problem.NewDetail("is required, at most " + strconv.Itoa(MaxPasswordBytes) + " bytes")
 	detailResetPassword = problem.NewDetail("must be at most " + strconv.Itoa(MaxPasswordBytes) + " bytes")
 	detailTOTPCode      = problem.NewDetail("must be the " + strconv.Itoa(TOTPDigits) + "-digit code from the authenticator app")
+	detailChallenge     = tokenDetail(prefixChallenge, "the challenge_token the login returned")
+	detailRefreshToken  = tokenDetail(prefixRefresh, "the refresh_token the login or the last refresh returned")
+	detailRecoveryCode  = problem.NewDetail("must be a recovery code: " + strconv.Itoa(recoveryCodeChars) +
+		" characters of a-z and 2-7 (either case; dashes and spaces are ignored)")
+	detailSecondFactor = problem.NewDetail("exactly one of code and recovery_code is required")
 )
 
 func tokenDetail(prefix, what string) problem.Detail {
@@ -145,5 +159,78 @@ func (s *ConfirmEnrollment) Validate(v *problem.Validation) {
 	}
 	if !validTOTPCode(s.Code) {
 		v.Member(detailTOTPCode, "code")
+	}
+}
+
+// validRecoveryCode reports whether s, without dashes and spaces, is recoveryCodeChars of
+// base32 in either case.
+func validRecoveryCode(s string) bool {
+	if len(s) > maxRecoveryCodeBytes {
+		return false
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '-' || c == ' ':
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '2' && c <= '7':
+			n++
+		default:
+			return false
+		}
+	}
+	return n == recoveryCodeChars
+}
+
+// Login is the body of POST /api/v1/auth/login: a username and password. A malformed username
+// is refused here (no account can have it); any other unknown one is the controller's 401.
+type Login struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// Validate records a malformed username or password.
+func (s *Login) Validate(v *problem.Validation) {
+	if !validUsername(s.Username) {
+		v.Member(DetailUsername, "username")
+	}
+	if !validPassword(s.Password) {
+		v.Member(detailPassword, "password")
+	}
+}
+
+// LoginTOTP is the body of POST /api/v1/auth/login/totp: the login's challenge token and
+// exactly one of a TOTP code and a recovery code.
+type LoginTOTP struct {
+	ChallengeToken string `json:"challenge_token"`
+	Code           string `json:"code,omitzero"`
+	RecoveryCode   string `json:"recovery_code,omitzero"`
+}
+
+// Validate records a malformed challenge token, no or both second factors, or a malformed one.
+func (s *LoginTOTP) Validate(v *problem.Validation) {
+	if !validToken(s.ChallengeToken, prefixChallenge) {
+		v.Member(detailChallenge, "challenge_token")
+	}
+	switch {
+	case s.Code == "" && s.RecoveryCode == "":
+		v.Member(detailSecondFactor, "code")
+	case s.Code != "" && s.RecoveryCode != "":
+		v.Member(detailSecondFactor, "recovery_code")
+	case s.Code != "" && !validTOTPCode(s.Code):
+		v.Member(detailTOTPCode, "code")
+	case s.RecoveryCode != "" && !validRecoveryCode(s.RecoveryCode):
+		v.Member(detailRecoveryCode, "recovery_code")
+	}
+}
+
+// Refresh is the body of POST /api/v1/auth/refresh: the session's current refresh token.
+type Refresh struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// Validate records a malformed refresh token.
+func (s *Refresh) Validate(v *problem.Validation) {
+	if !validToken(s.RefreshToken, prefixRefresh) {
+		v.Member(detailRefreshToken, "refresh_token")
 	}
 }

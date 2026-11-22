@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
@@ -80,4 +81,48 @@ func decodeBody(r *http.Request, req request.Request) error {
 		return err
 	}
 	return q.Err()
+}
+
+// Login is POST /api/v1/auth/login, body {username, password}: a challenge token for the
+// second factor. An unknown username, a wrong password and a disabled account are the same
+// 401; too many failures are 429 with Retry-After.
+func (a *Handlers) Login(r *http.Request) (any, error) {
+	var req request.Login
+	if err := decodeBody(r, &req); err != nil {
+		return nil, err
+	}
+	c, err := a.ctl.Auth().Login(r.Context(), req.Username, req.Password)
+	if err != nil {
+		return nil, err
+	}
+	return convert.LoginChallenge(c), nil
+}
+
+// LoginSecondFactor is POST /api/v1/auth/login/totp, body {challenge_token, code |
+// recovery_code}: starts a session and returns its access and refresh tokens.
+func (a *Handlers) LoginSecondFactor(r *http.Request) (any, error) {
+	var req request.LoginTOTP
+	if err := decodeBody(r, &req); err != nil {
+		return nil, err
+	}
+	p, err := a.ctl.Auth().LoginSecondFactor(r.Context(), req.ChallengeToken,
+		controllers.SecondFactor{Code: req.Code, RecoveryCode: req.RecoveryCode})
+	if err != nil {
+		return nil, err
+	}
+	return convert.TokenPair(p), nil
+}
+
+// Refresh is POST /api/v1/auth/refresh, body {refresh_token}: a new token pair; the old
+// refresh token stops working.
+func (a *Handlers) Refresh(r *http.Request) (any, error) {
+	var req request.Refresh
+	if err := decodeBody(r, &req); err != nil {
+		return nil, err
+	}
+	p, err := a.ctl.Auth().Refresh(r.Context(), req.RefreshToken)
+	if err != nil {
+		return nil, err
+	}
+	return convert.TokenPair(p), nil
 }

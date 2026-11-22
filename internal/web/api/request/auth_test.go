@@ -72,3 +72,57 @@ func TestConfirmEnrollmentValidation(t *testing.T) {
 		assert.Equal(t, want, errorsOf(t, &c), "%+v", c)
 	}
 }
+
+var (
+	fixtureChallengeToken = "chl_" + strings.Repeat("B", 43)
+	fixtureRefreshToken   = "rt_" + strings.Repeat("c", 43)
+)
+
+func TestLoginValidation(t *testing.T) {
+	for _, s := range []Login{
+		{Username: "Fixture_User", Password: "x"},
+		{Username: strings.Repeat("z", MaxUsernameLen), Password: strings.Repeat("x", MaxPasswordBytes)},
+	} {
+		assert.Empty(t, errorsOf(t, &s), "%+v", s)
+	}
+	want := map[string]string{"/username": DetailUsername.Message(), "/password": detailPassword.Message()}
+	for _, s := range []Login{{}, {Username: "fixture.user", Password: strings.Repeat("x", MaxPasswordBytes+1)}} {
+		assert.Equal(t, want, errorsOf(t, &s), "%+v", s)
+	}
+}
+
+func TestLoginTOTPValidation(t *testing.T) {
+	for _, s := range []LoginTOTP{
+		{ChallengeToken: fixtureChallengeToken, Code: "123456"},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn23"},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "ABCDEFGHIJKLMN67"},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: " abcd efgh-ijkl mn23 "},
+	} {
+		assert.Empty(t, errorsOf(t, &s), "%+v", s)
+	}
+	for _, c := range []struct {
+		s    LoginTOTP
+		want map[string]string
+	}{
+		{LoginTOTP{}, map[string]string{"/challenge_token": detailChallenge.Message(), "/code": detailSecondFactor.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureEnrollmentToken, Code: "123456", RecoveryCode: "abcd-efgh-ijkl-mn23"},
+			map[string]string{"/challenge_token": detailChallenge.Message(), "/recovery_code": detailSecondFactor.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, Code: "12345"}, map[string]string{"/code": detailTOTPCode.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn2"},
+			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn01"}, // 0 and 1 aren't base32
+			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcdefghijklmn23" + strings.Repeat("-", 49)},
+			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
+	} {
+		assert.Equal(t, c.want, errorsOf(t, &c.s), "%+v", c.s)
+	}
+}
+
+func TestRefreshValidation(t *testing.T) {
+	assert.Empty(t, errorsOf(t, &Refresh{RefreshToken: fixtureRefreshToken}))
+	want := map[string]string{"/refresh_token": detailRefreshToken.Message()}
+	for _, s := range []Refresh{{}, {RefreshToken: fixtureChallengeToken}, {RefreshToken: fixtureRefreshToken + "A"}} {
+		assert.Equal(t, want, errorsOf(t, &s), "%+v", s)
+	}
+}

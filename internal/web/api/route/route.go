@@ -49,6 +49,9 @@ const (
 	AuthSignupConfirm = "/api/v1/auth/signup/confirm"
 	AuthReset         = "/api/v1/auth/reset"
 	AuthResetConfirm  = "/api/v1/auth/reset/confirm"
+	AuthLogin         = "/api/v1/auth/login"
+	AuthLoginTOTP     = "/api/v1/auth/login/totp"
+	AuthRefresh       = "/api/v1/auth/refresh"
 
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"

@@ -67,6 +67,10 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.With(signup).Post(route.AuthSignupConfirm, a.Handle(h.ConfirmSignup))
 	r.With(signup).Post(route.AuthReset, a.Handle(h.StartReset))
 	r.With(signup).Post(route.AuthResetConfirm, a.Handle(h.ConfirmReset))
+	// The two login steps have a budget each, so a full login costs one of each.
+	r.With(a.LoginRateLimit(listener, admin)).Post(route.AuthLogin, a.Handle(h.Login))
+	r.With(a.LoginRateLimit(listener, admin)).Post(route.AuthLoginTOTP, a.Handle(h.LoginSecondFactor))
+	r.With(a.RefreshRateLimit(listener, admin)).Post(route.AuthRefresh, a.Handle(h.Refresh))
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.IDAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.IDAction(c.PauseSource)))

@@ -68,6 +68,8 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 		"rate: {general_per_min: 0}":     "api.rate",
 		"rate: {source_add_per_hour: 0}": "api.rate",
 		"rate: {signup_per_hour: 0}":     "api.rate",
+		"rate: {login_per_min: 0}":       "api.rate",
+		"rate: {refresh_per_min: 0}":     "api.rate",
 	} {
 		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\napi: {" + yml + "}\n"))
 		assert.ErrorContains(t, err, want, yml)

@@ -44,6 +44,8 @@ var responseTypes = []any{
 	dto.Items[dto.Session]{},
 	dto.Enrollment{},
 	dto.RecoveryCodes{},
+	dto.LoginChallenge{},
+	dto.TokenPair{},
 }
 
 // requestTypes are every request body type. A validation error's errors[].pointer passes only

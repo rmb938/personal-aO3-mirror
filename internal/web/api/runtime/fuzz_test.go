@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/ao3url"
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/searchquery"
@@ -256,7 +257,7 @@ func fuzzAPI(f *testing.F, noReveal bool, logs *bytes.Buffer) *API {
 	opts := Options{
 		Version: "test", TrustedProxies: []string{"127.0.0.1/32"}, AllowedHosts: testHosts, RequestTimeout: 10 * time.Second,
 		GeneralPerMin: math.MaxInt32, SourceAddPerHour: math.MaxInt32, SearchPerMin: math.MaxInt32, NoReveal: noReveal,
-		SignupPerHour: math.MaxInt32,
+		SignupPerHour: math.MaxInt32, LoginPerMin: math.MaxInt32, RefreshPerMin: math.MaxInt32,
 	}
 	a, err := New(opts, log, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) {
 		r.Get(route.Healthz, a.Handle(func(req *http.Request) (any, error) {
@@ -375,6 +376,12 @@ func FuzzDecodeJSON(f *testing.F) {
 		`{"invite_token":"inv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
 		`{"enrollment_token":"enr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"123456"}`,
 		`{"enrollment_token":"enr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"12345a"}`,
+		`{"username":"Fixture_1","password":"fixture pass"}`,
+		`{"challenge_token":"chl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"123456"}`,
+		`{"challenge_token":"chl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","recovery_code":"abcd-efgh-ijkl-mn23"}`,
+		`{"challenge_token":"chl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","recovery_code":" ABCD EFGH-IJKL-MN23"}`,
+		`{"challenge_token":"chl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"123456","recovery_code":"abcd"}`,
+		`{"refresh_token":"rt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
 	} {
 		for k := range types {
 			f.Add(uint8(k), []byte(s))
@@ -534,6 +541,21 @@ func requireInBounds(t *testing.T, body any) {
 	case *request.ConfirmEnrollment:
 		requireOpaqueToken(t, b.EnrollmentToken, "enr_")
 		require.Regexp(t, `\A[0-9]{6}\z`, b.Code)
+	case *request.Login:
+		require.Regexp(t, `\A[A-Za-z0-9_-]{3,32}\z`, b.Username)
+		require.NotEmpty(t, b.Password)
+		require.LessOrEqual(t, len(b.Password), request.MaxPasswordBytes)
+	case *request.LoginTOTP:
+		requireOpaqueToken(t, b.ChallengeToken, "chl_")
+		require.NotEqual(t, b.Code == "", b.RecoveryCode == "", "exactly one second factor")
+		if b.Code != "" {
+			require.Regexp(t, `\A[0-9]{6}\z`, b.Code)
+		} else {
+			_, ok := auth.NormalizeRecoveryCode(b.RecoveryCode)
+			require.True(t, ok, "a valid recovery code normalizes: %q", b.RecoveryCode)
+		}
+	case *request.Refresh:
+		requireOpaqueToken(t, b.RefreshToken, "rt_")
 	default:
 		t.Fatalf("requireInBounds: no bounds for %T; add them", body)
 	}

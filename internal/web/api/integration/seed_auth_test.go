@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha256"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -20,7 +19,9 @@ import (
 // Fixed ids of the seeded accounts (a fresh users.db numbers rows from 1). Usernames are not
 // fanwork: the API returns them verbatim (dto.Username).
 const (
-	seedUser      int64 = 1 // seedUserName, with seedSession
+	// seedUserName, with seedSession (seedRefreshToken) and a pending login (seedChallengeToken);
+	// it logs in with fixturePassword, seedTOTPSecret and seedRecoveryCode.
+	seedUser      int64 = 1
 	seedOtherUser int64 = 2 // seedOtherName, disabled, no sessions
 	seedSession   int64 = 1
 	seedInvite    int64 = 1 // a usable signup invite (seedInviteToken), with a pending signup
@@ -36,16 +37,21 @@ func fixtureToken(kind auth.TokenKind, tag string) string {
 	return string(kind) + tag + strings.Repeat("A", 43-len(tag))
 }
 
-// The seeded tokens (stored as their hashes, like real ones) and the pending enrollments' TOTP
-// secret, whose code at seedTime confirms them.
+// The seeded tokens (stored as their hashes, like real ones) and the TOTP secret of the
+// accounts and the pending enrollments, whose code at seedTime confirms them or logs in.
 var (
 	seedInviteToken       = fixtureToken(auth.InviteToken, "fixtureSignupInvite")
 	seedResetToken        = fixtureToken(auth.InviteToken, "fixtureResetInvite")
 	seedSignupEnrollToken = fixtureToken(auth.EnrollmentToken, "fixtureSignup")
 	seedResetEnrollToken  = fixtureToken(auth.EnrollmentToken, "fixtureReset")
+	seedChallengeToken    = fixtureToken(auth.ChallengeToken, "fixtureLogin")
+	seedRefreshToken      = fixtureToken(auth.RefreshToken, "fixtureRefresh")
 	seedTOTPSecret        = []byte("fixture-totp-secret!") // 20 bytes
 	seedTOTPCode          = auth.TOTPCode(seedTOTPSecret, seedTime)
 )
+
+// seedRecoveryCode is seedUser's only recovery code.
+const seedRecoveryCode = "fixt-urec-ovry-code"
 
 // tokenSum is a seeded token's stored hash.
 func tokenSum(tb testing.TB, kind auth.TokenKind, token string) [32]byte {
@@ -58,7 +64,7 @@ func tokenSum(tb testing.TB, kind auth.TokenKind, token string) [32]byte {
 // testPublicURL is the seeded Auth controller's api.public_url (the invite links' origin).
 const testPublicURL = "https://mirror.example.com"
 
-// cheapArgon2 keeps the tests fast (only the signup and reset routes hash a password).
+// cheapArgon2 keeps the tests fast.
 var cheapArgon2 = auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
 // newTestAuth opens a temp users.db and auth.key, seeds the accounts above and returns the
@@ -74,19 +80,31 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	require.NoError(tb, err)
 	hasher, err := auth.NewHasher(auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(tb, err)
+	phc, err := hasher.Hash(ctx, fixturePassword) // outside the transaction (txguard)
+	require.NoError(tb, err)
+	recovery, ok := auth.NormalizeRecoveryCode(seedRecoveryCode)
+	require.True(tb, ok, "seedRecoveryCode is well-formed")
 	require.NoError(tb, users.InTx(ctx, func(ctx context.Context, tx *store.UsersTx) error {
-		for _, name := range []string{seedUserName, seedOtherName} {
-			// Neither stored secret is ever checked here; they only fill the NOT NULL columns.
-			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: "$fixture", TOTPSecretEnc: []byte("fixture"),
-				CreatedAt: seedTime.Add(-time.Hour), PasswordChangedAt: seedTime.Add(-time.Hour)}); err != nil {
+		for i, name := range []string{seedUserName, seedOtherName} {
+			id := int64(i + 1)
+			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: phc,
+				TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.UserTOTP(id), seedTOTPSecret),
+				CreatedAt:     seedTime.Add(-time.Hour), PasswordChangedAt: seedTime.Add(-time.Hour)}); err != nil {
 				return err
 			}
 		}
 		if err := tx.DisableUser(ctx, seedOtherUser, seedTime.Add(-time.Minute)); err != nil {
 			return err
 		}
-		if _, err := tx.CreateSession(ctx, seedUser, sha256.Sum256([]byte("fixture refresh")), seedTime.Add(-time.Minute),
-			seedTime.Add(24*time.Hour)); err != nil {
+		if err := tx.ReplaceRecoveryCodes(ctx, seedUser, [][32]byte{secrets.RecoveryCodeMAC(recovery)}); err != nil {
+			return err
+		}
+		if _, err := tx.CreateSession(ctx, seedUser, tokenSum(tb, auth.RefreshToken, seedRefreshToken),
+			seedTime.Add(-time.Minute), seedTime.Add(24*time.Hour)); err != nil {
+			return err
+		}
+		if err := tx.CreateChallenge(ctx, tokenSum(tb, auth.ChallengeToken, seedChallengeToken),
+			model.LoginChallenge{UserID: seedUser, ExpiresAt: seedTime.Add(controllers.ChallengeTTL)}); err != nil {
 			return err
 		}
 		if _, err := tx.CreateInvite(ctx, model.Invite{Kind: model.InviteSignup, CreatedAt: seedTime.Add(-time.Minute),

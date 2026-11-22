@@ -80,6 +80,34 @@ func encodeCreateResetRequest(
 	return nil
 }
 
+func encodeLoginRequest(
+	req *LoginRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeLoginTOTPRequest(
+	req *LoginTOTPRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeQueryCollectionWorksRequest(
 	req *WorkQueryRequest,
 	r *http.Request,
@@ -152,6 +180,20 @@ func encodeQueryTagsRequest(
 
 func encodeQueryWorksRequest(
 	req *WorkQueryRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeRefreshRequest(
+	req *RefreshRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

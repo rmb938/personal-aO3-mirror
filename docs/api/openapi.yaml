@@ -29,8 +29,10 @@ info:
     Limits: per client IP (IPv6 by /64; behind a trusted proxy, the rightmost untrusted
     `X-Forwarded-For` entry), `api.rate.general_per_min` requests a minute (default 120) on
     every route, plus `api.rate.search_per_min` (30) shared by every `QUERY` search route,
-    `api.rate.source_add_per_hour` (10) on `POST /api/v1/sources` and
-    `api.rate.signup_per_hour` (5) shared by the four signup and reset routes. The admin socket allows 10x
+    `api.rate.source_add_per_hour` (10) on `POST /api/v1/sources`,
+    `api.rate.signup_per_hour` (5) shared by the four signup and reset routes,
+    `api.rate.login_per_min` (10) on each login step (a budget each) and
+    `api.rate.refresh_per_min` (30) on `POST /api/v1/auth/refresh`. The admin socket allows 10x
     each. Over a limit is 429 `rate-limited` with `Retry-After` (the window: 60 or 3600 s). At
     most 64 requests are handled at once and 256 more wait up to 5 s (then 503 `unavailable`
     with `Retry-After: 1`); a request runs at most `api.request_timeout` (default 10 s, then
@@ -990,6 +992,80 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RecoveryCodes" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Log in, step 1 of 2 - username and password.
+      description: |
+        Returns a challenge token to send with a second factor to `/api/v1/auth/login/totp`
+        before `expires_at` (5 minutes). An unknown username, a wrong password and a disabled
+        account are the same 401 `invalid-credentials`, so the response never says whether an
+        account exists. Each failure (here or at the second step) backs the username off: 1 s,
+        doubling up to 15 min, until a full login succeeds. A try during the backoff is 429
+        `rate-limited` with `Retry-After` the seconds left, before the password is checked; 100
+        failures in a row disable the account until an admin enables it. Rate limited per client
+        by `api.rate.login_per_min`.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: The password is right; send the second factor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginChallenge" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/login/totp:
+    post:
+      operationId: loginTOTP
+      summary: Log in, step 2 of 2 - TOTP code or recovery code.
+      description: |
+        Takes the challenge token and exactly one of a TOTP code (never one used before) or an
+        unused recovery code (used up here), and starts a session. A wrong factor is 401
+        `invalid-credentials` and counts towards the username's backoff (429 with `Retry-After`
+        while it lasts); a challenge allows 5 tries, then (like an unknown or expired one) it is
+        401 `invalid-credentials` and the login starts again. Rate limited per client by its own
+        `api.rate.login_per_min` budget.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginTOTPRequest" }
+      responses:
+        "200":
+          description: Logged in; the session's tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/refresh:
+    post:
+      operationId: refresh
+      summary: Trade a refresh token for a new token pair.
+      description: |
+        Each refresh token works once: the response holds the next one, and the session's end
+        moves to `auth.refresh_ttl` from now (never past `auth.max_session_age` after the
+        login). Presenting a refresh token that was already traded means it was copied, so the
+        session is revoked. Any refusal (unknown, used, expired or revoked session, disabled
+        account) is 401 `invalid-credentials`; log in again. Rate limited per client by
+        `api.rate.refresh_per_min`.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: The session's new tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/admin/invites:
     post:
       operationId: createInvite
@@ -1198,7 +1274,9 @@ components:
       description: When that limit's window ends, in Unix seconds.
       schema: { type: integer }
     RetryAfter:
-      description: Seconds to wait. On 429 the limit's window (60 or 3600); on a busy 503, 1.
+      description: |
+        Seconds to wait. On 429 the limit's window (60 or 3600), or for a login backoff the
+        seconds left (1 to 900); on a busy 503, 1.
       schema: { type: integer, minimum: 1 }
     WWWAuthenticate:
       description: On every 401, the accepted scheme (RFC 9110 §15.5.2, RFC 6750 §3).
@@ -3242,3 +3320,77 @@ components:
           description: Single-use codes for logging in without the authenticator app, shown only here (verbatim); empty when a password-only reset keeps the current ones.
           maxItems: 10
           items: { type: string, pattern: "^[a-z2-7]{4}(?:-[a-z2-7]{4}){3}$" }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          description: Letters in either case.
+          pattern: "^[A-Za-z0-9_-]{3,32}$"
+        password:
+          type: string
+          minLength: 1
+          maxLength: 2048
+    LoginTOTPRequest:
+      type: object
+      description: Exactly one of `code` and `recovery_code`.
+      required: [challenge_token]
+      additionalProperties: false
+      properties:
+        challenge_token:
+          type: string
+          description: From `/api/v1/auth/login` (verbatim).
+          pattern: "^chl_[A-Za-z0-9_-]{43}$"
+        code: { $ref: "#/components/schemas/TOTPCode" }
+        recovery_code:
+          type: string
+          description: An unused recovery code; case, dashes and spaces don't matter.
+          pattern: "^[A-Za-z2-7 -]{16,64}$"
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+          description: The session's current refresh token, from the login or the last refresh.
+          pattern: "^rt_[A-Za-z0-9_-]{43}$"
+    LoginChallenge:
+      type: object
+      required: [challenge_token, expires_at]
+      additionalProperties: false
+      properties:
+        challenge_token:
+          type: string
+          description: Send with the second factor (verbatim).
+          pattern: "^chl_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        expires_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: Send the second factor before this.
+    TokenPair:
+      type: object
+      description: |
+        A session's credentials, shaped like an OAuth 2.0 token response (RFC 6749 §5.1). Send
+        `access_token` as `Authorization: Bearer <token>`; before it expires, or when a request
+        is 401, trade `refresh_token` at `/api/v1/auth/refresh`.
+      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_at]
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+          description: An EdDSA-signed JWT (verbatim). Treat it as opaque.
+          pattern: '^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{86}$'
+        token_type: { type: string, enum: [Bearer] }
+        expires_in:
+          type: integer
+          description: Seconds until the access token expires (`auth.access_ttl`).
+          minimum: 1
+        refresh_token:
+          type: string
+          description: Works once (verbatim); the next refresh returns a new one.
+          pattern: "^rt_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        refresh_expires_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: The session ends then unless refreshed (and at `auth.max_session_age` after the login regardless).
