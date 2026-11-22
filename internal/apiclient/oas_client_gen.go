@@ -98,6 +98,15 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/cancel
 	CancelSource(ctx context.Context, params CancelSourceParams, options ...RequestOption) (*SourceCancelled, error)
+	// ChangePassword invokes changePassword operation.
+	//
+	// Needs a bearer access token, the current password and a TOTP code. A wrong password or code is 403
+	// `forbidden` and counts against the account like a failed login (too many is 429 `rate-limited` with
+	// `Retry-After`). The new password must meet the policy (422 on `/password`). This session stays
+	// signed in.
+	//
+	// PUT /api/v1/account/password
+	ChangePassword(ctx context.Context, request *ChangePasswordRequest, options ...RequestOption) error
 	// ConfirmReset invokes confirmReset operation.
 	//
 	// Applies the new password and/or TOTP secret, clears the login backoff, revokes every session of the
@@ -165,6 +174,12 @@ type Invoker interface {
 	//
 	// POST /api/v1/admin/users/{id}/enable
 	EnableUser(ctx context.Context, params EnableUserParams, options ...RequestOption) error
+	// GetAccount invokes getAccount operation.
+	//
+	// Needs a bearer access token.
+	//
+	// GET /api/v1/account
+	GetAccount(ctx context.Context, options ...RequestOption) (*Account, error)
 	// GetChapter invokes getChapter operation.
 	//
 	// Content strings are hashed unless revealed; HTML is untrusted. 404 `not-found` when no chapter is
@@ -279,6 +294,12 @@ type Invoker interface {
 	//
 	// GET /api/v1/works/{id}/skin
 	GetWorkSkin(ctx context.Context, params GetWorkSkinParams, options ...RequestOption) (*WorkSkin, error)
+	// ListAccountSessions invokes listAccountSessions operation.
+	//
+	// Needs a bearer access token.
+	//
+	// GET /api/v1/account/sessions
+	ListAccountSessions(ctx context.Context, options ...RequestOption) (*SessionList, error)
 	// ListCollectionWorks invokes listCollectionWorks operation.
 	//
 	// `GET /api/v1/works` scoped to the works in the collection. `total` equals the collection's `works`.
@@ -388,6 +409,13 @@ type Invoker interface {
 	//
 	// POST /api/v1/auth/login/totp
 	LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*TokenPair, error)
+	// Logout invokes logout operation.
+	//
+	// The session's refresh token stops working, and so does its access token (every request checks the
+	// session). Needs a bearer access token.
+	//
+	// POST /api/v1/auth/logout
+	Logout(ctx context.Context, options ...RequestOption) error
 	// PauseSource invokes pauseSource operation.
 	//
 	// Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
@@ -463,6 +491,14 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/refresh
 	RefreshSource(ctx context.Context, request *SourceRefreshRequest, params RefreshSourceParams, options ...RequestOption) (*SourceRefreshed, error)
+	// RegenerateRecoveryCodes invokes regenerateRecoveryCodes operation.
+	//
+	// Needs a bearer access token and a TOTP code. The new codes are in this response only; the old ones
+	// stop working. A wrong code is 403 `forbidden` and counts against the account like a failed login
+	// (too many is 429 `rate-limited` with `Retry-After`).
+	//
+	// POST /api/v1/account/recovery-codes
+	RegenerateRecoveryCodes(ctx context.Context, request *RegenerateRecoveryCodesRequest, options ...RequestOption) (*RecoveryCodes, error)
 	// RemoveSource invokes removeSource operation.
 	//
 	// On the public listener it is 405 `method-not-allowed`.
@@ -475,6 +511,13 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/resume
 	ResumeSource(ctx context.Context, params ResumeSourceParams, options ...RequestOption) error
+	// RevokeAccountSession invokes revokeAccountSession operation.
+	//
+	// Needs a bearer access token. Another account's session is 404, like a missing one. Revoking a
+	// revoked session is a no-op (still 204).
+	//
+	// DELETE /api/v1/account/sessions/{id}
+	RevokeAccountSession(ctx context.Context, params RevokeAccountSessionParams, options ...RequestOption) error
 	// RevokeInvite invokes revokeInvite operation.
 	//
 	// A used or already revoked invite is left as it is (still 204).
@@ -695,6 +738,73 @@ func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams
 	}
 
 	result, err := decodeCancelSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ChangePassword invokes changePassword operation.
+//
+// Needs a bearer access token, the current password and a TOTP code. A wrong password or code is 403
+// `forbidden` and counts against the account like a failed login (too many is 429 `rate-limited` with
+// `Retry-After`). The new password must meet the policy (422 on `/password`). This session stays
+// signed in.
+//
+// PUT /api/v1/account/password
+func (c *Client) ChangePassword(ctx context.Context, request *ChangePasswordRequest, options ...RequestOption) error {
+	_, err := c.sendChangePassword(ctx, request, options...)
+	return err
+}
+
+func (c *Client) sendChangePassword(ctx context.Context, request *ChangePasswordRequest, requestOptions ...RequestOption) (res *ChangePasswordNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/account/password"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeChangePasswordRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeChangePasswordResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1475,6 +1585,67 @@ func (c *Client) sendEnableUser(ctx context.Context, params EnableUserParams, re
 	}
 
 	result, err := decodeEnableUserResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetAccount invokes getAccount operation.
+//
+// Needs a bearer access token.
+//
+// GET /api/v1/account
+func (c *Client) GetAccount(ctx context.Context, options ...RequestOption) (*Account, error) {
+	res, err := c.sendGetAccount(ctx, options...)
+	return res, err
+}
+
+func (c *Client) sendGetAccount(ctx context.Context, requestOptions ...RequestOption) (res *Account, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/account"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeGetAccountResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -2757,6 +2928,67 @@ func (c *Client) sendGetWorkSkin(ctx context.Context, params GetWorkSkinParams, 
 	}
 
 	result, err := decodeGetWorkSkinResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListAccountSessions invokes listAccountSessions operation.
+//
+// Needs a bearer access token.
+//
+// GET /api/v1/account/sessions
+func (c *Client) ListAccountSessions(ctx context.Context, options ...RequestOption) (*SessionList, error) {
+	res, err := c.sendListAccountSessions(ctx, options...)
+	return res, err
+}
+
+func (c *Client) sendListAccountSessions(ctx context.Context, requestOptions ...RequestOption) (res *SessionList, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/account/sessions"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeListAccountSessionsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -4338,6 +4570,68 @@ func (c *Client) sendLoginTOTP(ctx context.Context, request *LoginTOTPRequest, r
 	return result, nil
 }
 
+// Logout invokes logout operation.
+//
+// The session's refresh token stops working, and so does its access token (every request checks the
+// session). Needs a bearer access token.
+//
+// POST /api/v1/auth/logout
+func (c *Client) Logout(ctx context.Context, options ...RequestOption) error {
+	_, err := c.sendLogout(ctx, options...)
+	return err
+}
+
+func (c *Client) sendLogout(ctx context.Context, requestOptions ...RequestOption) (res *LogoutNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/logout"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeLogoutResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // PauseSource invokes pauseSource operation.
 //
 // Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
@@ -5264,6 +5558,72 @@ func (c *Client) sendRefreshSource(ctx context.Context, request *SourceRefreshRe
 	return result, nil
 }
 
+// RegenerateRecoveryCodes invokes regenerateRecoveryCodes operation.
+//
+// Needs a bearer access token and a TOTP code. The new codes are in this response only; the old ones
+// stop working. A wrong code is 403 `forbidden` and counts against the account like a failed login
+// (too many is 429 `rate-limited` with `Retry-After`).
+//
+// POST /api/v1/account/recovery-codes
+func (c *Client) RegenerateRecoveryCodes(ctx context.Context, request *RegenerateRecoveryCodesRequest, options ...RequestOption) (*RecoveryCodes, error) {
+	res, err := c.sendRegenerateRecoveryCodes(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendRegenerateRecoveryCodes(ctx context.Context, request *RegenerateRecoveryCodesRequest, requestOptions ...RequestOption) (res *RecoveryCodes, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/account/recovery-codes"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRegenerateRecoveryCodesRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRegenerateRecoveryCodesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // RemoveSource invokes removeSource operation.
 //
 // On the public listener it is 405 `method-not-allowed`.
@@ -5422,6 +5782,89 @@ func (c *Client) sendResumeSource(ctx context.Context, params ResumeSourceParams
 	}
 
 	result, err := decodeResumeSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RevokeAccountSession invokes revokeAccountSession operation.
+//
+// Needs a bearer access token. Another account's session is 404, like a missing one. Revoking a
+// revoked session is a no-op (still 204).
+//
+// DELETE /api/v1/account/sessions/{id}
+func (c *Client) RevokeAccountSession(ctx context.Context, params RevokeAccountSessionParams, options ...RequestOption) error {
+	_, err := c.sendRevokeAccountSession(ctx, params, options...)
+	return err
+}
+
+func (c *Client) sendRevokeAccountSession(ctx context.Context, params RevokeAccountSessionParams, requestOptions ...RequestOption) (res *RevokeAccountSessionNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [2]string
+	pathParts[0] = "/api/v1/account/sessions/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := int(params.ID); true {
+				return e.EncodeValue(conv.IntToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRevokeAccountSessionResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

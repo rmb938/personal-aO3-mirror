@@ -126,3 +126,24 @@ func TestRefreshValidation(t *testing.T) {
 		assert.Equal(t, want, errorsOf(t, &s), "%+v", s)
 	}
 }
+
+func TestChangePasswordValidation(t *testing.T) {
+	ok := ChangePassword{CurrentPassword: "x", Password: strings.Repeat("x", MaxPasswordBytes), Code: "012345"}
+	assert.Empty(t, errorsOf(t, &ok))
+	want := map[string]string{
+		"/current_password": detailPassword.Message(),
+		"/password":         detailPassword.Message(),
+		"/code":             detailTOTPCode.Message(),
+	}
+	assert.Equal(t, want, errorsOf(t, &ChangePassword{}))
+	assert.Equal(t, want, errorsOf(t, &ChangePassword{CurrentPassword: strings.Repeat("x", MaxPasswordBytes+1),
+		Password: strings.Repeat("x", MaxPasswordBytes+1), Code: "12345a"}))
+}
+
+func TestRegenerateRecoveryCodesValidation(t *testing.T) {
+	assert.Empty(t, errorsOf(t, &RegenerateRecoveryCodes{Code: "999999"}))
+	for _, code := range []string{"", "12345", "1234567", "12 456"} {
+		assert.Equal(t, map[string]string{"/code": detailTOTPCode.Message()},
+			errorsOf(t, &RegenerateRecoveryCodes{Code: code}), code)
+	}
+}

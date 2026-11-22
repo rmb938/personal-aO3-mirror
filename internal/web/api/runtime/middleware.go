@@ -20,6 +20,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 )
@@ -48,6 +50,11 @@ type reqState struct {
 	clientID        string
 	clientIDInvalid bool
 	reveal          bool
+	// auth is RequireAuth's outcome ("" when the route needs no token), principal the
+	// signed-in user when it is authOK, and tokenReason why a JWT was refused (authInvalid).
+	auth        authResult
+	principal   controllers.Principal
+	tokenReason auth.TokenReason
 }
 
 type stateKey struct{}
@@ -164,6 +171,15 @@ func (a *API) accessLog(listener string) func(http.Handler) http.Handler {
 			}
 			if prerouted {
 				attrs = append(attrs, slog.Bool("prerouted", true))
+			}
+			if st.auth != "" {
+				attrs = append(attrs, slog.String("auth", string(st.auth)))
+			}
+			if st.tokenReason != "" {
+				attrs = append(attrs, slog.String("token_reason", string(st.tokenReason)))
+			}
+			if st.auth == authOK {
+				attrs = append(attrs, slog.Int64("user_id", st.principal.UserID), slog.Int64("session_id", st.principal.SessionID))
 			}
 			attrs = append(attrs, pathIDAttrs(rctx)...)
 			attrs = append(attrs, queryNameAttrs(r.URL.RawQuery)...)

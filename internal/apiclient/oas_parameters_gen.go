@@ -272,6 +272,11 @@ type ResumeSourceParams struct {
 	ID ID
 }
 
+// RevokeAccountSessionParams is parameters of revokeAccountSession operation.
+type RevokeAccountSessionParams struct {
+	ID ID
+}
+
 // RevokeInviteParams is parameters of revokeInvite operation.
 type RevokeInviteParams struct {
 	ID ID

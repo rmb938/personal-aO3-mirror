@@ -36,5 +36,7 @@ func Types() []any {
 		Login{},
 		LoginTOTP{},
 		Refresh{},
+		ChangePassword{},
+		RegenerateRecoveryCodes{},
 	}
 }

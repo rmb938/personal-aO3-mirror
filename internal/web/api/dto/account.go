@@ -73,3 +73,13 @@ type Session struct {
 	// auth.max_session_age).
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+// Account is the signed-in user's own account (GET /api/v1/account): a User without the
+// admin's bookkeeping.
+type Account struct {
+	ID                int64     `json:"id"`
+	Username          Username  `json:"username"`
+	CreatedAt         time.Time `json:"created_at"`
+	PasswordChangedAt time.Time `json:"password_changed_at,omitzero"`
+	RecoveryCodesLeft int       `json:"recovery_codes_left"`
+}

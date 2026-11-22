@@ -39,7 +39,10 @@ header identifies the request.
 ## bad-request
 
 **400 Bad Request.** The request could not be read at all: a malformed query string (bad
-percent-encoding, `;` separators) or more than 32 query parameters.
+percent-encoding, `;` separators) or more than 32 query parameters, or on a route that needs an
+access token, an `Authorization` header that is repeated, over 2048 bytes, or `Bearer` without
+a single token (that 400 carries `WWW-Authenticate: Bearer realm="ao3mirror",
+error="invalid_request"`, RFC 6750 §3.1).
 
 ## validation-error
 
@@ -78,7 +81,10 @@ or a response that is not JSON (e.g. an image), which is only served revealed.
 
 ## forbidden
 
-**403 Forbidden.** A cross-origin browser request with an unsafe method was refused.
+**403 Forbidden.** A cross-origin browser request with an unsafe method was refused, or a
+signed-in change (`PUT /api/v1/account/password`, `POST /api/v1/account/recovery-codes`) was
+sent with a wrong current password or TOTP code. The access token itself was fine, so this is
+not a 401; the failure counts against the account like a failed login.
 
 ## not-found
 
@@ -125,6 +131,17 @@ its username is backed off after failed attempts. Retry after the `Retry-After` 
 limit's window, or the backoff left, in seconds). Every response that passed a limit carries
 `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` for the last limit it
 passed (`openapi.yaml` lists the limits).
+
+## unauthorized
+
+**401 Unauthorized.** The route needs an access token (`Authorization: Bearer <access_token>`
+from `/api/v1/auth/login/totp` or `/api/v1/auth/refresh`) and the request had none, or the
+token was refused: malformed, badly signed, expired, or its session revoked or expired, or its
+account disabled or deleted. A refused token's 401 carries `WWW-Authenticate: Bearer
+realm="ao3mirror", error="invalid_token"` (RFC 6750 §3.1): refresh the token pair, or log in
+again if the refresh is refused too. Without a token it is just `Bearer realm="ao3mirror"`.
+On the admin socket these routes are always 401: it never reads `Authorization` and has no
+signed-in account.
 
 ## invalid-credentials
 

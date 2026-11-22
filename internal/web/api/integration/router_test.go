@@ -128,6 +128,9 @@ type routeSample struct {
 	// store (first sent the POSTs in before, e.g. a pause before a resume).
 	fresh  bool
 	before []string
+	// bearer: the route needs an access token. On the public listener every request carries
+	// one of seedSession's; on the admin socket every request is 401 (it has no user).
+	bearer bool
 }
 
 // request builds the sample's request, with suffix appended to its target.
@@ -236,6 +239,17 @@ var routeSamples = map[string]routeSample{
 		body: `{"challenge_token":"` + seedChallengeToken + `","code":"` + seedTOTPCode + `"}`},
 	"POST /api/v1/auth/refresh": {target: "/api/v1/auth/refresh", status: http.StatusOK, fresh: true,
 		body: `{"refresh_token":"` + seedRefreshToken + `"}`},
+	// The signed-in account, as seedUser in seedSession.
+	"POST /api/v1/auth/logout": {target: "/api/v1/auth/logout", status: http.StatusNoContent, fresh: true, bearer: true},
+	"GET /api/v1/account":      {target: "/api/v1/account", status: http.StatusOK, bearer: true},
+	"PUT /api/v1/account/password": {target: "/api/v1/account/password", status: http.StatusNoContent, fresh: true,
+		bearer: true, body: `{"current_password":"` + fixturePassword + `","password":"fixture battery staple","code":"` +
+			seedTOTPCode + `"}`},
+	"POST /api/v1/account/recovery-codes": {target: "/api/v1/account/recovery-codes", status: http.StatusOK, fresh: true,
+		bearer: true, body: `{"code":"` + seedTOTPCode + `"}`},
+	"GET /api/v1/account/sessions": {target: "/api/v1/account/sessions", status: http.StatusOK, bearer: true},
+	"DELETE /api/v1/account/sessions/{id}": {target: "/api/v1/account/sessions/1", status: http.StatusNoContent,
+		fresh: true, bearer: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.
@@ -259,6 +273,7 @@ func walkRoutes(t *testing.T, r chi.Routes) []string {
 // every text field is SENTINEL-<field>.
 func TestAllRoutesLeak(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	sharedToken := "" // an access token on a's public router, made at first use
 	for name, r := range map[string]*chi.Mux{"public": a.Router(false), "admin": a.Router(true)} {
 		routes := walkRoutes(t, r)
 		for _, rt := range routes {
@@ -294,8 +309,30 @@ func TestAllRoutesLeak(t *testing.T) {
 					}
 					return h
 				}
-				w := testutil.Do(t, to(), s.request(method, ""))
-				assert.Equal(t, s.status, w.Code)
+				// send sends req to to(), with an access token for a bearer route on the
+				// public listener.
+				send := func(req *http.Request) *httptest.ResponseRecorder {
+					h := to()
+					if s.bearer && name == "public" {
+						tok := sharedToken
+						switch {
+						case s.fresh:
+							tok = accessToken(t, h)
+						case tok == "":
+							tok = accessToken(t, h)
+							sharedToken = tok
+						}
+						req.Header.Set("Authorization", "Bearer "+tok)
+					}
+					return testutil.Do(t, h, req)
+				}
+				noUser := s.bearer && name == "admin"
+				w := send(s.request(method, ""))
+				if noUser {
+					assert.Equal(t, http.StatusUnauthorized, w.Code)
+				} else {
+					assert.Equal(t, s.status, w.Code)
+				}
 				assert.Equal(t, "hashed", w.Header().Get(runtime.HeaderFanwork))
 				testutil.AssertNoSentinel(t, w, logs, sentinel)
 
@@ -311,10 +348,15 @@ func TestAllRoutesLeak(t *testing.T) {
 				if s.body != "" {
 					req.Header.Set("Content-Type", runtime.ContentTypeJSON)
 				}
-				w = testutil.Do(t, to(), req)
-				if s.body == "" {
+				w = send(req)
+				switch {
+				case noUser:
+					// Refused before the parameters and body are read.
+					require.Equal(t, http.StatusUnauthorized, w.Code)
+					assert.Equal(t, dto.TypeUnauthorized, testutil.DecodeProblem(t, w).Type)
+				case s.body == "":
 					testutil.RequireParamProblem(t, w, "", "unknown param, never echoed")
-				} else {
+				default:
 					// An unreadable body is reported before the parameters.
 					require.Equal(t, http.StatusBadRequest, w.Code)
 					assert.Equal(t, dto.TypeInvalidBody, testutil.DecodeProblem(t, w).Type)

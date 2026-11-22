@@ -53,6 +53,15 @@ const (
 	AuthLoginTOTP     = "/api/v1/auth/login/totp"
 	AuthRefresh       = "/api/v1/auth/refresh"
 
+	// The signed-in user's own account (stage 16f): they need a bearer access token, so they
+	// work only on the public listener (the admin socket never reads Authorization: always 401).
+	AuthLogout           = "/api/v1/auth/logout"
+	Account              = "/api/v1/account"
+	AccountPassword      = "/api/v1/account/password" //nolint:gosec // G101: a route pattern, not a credential
+	AccountRecoveryCodes = "/api/v1/account/recovery-codes"
+	AccountSessions      = "/api/v1/account/sessions"
+	AccountSession       = "/api/v1/account/sessions/{id}"
+
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"
 	SourcePause   = "/api/v1/sources/{id}/pause"

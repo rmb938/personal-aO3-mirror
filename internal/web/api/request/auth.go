@@ -234,3 +234,36 @@ func (s *Refresh) Validate(v *problem.Validation) {
 		v.Member(detailRefreshToken, "refresh_token")
 	}
 }
+
+// ChangePassword is the body of PUT /api/v1/account/password: the current password, the new
+// one and a TOTP code.
+type ChangePassword struct {
+	CurrentPassword string `json:"current_password"`
+	Password        string `json:"password"`
+	Code            string `json:"code"`
+}
+
+// Validate records a missing or over-long password or a malformed code.
+func (s *ChangePassword) Validate(v *problem.Validation) {
+	if !validPassword(s.CurrentPassword) {
+		v.Member(detailPassword, "current_password")
+	}
+	if !validPassword(s.Password) {
+		v.Member(detailPassword, "password")
+	}
+	if !validTOTPCode(s.Code) {
+		v.Member(detailTOTPCode, "code")
+	}
+}
+
+// RegenerateRecoveryCodes is the body of POST /api/v1/account/recovery-codes: a TOTP code.
+type RegenerateRecoveryCodes struct {
+	Code string `json:"code"`
+}
+
+// Validate records a malformed code.
+func (s *RegenerateRecoveryCodes) Validate(v *problem.Validation) {
+	if !validTOTPCode(s.Code) {
+		v.Member(detailTOTPCode, "code")
+	}
+}

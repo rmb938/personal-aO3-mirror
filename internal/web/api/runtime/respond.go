@@ -107,7 +107,11 @@ func respondError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err 
 	if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
 		w.Header().Set("Location", route.Path(route.Source, ex.ID)) // the source that already exists
 	}
+	be, bearer := errors.AsType[*bearerError](err)
 	switch {
+	case bearer:
+		// RFC 6750 §3.1: a request that carried bearer credentials learns what was wrong.
+		w.Header().Set("WWW-Authenticate", WWWAuthenticate+`, error="`+be.code+`"`)
 	case p.Status == http.StatusUnauthorized:
 		// RFC 9110 §15.5.2: a 401 always names the scheme that would be accepted.
 		w.Header().Set("WWW-Authenticate", WWWAuthenticate)

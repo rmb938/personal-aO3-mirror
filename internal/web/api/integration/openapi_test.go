@@ -172,11 +172,18 @@ func TestOpenAPIProblemTypes(t *testing.T) {
 // TestRequestProblems sends every route the requests any route of its kind refuses before the
 // handler: a cross-origin browser request to an unsafe method (403 forbidden), and to a route
 // taking a body, one without the JSON media type (415) and one over the size cap (413).
+//
+// A route needing an access token is sent the body checks on the public listener with one (the
+// admin socket refuses it with 401 before reading the body).
 func TestRequestProblems(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Admin()
+	token := accessToken(t, a.Public())
 	refused := func(t *testing.T, req *http.Request, status int, typ dto.ProblemType, msg string) *httptest.ResponseRecorder {
 		t.Helper()
+		h := a.Admin()
+		if strings.HasPrefix(req.Header.Get("Authorization"), "Bearer ") {
+			h = a.Public()
+		}
 		w := testutil.Do(t, h, req)
 		require.Equal(t, status, w.Code, msg)
 		assert.Equal(t, typ, testutil.DecodeProblem(t, w).Type, msg)
@@ -194,14 +201,20 @@ func TestRequestProblems(t *testing.T) {
 			if s.body == "" {
 				return
 			}
-			req = s.request(method, "")
+			authed := func(req *http.Request) *http.Request {
+				if s.bearer {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				return req
+			}
+			req = authed(s.request(method, ""))
 			req.Header.Set("Content-Type", "text/plain")
 			w := refused(t, req, http.StatusUnsupportedMediaType, dto.TypeUnsupportedMediaType, "media type")
 			if method == runtime.MethodQuery {
 				assert.Equal(t, runtime.ContentTypeJSON, w.Header().Get(runtime.HeaderAcceptQuery))
 			}
-			req = httptest.NewRequest(method, s.target,
-				strings.NewReader(`{"x":"`+strings.Repeat("a", runtime.MaxBodyBytes)+`"}`))
+			req = authed(httptest.NewRequest(method, s.target,
+				strings.NewReader(`{"x":"`+strings.Repeat("a", runtime.MaxBodyBytes)+`"}`)))
 			req.Header.Set("Content-Type", runtime.ContentTypeJSON)
 			refused(t, req, http.StatusRequestEntityTooLarge, dto.TypeBodyTooLarge, "too large")
 		})

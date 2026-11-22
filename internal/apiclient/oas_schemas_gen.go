@@ -49,6 +49,67 @@ func (s *AcceptQuery) UnmarshalText(data []byte) error {
 	}
 }
 
+// The signed-in user's own account.
+// Ref: #/components/schemas/Account
+type Account struct {
+	ID ID `json:"id"`
+	// Verbatim (an account name, not fanwork).
+	Username          string       `json:"username"`
+	CreatedAt         Timestamp    `json:"created_at"`
+	PasswordChangedAt OptTimestamp `json:"password_changed_at"`
+	RecoveryCodesLeft int          `json:"recovery_codes_left"`
+}
+
+// GetID returns the value of ID.
+func (s *Account) GetID() ID {
+	return s.ID
+}
+
+// GetUsername returns the value of Username.
+func (s *Account) GetUsername() string {
+	return s.Username
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *Account) GetCreatedAt() Timestamp {
+	return s.CreatedAt
+}
+
+// GetPasswordChangedAt returns the value of PasswordChangedAt.
+func (s *Account) GetPasswordChangedAt() OptTimestamp {
+	return s.PasswordChangedAt
+}
+
+// GetRecoveryCodesLeft returns the value of RecoveryCodesLeft.
+func (s *Account) GetRecoveryCodesLeft() int {
+	return s.RecoveryCodesLeft
+}
+
+// SetID sets the value of ID.
+func (s *Account) SetID(val ID) {
+	s.ID = val
+}
+
+// SetUsername sets the value of Username.
+func (s *Account) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *Account) SetCreatedAt(val Timestamp) {
+	s.CreatedAt = val
+}
+
+// SetPasswordChangedAt sets the value of PasswordChangedAt.
+func (s *Account) SetPasswordChangedAt(val OptTimestamp) {
+	s.PasswordChangedAt = val
+}
+
+// SetRecoveryCodesLeft sets the value of RecoveryCodesLeft.
+func (s *Account) SetRecoveryCodesLeft(val int) {
+	s.RecoveryCodesLeft = val
+}
+
 // Ref: #/components/schemas/Backfill
 type Backfill struct {
 	// 0 once the listing walk is done.
@@ -352,6 +413,47 @@ func (s *BackfillDetail) SetBlockedParser(val NilInt) {
 // SetRetryAt sets the value of RetryAt.
 func (s *BackfillDetail) SetRetryAt(val NilTimestamp) {
 	s.RetryAt = val
+}
+
+// ChangePasswordNoContent is response for ChangePassword operation.
+type ChangePasswordNoContent struct{}
+
+// Ref: #/components/schemas/ChangePasswordRequest
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	// The new password.
+	Password Password `json:"password"`
+	Code     TOTPCode `json:"code"`
+}
+
+// GetCurrentPassword returns the value of CurrentPassword.
+func (s *ChangePasswordRequest) GetCurrentPassword() string {
+	return s.CurrentPassword
+}
+
+// GetPassword returns the value of Password.
+func (s *ChangePasswordRequest) GetPassword() Password {
+	return s.Password
+}
+
+// GetCode returns the value of Code.
+func (s *ChangePasswordRequest) GetCode() TOTPCode {
+	return s.Code
+}
+
+// SetCurrentPassword sets the value of CurrentPassword.
+func (s *ChangePasswordRequest) SetCurrentPassword(val string) {
+	s.CurrentPassword = val
+}
+
+// SetPassword sets the value of Password.
+func (s *ChangePasswordRequest) SetPassword(val Password) {
+	s.Password = val
+}
+
+// SetCode sets the value of Code.
+func (s *ChangePasswordRequest) SetCode(val TOTPCode) {
+	s.Code = val
 }
 
 // One chapter with its content. Strings other than `published_on` are content, hashed unless revealed.
@@ -2547,6 +2649,9 @@ func (s *LoginTOTPRequest) SetCode(val OptTOTPCode) {
 func (s *LoginTOTPRequest) SetRecoveryCode(val OptString) {
 	s.RecoveryCode = val
 }
+
+// LogoutNoContent is response for Logout operation.
+type LogoutNoContent struct{}
 
 // A stored media tag on the media page. Names are content, hashed unless revealed.
 // Ref: #/components/schemas/Medium
@@ -5358,6 +5463,21 @@ func (s *RefreshRequest) SetRefreshToken(val string) {
 	s.RefreshToken = val
 }
 
+// Ref: #/components/schemas/RegenerateRecoveryCodesRequest
+type RegenerateRecoveryCodesRequest struct {
+	Code TOTPCode `json:"code"`
+}
+
+// GetCode returns the value of Code.
+func (s *RegenerateRecoveryCodesRequest) GetCode() TOTPCode {
+	return s.Code
+}
+
+// SetCode sets the value of Code.
+func (s *RegenerateRecoveryCodesRequest) SetCode(val TOTPCode) {
+	s.Code = val
+}
+
 // RemoveSourceNoContent is response for RemoveSource operation.
 type RemoveSourceNoContent struct{}
 
@@ -5736,6 +5856,9 @@ func (s *ResetScope) UnmarshalText(data []byte) error {
 
 // ResumeSourceNoContent is response for ResumeSource operation.
 type ResumeSourceNoContent struct{}
+
+// RevokeAccountSessionNoContent is response for RevokeAccountSession operation.
+type RevokeAccountSessionNoContent struct{}
 
 // RevokeInviteNoContent is response for RevokeInvite operation.
 type RevokeInviteNoContent struct{}
@@ -8725,13 +8848,17 @@ func (s *Version) SetParserVersion(val int) {
 type WWWAuthenticate string
 
 const (
-	WWWAuthenticateBearerRealmAo3mirror WWWAuthenticate = "Bearer realm=\"ao3mirror\""
+	WWWAuthenticateBearerRealmAo3mirror                    WWWAuthenticate = "Bearer realm=\"ao3mirror\""
+	WWWAuthenticateBearerRealmAo3mirrorErrorInvalidToken   WWWAuthenticate = "Bearer realm=\"ao3mirror\", error=\"invalid_token\""
+	WWWAuthenticateBearerRealmAo3mirrorErrorInvalidRequest WWWAuthenticate = "Bearer realm=\"ao3mirror\", error=\"invalid_request\""
 )
 
 // AllValues returns all WWWAuthenticate values.
 func (WWWAuthenticate) AllValues() []WWWAuthenticate {
 	return []WWWAuthenticate{
 		WWWAuthenticateBearerRealmAo3mirror,
+		WWWAuthenticateBearerRealmAo3mirrorErrorInvalidToken,
+		WWWAuthenticateBearerRealmAo3mirrorErrorInvalidRequest,
 	}
 }
 
@@ -8739,6 +8866,10 @@ func (WWWAuthenticate) AllValues() []WWWAuthenticate {
 func (s WWWAuthenticate) MarshalText() ([]byte, error) {
 	switch s {
 	case WWWAuthenticateBearerRealmAo3mirror:
+		return []byte(s), nil
+	case WWWAuthenticateBearerRealmAo3mirrorErrorInvalidToken:
+		return []byte(s), nil
+	case WWWAuthenticateBearerRealmAo3mirrorErrorInvalidRequest:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -8750,6 +8881,12 @@ func (s *WWWAuthenticate) UnmarshalText(data []byte) error {
 	switch WWWAuthenticate(data) {
 	case WWWAuthenticateBearerRealmAo3mirror:
 		*s = WWWAuthenticateBearerRealmAo3mirror
+		return nil
+	case WWWAuthenticateBearerRealmAo3mirrorErrorInvalidToken:
+		*s = WWWAuthenticateBearerRealmAo3mirrorErrorInvalidToken
+		return nil
+	case WWWAuthenticateBearerRealmAo3mirrorErrorInvalidRequest:
+		*s = WWWAuthenticateBearerRealmAo3mirrorErrorInvalidRequest
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

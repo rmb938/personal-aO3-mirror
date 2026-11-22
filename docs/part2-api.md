@@ -1848,7 +1848,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         an unknown value with a vaguer error). Lists are tables, times local to the minute;
         `invite list` never shows a link (the API keeps only the token hash). `TestAccountCLI`
         seeds two accounts and a session into the temp users.db before `serve`.
-    - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
+    - [x] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
       auth rate limits; `Cache-Control: no-store`. Three PRs (agreed with the user 2026-11-22):
       signup and reset; login and refresh; bearer extraction with logout and the account
       routes. The account routes are on both listeners (the OpenAPI test keeps the socket a
@@ -1897,10 +1897,43 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         challenge and a session with a known refresh token; `login_test.go` runs both login
         factors, refresh rotation and reuse detection, the backoff 429s and the separate step
         budgets.
+      - Part 3 (bearer and account): `runtime.bearerToken(r)` is the one place the access token
+        is read: `Authorization` once, at most 2048 bytes, scheme `Bearer` in any case, then one
+        RFC 9110 token68 (RFC 6750 §2.1's b64token). `API.RequireAuth(admin)` runs on a chi
+        group holding the account routes (16g moves it to the whole public router); on the
+        admin socket it is always 401 and never reads the header. Outcomes (logged as the
+        access log's `auth`, with `user_id`/`session_id` when ok and `token_reason`, the
+        `auth.TokenReason`, for a bad JWT; never the token): no bearer credentials (none or
+        another scheme) is 401 `unauthorized` with plain `WWW-Authenticate: Bearer
+        realm="ao3mirror"`; a malformed header is 400 `bad-request` with
+        `error="invalid_request"`; a refused token or session is 401 `unauthorized` with
+        `error="invalid_token"` (RFC 6750 §3.1, via `runtime.bearerError`). Handlers read the
+        user with `runtime.Principal(r)`, which is the 401 outside RequireAuth.
+      - Routes (`handlers/account.go`, on both listeners): `POST /api/v1/auth/logout` (204),
+        `GET /api/v1/account` (`dto.Account {id, username, created_at, password_changed_at?,
+        recovery_codes_left}`, not the admin's `User`), `PUT /api/v1/account/password`
+        (`request.ChangePassword {current_password, password, code}`, 204, other sessions
+        revoked), `POST /api/v1/account/recovery-codes` (`request.RegenerateRecoveryCodes
+        {code}`, 200 `RecoveryCodes`), `GET /api/v1/account/sessions`, `DELETE
+        /api/v1/account/sessions/{id}` (204; another user's is 404 `no session has this id`).
+      - A wrong current password or TOTP code on the two changes is 403 `forbidden` (new
+        detail), not 401: the access token was fine, and a 401 tells a client to refresh or
+        log in again. It still counts against the account's backoff (then 429).
+      - OpenAPI: the six operations, `Account`, the two request schemas, and the
+        `WWW-Authenticate` header's three values. `securitySchemes.bearerAuth` stays for 16g
+        (it changes the generated client's constructor).
+      - Tests: `account_test.go` (every route, the 401/400 variants and their
+        `WWW-Authenticate`, the access-log fields, logout, disable, 403 and backoff, another
+        user's session); `routeSample.bearer` sends a token of `seedSession` (from refreshing
+        `seedRefreshToken`) on the public listener and expects 401 on the socket;
+        `TestRequestProblems` sends those routes' body checks to the public listener with a
+        token; `bearer_test.go` covers the header parser.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
       `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit
       exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the
-      `cf_ray` log field, and the OWASP API1/API2/API5 write-up.
+      `cf_ray` log field, and the OWASP API1/API2/API5 write-up. `RequireAuth` and the
+      `unauthorized` type exist (16f part 3); 16g puts the middleware on the public router
+      before `reveal` and drops the account group's own copy there.
     - [ ] **16h. Automatic signing-key rotation** (asked for by the user 2026-11-22). `serve`
       rotates the access-token signing key once it is `auth.signing_key_rotation` old
       (default 30d, allowed 1d..365d), so a leaked key that nobody noticed stops working without
