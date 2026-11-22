@@ -69,7 +69,7 @@ func TestAdminUsers(t *testing.T) {
 	users := getJSON[dto.Items[dto.User]](t, h, "/api/v1/admin/users").Items
 	require.Len(t, users, 2)
 	assert.Equal(t, dto.User{ID: seedUser, Username: seedUserName, CreatedAt: seedTime.Add(-time.Hour),
-		PasswordChangedAt: seedTime.Add(-time.Hour)}, users[0], "the username is verbatim, not hashed")
+		PasswordChangedAt: seedTime.Add(-time.Hour), RecoveryCodesLeft: 1}, users[0], "the username is verbatim, not hashed")
 	assert.Equal(t, seedOtherUser, users[1].ID)
 	assert.Equal(t, dto.Username(seedOtherName), users[1].Username)
 	assert.Equal(t, seedTime.Add(-time.Minute), users[1].DisabledAt)

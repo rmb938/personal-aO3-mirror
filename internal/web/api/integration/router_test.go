@@ -35,6 +35,8 @@ func testOptions(t *testing.T) runtime.Options {
 		SourceAddPerHour: 1000,
 		SearchPerMin:     1000,
 		SignupPerHour:    1000,
+		LoginPerMin:      1000,
+		RefreshPerMin:    1000,
 	}
 }
 
@@ -60,6 +62,8 @@ func TestNewValidatesOptions(t *testing.T) {
 		"no add rate":   func(o *runtime.Options) { o.SourceAddPerHour = 0 },
 		"no search":     func(o *runtime.Options) { o.SearchPerMin = 0 },
 		"no signup":     func(o *runtime.Options) { o.SignupPerHour = 0 },
+		"no login":      func(o *runtime.Options) { o.LoginPerMin = 0 },
+		"no refresh":    func(o *runtime.Options) { o.RefreshPerMin = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -226,6 +230,12 @@ var routeSamples = map[string]routeSample{
 		body: `{"invite_token":"` + seedResetToken + `"}`},
 	"POST /api/v1/auth/reset/confirm": {target: "/api/v1/auth/reset/confirm", status: http.StatusOK, fresh: true,
 		body: `{"enrollment_token":"` + seedResetEnrollToken + `","code":"` + seedTOTPCode + `"}`},
+	"POST /api/v1/auth/login": {target: "/api/v1/auth/login", status: http.StatusOK, fresh: true,
+		body: `{"username":"` + seedUserName + `","password":"` + fixturePassword + `"}`},
+	"POST /api/v1/auth/login/totp": {target: "/api/v1/auth/login/totp", status: http.StatusOK, fresh: true,
+		body: `{"challenge_token":"` + seedChallengeToken + `","code":"` + seedTOTPCode + `"}`},
+	"POST /api/v1/auth/refresh": {target: "/api/v1/auth/refresh", status: http.StatusOK, fresh: true,
+		body: `{"refresh_token":"` + seedRefreshToken + `"}`},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.

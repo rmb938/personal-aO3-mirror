@@ -46,6 +46,11 @@ type Options struct {
 	// SignupPerHour is the per-client limit on the signup and reset routes together, both steps
 	// (the admin socket allows AdminRateFactor times as many), on top of the general limit.
 	SignupPerHour int
+	// LoginPerMin is the per-client limit on each login step (password, then second factor;
+	// each has its own budget), and RefreshPerMin on the refresh route. The admin socket allows
+	// AdminRateFactor times as many; both are on top of the general limit.
+	LoginPerMin   int
+	RefreshPerMin int
 	// Now is the hasher's clock (nil: time.Now). Tests use it to drive key rotation.
 	Now func() time.Time
 }
@@ -99,7 +104,8 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 	if opts.RequestTimeout <= 0 {
 		return nil, errors.New("api: request timeout must be positive")
 	}
-	if opts.GeneralPerMin <= 0 || opts.SourceAddPerHour <= 0 || opts.SearchPerMin <= 0 || opts.SignupPerHour <= 0 {
+	if opts.GeneralPerMin <= 0 || opts.SourceAddPerHour <= 0 || opts.SearchPerMin <= 0 || opts.SignupPerHour <= 0 ||
+		opts.LoginPerMin <= 0 || opts.RefreshPerMin <= 0 {
 		return nil, errors.New("api: rate limits must be positive")
 	}
 	h, err := redact.NewHasher(opts.HashKeyRotation, opts.Now)
@@ -158,6 +164,24 @@ func (a *API) SignupRateLimit(listener string, admin bool) func(http.Handler) ht
 		n *= AdminRateFactor
 	}
 	return a.rateLimit(n, time.Hour, listener)
+}
+
+// LoginRateLimit is a login step's limit (LoginPerMin a minute). Each call is a new budget:
+// build one per step and listener.
+func (a *API) LoginRateLimit(listener string, admin bool) func(http.Handler) http.Handler {
+	return a.perMinute(a.opts.LoginPerMin, listener, admin)
+}
+
+// RefreshRateLimit is the refresh route's limit (RefreshPerMin a minute).
+func (a *API) RefreshRateLimit(listener string, admin bool) func(http.Handler) http.Handler {
+	return a.perMinute(a.opts.RefreshPerMin, listener, admin)
+}
+
+func (a *API) perMinute(n int, listener string, admin bool) func(http.Handler) http.Handler {
+	if admin {
+		n *= AdminRateFactor
+	}
+	return a.rateLimit(n, time.Minute, listener)
 }
 
 // router builds one listener's router with the full middleware chain (docs/part2-api.md, "HTTP

@@ -67,6 +67,8 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		e = problem.WithDetail(dto.TypeAlreadyExists, DetailUsernameTaken)
 	case errors.Is(err, auth.ErrHasherBusy):
 		e = problem.WithDetail(dto.TypeUnavailable, DetailBusy)
+	case errors.As(err, new(controllers.RateLimitedError)):
+		e = problem.WithDetail(dto.TypeRateLimited, DetailLoginBackoff)
 	case errors.Is(err, store.ErrNoRawPage):
 		e = problem.New(dto.TypeNotFound)
 	case errors.Is(err, store.ErrStateConflict):

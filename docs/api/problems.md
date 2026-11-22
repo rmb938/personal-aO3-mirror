@@ -120,8 +120,9 @@ name you serve under (e.g. the Cloudflare Tunnel's custom domain). The admin soc
 
 ## rate-limited
 
-**429 Too Many Requests.** The client is over a rate limit. Retry after the `Retry-After`
-delay (the limit's window, in seconds). Every response that passed a limit carries
+**429 Too Many Requests.** The client is over a rate limit, or a login step was tried while
+its username is backed off after failed attempts. Retry after the `Retry-After` delay (the
+limit's window, or the backoff left, in seconds). Every response that passed a limit carries
 `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` for the last limit it
 passed (`openapi.yaml` lists the limits).
 

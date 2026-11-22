@@ -2453,6 +2453,101 @@ func (s *JobState) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/LoginChallenge
+type LoginChallenge struct {
+	// Send with the second factor (verbatim).
+	ChallengeToken string `json:"challenge_token"`
+	// Send the second factor before this.
+	ExpiresAt Timestamp `json:"expires_at"`
+}
+
+// GetChallengeToken returns the value of ChallengeToken.
+func (s *LoginChallenge) GetChallengeToken() string {
+	return s.ChallengeToken
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *LoginChallenge) GetExpiresAt() Timestamp {
+	return s.ExpiresAt
+}
+
+// SetChallengeToken sets the value of ChallengeToken.
+func (s *LoginChallenge) SetChallengeToken(val string) {
+	s.ChallengeToken = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *LoginChallenge) SetExpiresAt(val Timestamp) {
+	s.ExpiresAt = val
+}
+
+// Ref: #/components/schemas/LoginRequest
+type LoginRequest struct {
+	// Letters in either case.
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// GetUsername returns the value of Username.
+func (s *LoginRequest) GetUsername() string {
+	return s.Username
+}
+
+// GetPassword returns the value of Password.
+func (s *LoginRequest) GetPassword() string {
+	return s.Password
+}
+
+// SetUsername sets the value of Username.
+func (s *LoginRequest) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetPassword sets the value of Password.
+func (s *LoginRequest) SetPassword(val string) {
+	s.Password = val
+}
+
+// Exactly one of `code` and `recovery_code`.
+// Ref: #/components/schemas/LoginTOTPRequest
+type LoginTOTPRequest struct {
+	// From `/api/v1/auth/login` (verbatim).
+	ChallengeToken string      `json:"challenge_token"`
+	Code           OptTOTPCode `json:"code"`
+	// An unused recovery code; case, dashes and spaces don't matter.
+	RecoveryCode OptString `json:"recovery_code"`
+}
+
+// GetChallengeToken returns the value of ChallengeToken.
+func (s *LoginTOTPRequest) GetChallengeToken() string {
+	return s.ChallengeToken
+}
+
+// GetCode returns the value of Code.
+func (s *LoginTOTPRequest) GetCode() OptTOTPCode {
+	return s.Code
+}
+
+// GetRecoveryCode returns the value of RecoveryCode.
+func (s *LoginTOTPRequest) GetRecoveryCode() OptString {
+	return s.RecoveryCode
+}
+
+// SetChallengeToken sets the value of ChallengeToken.
+func (s *LoginTOTPRequest) SetChallengeToken(val string) {
+	s.ChallengeToken = val
+}
+
+// SetCode sets the value of Code.
+func (s *LoginTOTPRequest) SetCode(val OptTOTPCode) {
+	s.Code = val
+}
+
+// SetRecoveryCode sets the value of RecoveryCode.
+func (s *LoginTOTPRequest) SetRecoveryCode(val OptString) {
+	s.RecoveryCode = val
+}
+
 // A stored media tag on the media page. Names are content, hashed unless revealed.
 // Ref: #/components/schemas/Medium
 type Medium struct {
@@ -4458,6 +4553,52 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// NewOptTOTPCode returns new OptTOTPCode with value set to v.
+func NewOptTOTPCode(v TOTPCode) OptTOTPCode {
+	return OptTOTPCode{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTOTPCode is optional TOTPCode.
+type OptTOTPCode struct {
+	Value TOTPCode
+	Set   bool
+}
+
+// IsSet returns true if OptTOTPCode was set.
+func (o OptTOTPCode) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTOTPCode) Reset() {
+	var v TOTPCode
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTOTPCode) SetTo(v TOTPCode) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTOTPCode) Get() (v TOTPCode, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTOTPCode) Or(d TOTPCode) TOTPCode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptTagInfoDetail returns new OptTagInfoDetail with value set to v.
 func NewOptTagInfoDetail(v TagInfoDetail) OptTagInfoDetail {
 	return OptTagInfoDetail{
@@ -5199,6 +5340,22 @@ func (s *RecoveryCodes) GetRecoveryCodes() []string {
 // SetRecoveryCodes sets the value of RecoveryCodes.
 func (s *RecoveryCodes) SetRecoveryCodes(val []string) {
 	s.RecoveryCodes = val
+}
+
+// Ref: #/components/schemas/RefreshRequest
+type RefreshRequest struct {
+	// The session's current refresh token, from the login or the last refresh.
+	RefreshToken string `json:"refresh_token"`
+}
+
+// GetRefreshToken returns the value of RefreshToken.
+func (s *RefreshRequest) GetRefreshToken() string {
+	return s.RefreshToken
+}
+
+// SetRefreshToken sets the value of RefreshToken.
+func (s *RefreshRequest) SetRefreshToken(val string) {
+	s.RefreshToken = val
 }
 
 // RemoveSourceNoContent is response for RemoveSource operation.
@@ -8328,6 +8485,106 @@ func (s *TagType) UnmarshalText(data []byte) error {
 }
 
 type Timestamp time.Time
+
+// A session's credentials, shaped like an OAuth 2.0 token response (RFC 6749 §5.1). Send
+// `access_token` as `Authorization: Bearer <token>`; before it expires, or when a request is 401,
+// trade `refresh_token` at `/api/v1/auth/refresh`.
+// Ref: #/components/schemas/TokenPair
+type TokenPair struct {
+	// An EdDSA-signed JWT (verbatim). Treat it as opaque.
+	AccessToken string             `json:"access_token"`
+	TokenType   TokenPairTokenType `json:"token_type"`
+	// Seconds until the access token expires (`auth.access_ttl`).
+	ExpiresIn int `json:"expires_in"`
+	// Works once (verbatim); the next refresh returns a new one.
+	RefreshToken string `json:"refresh_token"`
+	// The session ends then unless refreshed (and at `auth.max_session_age` after the login regardless).
+	RefreshExpiresAt Timestamp `json:"refresh_expires_at"`
+}
+
+// GetAccessToken returns the value of AccessToken.
+func (s *TokenPair) GetAccessToken() string {
+	return s.AccessToken
+}
+
+// GetTokenType returns the value of TokenType.
+func (s *TokenPair) GetTokenType() TokenPairTokenType {
+	return s.TokenType
+}
+
+// GetExpiresIn returns the value of ExpiresIn.
+func (s *TokenPair) GetExpiresIn() int {
+	return s.ExpiresIn
+}
+
+// GetRefreshToken returns the value of RefreshToken.
+func (s *TokenPair) GetRefreshToken() string {
+	return s.RefreshToken
+}
+
+// GetRefreshExpiresAt returns the value of RefreshExpiresAt.
+func (s *TokenPair) GetRefreshExpiresAt() Timestamp {
+	return s.RefreshExpiresAt
+}
+
+// SetAccessToken sets the value of AccessToken.
+func (s *TokenPair) SetAccessToken(val string) {
+	s.AccessToken = val
+}
+
+// SetTokenType sets the value of TokenType.
+func (s *TokenPair) SetTokenType(val TokenPairTokenType) {
+	s.TokenType = val
+}
+
+// SetExpiresIn sets the value of ExpiresIn.
+func (s *TokenPair) SetExpiresIn(val int) {
+	s.ExpiresIn = val
+}
+
+// SetRefreshToken sets the value of RefreshToken.
+func (s *TokenPair) SetRefreshToken(val string) {
+	s.RefreshToken = val
+}
+
+// SetRefreshExpiresAt sets the value of RefreshExpiresAt.
+func (s *TokenPair) SetRefreshExpiresAt(val Timestamp) {
+	s.RefreshExpiresAt = val
+}
+
+type TokenPairTokenType string
+
+const (
+	TokenPairTokenTypeBearer TokenPairTokenType = "Bearer"
+)
+
+// AllValues returns all TokenPairTokenType values.
+func (TokenPairTokenType) AllValues() []TokenPairTokenType {
+	return []TokenPairTokenType{
+		TokenPairTokenTypeBearer,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TokenPairTokenType) MarshalText() ([]byte, error) {
+	switch s {
+	case TokenPairTokenTypeBearer:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TokenPairTokenType) UnmarshalText(data []byte) error {
+	switch TokenPairTokenType(data) {
+	case TokenPairTokenTypeBearer:
+		*s = TokenPairTokenTypeBearer
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
 
 // Ref: #/components/schemas/User
 type User struct {

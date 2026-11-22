@@ -76,3 +76,5 @@ api:
     search_per_min: 30          # QUERY search routes together (QUERY /works, ...)
     source_add_per_hour: 10     # takes effect with POST /sources (stage 4)
     signup_per_hour: 5          # signup and reset routes together (both steps)
+    login_per_min: 10           # each login step (password, then TOTP) separately
+    refresh_per_min: 30         # POST /api/v1/auth/refresh

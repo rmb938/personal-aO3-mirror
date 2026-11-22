@@ -366,6 +366,28 @@ type Invoker interface {
 	//
 	// GET /api/v1/works
 	ListWorks(ctx context.Context, params ListWorksParams, options ...RequestOption) (*WorkListHeaders, error)
+	// Login invokes login operation.
+	//
+	// Returns a challenge token to send with a second factor to `/api/v1/auth/login/totp` before
+	// `expires_at` (5 minutes). An unknown username, a wrong password and a disabled account are the same
+	// 401 `invalid-credentials`, so the response never says whether an account exists. Each failure (here
+	// or at the second step) backs the username off: 1 s, doubling up to 15 min, until a full login
+	// succeeds. A try during the backoff is 429 `rate-limited` with `Retry-After` the seconds left, before
+	// the password is checked; 100 failures in a row disable the account until an admin enables it. Rate
+	// limited per client by `api.rate.login_per_min`.
+	//
+	// POST /api/v1/auth/login
+	Login(ctx context.Context, request *LoginRequest, options ...RequestOption) (*LoginChallenge, error)
+	// LoginTOTP invokes loginTOTP operation.
+	//
+	// Takes the challenge token and exactly one of a TOTP code (never one used before) or an unused
+	// recovery code (used up here), and starts a session. A wrong factor is 401 `invalid-credentials` and
+	// counts towards the username's backoff (429 with `Retry-After` while it lasts); a challenge allows 5
+	// tries, then (like an unknown or expired one) it is 401 `invalid-credentials` and the login starts
+	// again. Rate limited per client by its own `api.rate.login_per_min` budget.
+	//
+	// POST /api/v1/auth/login/totp
+	LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*TokenPair, error)
 	// PauseSource invokes pauseSource operation.
 	//
 	// Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
@@ -422,6 +444,16 @@ type Invoker interface {
 	//
 	// QUERY /api/v1/works
 	QueryWorks(ctx context.Context, request *WorkQueryRequest, params QueryWorksParams, options ...RequestOption) (*WorkListHeaders, error)
+	// Refresh invokes refresh operation.
+	//
+	// Each refresh token works once: the response holds the next one, and the session's end moves to
+	// `auth.refresh_ttl` from now (never past `auth.max_session_age` after the login). Presenting a
+	// refresh token that was already traded means it was copied, so the session is revoked. Any refusal
+	// (unknown, used, expired or revoked session, disabled account) is 401 `invalid-credentials`; log in
+	// again. Rate limited per client by `api.rate.refresh_per_min`.
+	//
+	// POST /api/v1/auth/refresh
+	Refresh(ctx context.Context, request *RefreshRequest, options ...RequestOption) (*TokenPair, error)
 	// RefreshSource invokes refreshSource operation.
 	//
 	// Its next update poll is due now and its failed work fetches are queued again. With `full`, the whole
@@ -4168,6 +4200,144 @@ func (c *Client) sendListWorks(ctx context.Context, params ListWorksParams, requ
 	return result, nil
 }
 
+// Login invokes login operation.
+//
+// Returns a challenge token to send with a second factor to `/api/v1/auth/login/totp` before
+// `expires_at` (5 minutes). An unknown username, a wrong password and a disabled account are the same
+// 401 `invalid-credentials`, so the response never says whether an account exists. Each failure (here
+// or at the second step) backs the username off: 1 s, doubling up to 15 min, until a full login
+// succeeds. A try during the backoff is 429 `rate-limited` with `Retry-After` the seconds left, before
+// the password is checked; 100 failures in a row disable the account until an admin enables it. Rate
+// limited per client by `api.rate.login_per_min`.
+//
+// POST /api/v1/auth/login
+func (c *Client) Login(ctx context.Context, request *LoginRequest, options ...RequestOption) (*LoginChallenge, error) {
+	res, err := c.sendLogin(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendLogin(ctx context.Context, request *LoginRequest, requestOptions ...RequestOption) (res *LoginChallenge, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/login"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeLoginRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeLoginResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// LoginTOTP invokes loginTOTP operation.
+//
+// Takes the challenge token and exactly one of a TOTP code (never one used before) or an unused
+// recovery code (used up here), and starts a session. A wrong factor is 401 `invalid-credentials` and
+// counts towards the username's backoff (429 with `Retry-After` while it lasts); a challenge allows 5
+// tries, then (like an unknown or expired one) it is 401 `invalid-credentials` and the login starts
+// again. Rate limited per client by its own `api.rate.login_per_min` budget.
+//
+// POST /api/v1/auth/login/totp
+func (c *Client) LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*TokenPair, error) {
+	res, err := c.sendLoginTOTP(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendLoginTOTP(ctx context.Context, request *LoginTOTPRequest, requestOptions ...RequestOption) (res *TokenPair, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/login/totp"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeLoginTOTPRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeLoginTOTPResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // PauseSource invokes pauseSource operation.
 //
 // Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
@@ -4930,6 +5100,74 @@ func (c *Client) sendQueryWorks(ctx context.Context, request *WorkQueryRequest, 
 	}
 
 	result, err := decodeQueryWorksResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// Refresh invokes refresh operation.
+//
+// Each refresh token works once: the response holds the next one, and the session's end moves to
+// `auth.refresh_ttl` from now (never past `auth.max_session_age` after the login). Presenting a
+// refresh token that was already traded means it was copied, so the session is revoked. Any refusal
+// (unknown, used, expired or revoked session, disabled account) is 401 `invalid-credentials`; log in
+// again. Rate limited per client by `api.rate.refresh_per_min`.
+//
+// POST /api/v1/auth/refresh
+func (c *Client) Refresh(ctx context.Context, request *RefreshRequest, options ...RequestOption) (*TokenPair, error) {
+	res, err := c.sendRefresh(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendRefresh(ctx context.Context, request *RefreshRequest, requestOptions ...RequestOption) (res *TokenPair, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/refresh"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRefreshRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRefreshResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

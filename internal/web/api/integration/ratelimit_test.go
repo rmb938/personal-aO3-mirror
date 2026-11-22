@@ -94,6 +94,25 @@ var limitGroups = map[string]limitGroup{
 			return jsonRequest(http.MethodPost, targets[i%len(targets)], `{}`)
 		},
 	},
+	// The two login steps share the option but not the budget: a group each.
+	"login": {
+		set:     func(o *runtime.Options, n int) { o.LoginPerMin = n },
+		window:  time.Minute,
+		okCode:  http.StatusUnprocessableEntity,
+		request: func(int) *http.Request { return jsonRequest(http.MethodPost, route.AuthLogin, `{}`) },
+	},
+	"login totp": {
+		set:     func(o *runtime.Options, n int) { o.LoginPerMin = n },
+		window:  time.Minute,
+		okCode:  http.StatusUnprocessableEntity,
+		request: func(int) *http.Request { return jsonRequest(http.MethodPost, route.AuthLoginTOTP, `{}`) },
+	},
+	"refresh": {
+		set:     func(o *runtime.Options, n int) { o.RefreshPerMin = n },
+		window:  time.Minute,
+		okCode:  http.StatusUnprocessableEntity,
+		request: func(int) *http.Request { return jsonRequest(http.MethodPost, route.AuthRefresh, `{}`) },
+	},
 }
 
 // burst sends m requests to h at once (each goroutine waits on one start signal) and returns

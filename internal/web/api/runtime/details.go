@@ -78,6 +78,7 @@ var (
 	// Auth (stage 16f). The password policy errors are validation errors on /password.
 	DetailInvalidCredentials = problem.NewDetail("the credentials are not valid")
 	DetailInvalidToken       = problem.NewDetail("the token is not valid: unknown, expired, already used or revoked")
+	DetailLoginBackoff       = problem.NewDetail("too many failed attempts for this username; retry after the Retry-After delay")
 	DetailUsernameTaken      = problem.NewDetail("an account already has this username")
 	DetailPasswordInvalid    = problem.NewDetail("must be valid UTF-8 without control characters")
 	DetailPasswordTooShort   = problem.NewDetail("must be at least " + itoa(auth.MinPasswordRunes) + " characters (after Unicode NFKC normalization)")

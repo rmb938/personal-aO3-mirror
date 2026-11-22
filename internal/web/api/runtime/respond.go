@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
@@ -113,7 +114,16 @@ func respondError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err 
 	case errors.Is(err, auth.ErrHasherBusy):
 		w.Header().Set("Retry-After", "1")
 	}
+	if rl, ok := errors.AsType[controllers.RateLimitedError](err); ok {
+		w.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(rl.RetryAfter), 10))
+	}
 	Respond(w, r, log, p.Status, ContentTypeProblem, p)
+}
+
+// retryAfterSeconds is a Retry-After delay in whole seconds: rounded up, at least 1 (RFC 9110
+// §10.2.3 takes a non-negative integer; 0 would invite an immediate retry).
+func retryAfterSeconds(d time.Duration) int64 {
+	return max(1, int64((d+time.Second-1)/time.Second))
 }
 
 // respond is the single place that encodes a JSON response body. It tells the enforcer which Go

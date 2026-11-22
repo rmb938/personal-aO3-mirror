@@ -33,5 +33,8 @@ func Types() []any {
 		Signup{},
 		Reset{},
 		ConfirmEnrollment{},
+		Login{},
+		LoginTOTP{},
+		Refresh{},
 	}
 }

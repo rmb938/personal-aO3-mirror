@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,6 +59,8 @@ func TestProblemFor(t *testing.T) {
 		{controllers.ErrInvalidUsername, dto.TypeValidation, http.StatusUnprocessableEntity, false},
 		{fmt.Errorf("signup: %w", auth.ErrPasswordCommon), dto.TypeValidation, http.StatusUnprocessableEntity, false},
 		{controllers.ErrResetPassword, dto.TypeValidation, http.StatusUnprocessableEntity, false},
+		{fmt.Errorf("login: %w", controllers.RateLimitedError{RetryAfter: time.Second}), dto.TypeRateLimited,
+			http.StatusTooManyRequests, false},
 		{store.ErrStateConflict, dto.TypeStateConflict, http.StatusConflict, false},
 		{store.ErrSourceExists, dto.TypeAlreadyExists, http.StatusConflict, false},
 		{fmt.Errorf("add: %w", controllers.ExistsError{ID: 3}), dto.TypeAlreadyExists, http.StatusConflict, false},
@@ -90,6 +93,10 @@ func TestAuthProblems(t *testing.T) {
 		controllers.ErrInvalidToken: {"WWW-Authenticate": WWWAuthenticate},
 		auth.ErrHasherBusy:          {"Retry-After": "1"},
 		store.ErrNoUser:             {},
+		controllers.RateLimitedError{RetryAfter: 16 * time.Second}:                 {"Retry-After": "16"},
+		controllers.RateLimitedError{RetryAfter: 1500 * time.Millisecond}:          {"Retry-After": "2"},
+		fmt.Errorf("w: %w", controllers.RateLimitedError{}):                        {"Retry-After": "1"},
+		controllers.RateLimitedError{RetryAfter: 15*time.Minute + time.Nanosecond}: {"Retry-After": "901"},
 	} {
 		w := httptest.NewRecorder()
 		respondError(w, httptest.NewRequest(http.MethodPost, "/", nil), slog.New(slog.DiscardHandler), err)

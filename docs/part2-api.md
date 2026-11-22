@@ -1878,6 +1878,25 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       - Tests: the integration seed adds a reset invite for `fixture_user` and a pending signup
         and reset with fixed fake tokens and a fixed TOTP secret, so the leak-test samples
         succeed; `auth_test.go` runs both flows and every refusal the spec declares.
+      - Part 2 (login and refresh): `POST /api/v1/auth/login`, `/login/totp`, `/refresh` on both
+        listeners. Bodies `request.Login {username, password}` (a malformed username is a 422:
+        no account can have it), `request.LoginTOTP {challenge_token, code | recovery_code}`
+        (exactly one; a recovery code is 16 base32 characters in either case, dashes and spaces
+        ignored, at most 64 bytes, checked against `auth.NormalizeRecoveryCode` by the fuzz
+        test) and `request.Refresh {refresh_token}`. Login is 200 `LoginChallenge
+        {challenge_token, expires_at}`; the other two are 200 `TokenPair {access_token,
+        token_type: "Bearer", expires_in, refresh_token, refresh_expires_at}` (`dto.TokenType`
+        is an enum; `expires_in` is the access TTL in seconds, rounded up).
+      - `controllers.RateLimitedError` (the per-username backoff) is 429 `rate-limited` with
+        its own detail ("too many failed attempts for this username") and `Retry-After` the
+        delay rounded up to whole seconds, at least 1.
+      - New `api.rate.login_per_min` (default 10) and `refresh_per_min` (30), admin socket 10x.
+        Each login step has its own `login_per_min` budget, so a full login costs one of each.
+      - Tests: the seed gives `fixture_user` (and the disabled `fixture_other`) a real
+        password hash and the shared TOTP secret, plus one recovery code, a pending login
+        challenge and a session with a known refresh token; `login_test.go` runs both login
+        factors, refresh rotation and reuse detection, the backoff 429s and the separate step
+        budgets.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
       `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit
       exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the

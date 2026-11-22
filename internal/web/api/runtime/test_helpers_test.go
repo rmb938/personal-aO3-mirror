@@ -30,6 +30,8 @@ func testOptions(t *testing.T) Options {
 		Version: "test", TrustedProxies: []string{"127.0.0.1/32", "::1/128"}, AllowedHosts: testHosts,
 		RequestTimeout: 10 * time.Second, GeneralPerMin: 1000, SourceAddPerHour: 1000, SearchPerMin: 1000,
 		SignupPerHour: 1000,
+		LoginPerMin:   1000,
+		RefreshPerMin: 1000,
 	}
 }
 
