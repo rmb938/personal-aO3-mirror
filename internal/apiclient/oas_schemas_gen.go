@@ -567,6 +567,33 @@ func (s *Collection) SetMirrorSourceURL(val string) {
 	s.MirrorSourceURL = val
 }
 
+// Ref: #/components/schemas/ConfirmEnrollmentRequest
+type ConfirmEnrollmentRequest struct {
+	EnrollmentToken EnrollmentToken `json:"enrollment_token"`
+	// From the new TOTP secret, or the current one when a reset keeps it.
+	Code TOTPCode `json:"code"`
+}
+
+// GetEnrollmentToken returns the value of EnrollmentToken.
+func (s *ConfirmEnrollmentRequest) GetEnrollmentToken() EnrollmentToken {
+	return s.EnrollmentToken
+}
+
+// GetCode returns the value of Code.
+func (s *ConfirmEnrollmentRequest) GetCode() TOTPCode {
+	return s.Code
+}
+
+// SetEnrollmentToken sets the value of EnrollmentToken.
+func (s *ConfirmEnrollmentRequest) SetEnrollmentToken(val EnrollmentToken) {
+	s.EnrollmentToken = val
+}
+
+// SetCode sets the value of Code.
+func (s *ConfirmEnrollmentRequest) SetCode(val TOTPCode) {
+	s.Code = val
+}
+
 // ConfirmSourceNoContent is response for ConfirmSource operation.
 type ConfirmSourceNoContent struct{}
 
@@ -1128,6 +1155,61 @@ type Duration time.Duration
 // EnableUserNoContent is response for EnableUser operation.
 type EnableUserNoContent struct{}
 
+// Ref: #/components/schemas/Enrollment
+type Enrollment struct {
+	EnrollmentToken EnrollmentToken `json:"enrollment_token"`
+	// The new TOTP secret in base32 (verbatim), to type into an authenticator app; omitted when a reset
+	// keeps the current one.
+	TotpSecret OptString `json:"totp_secret"`
+	// The same secret as an `otpauth://totp/` URI, to show as a QR code (verbatim); omitted with
+	// `totp_secret`.
+	OtpauthURI OptString `json:"otpauth_uri"`
+	// Confirm before this.
+	ExpiresAt Timestamp `json:"expires_at"`
+}
+
+// GetEnrollmentToken returns the value of EnrollmentToken.
+func (s *Enrollment) GetEnrollmentToken() EnrollmentToken {
+	return s.EnrollmentToken
+}
+
+// GetTotpSecret returns the value of TotpSecret.
+func (s *Enrollment) GetTotpSecret() OptString {
+	return s.TotpSecret
+}
+
+// GetOtpauthURI returns the value of OtpauthURI.
+func (s *Enrollment) GetOtpauthURI() OptString {
+	return s.OtpauthURI
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *Enrollment) GetExpiresAt() Timestamp {
+	return s.ExpiresAt
+}
+
+// SetEnrollmentToken sets the value of EnrollmentToken.
+func (s *Enrollment) SetEnrollmentToken(val EnrollmentToken) {
+	s.EnrollmentToken = val
+}
+
+// SetTotpSecret sets the value of TotpSecret.
+func (s *Enrollment) SetTotpSecret(val OptString) {
+	s.TotpSecret = val
+}
+
+// SetOtpauthURI sets the value of OtpauthURI.
+func (s *Enrollment) SetOtpauthURI(val OptString) {
+	s.OtpauthURI = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *Enrollment) SetExpiresAt(val Timestamp) {
+	s.ExpiresAt = val
+}
+
+type EnrollmentToken string
+
 // Ref: #/components/schemas/Estimate
 type Estimate struct {
 	Total           int      `json:"total"`
@@ -1512,6 +1594,8 @@ func (s *InviteList) GetItems() []Invite {
 func (s *InviteList) SetItems(val []Invite) {
 	s.Items = val
 }
+
+type InviteToken string
 
 // Ref: #/components/schemas/Job
 type Job struct {
@@ -4006,6 +4090,52 @@ func (o OptOrder) Or(d Order) Order {
 	return d
 }
 
+// NewOptPassword returns new OptPassword with value set to v.
+func NewOptPassword(v Password) OptPassword {
+	return OptPassword{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptPassword is optional Password.
+type OptPassword struct {
+	Value Password
+	Set   bool
+}
+
+// IsSet returns true if OptPassword was set.
+func (o OptPassword) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptPassword) Reset() {
+	var v Password
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptPassword) SetTo(v Password) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptPassword) Get() (v Password, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptPassword) Or(d Password) Password {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptPollDetail returns new OptPollDetail with value set to v.
 func NewOptPollDetail(v PollDetail) OptPollDetail {
 	return OptPollDetail{
@@ -4466,6 +4596,52 @@ func (o OptTimestamp) Or(d Timestamp) Timestamp {
 	return d
 }
 
+// NewOptWWWAuthenticate returns new OptWWWAuthenticate with value set to v.
+func NewOptWWWAuthenticate(v WWWAuthenticate) OptWWWAuthenticate {
+	return OptWWWAuthenticate{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptWWWAuthenticate is optional WWWAuthenticate.
+type OptWWWAuthenticate struct {
+	Value WWWAuthenticate
+	Set   bool
+}
+
+// IsSet returns true if OptWWWAuthenticate was set.
+func (o OptWWWAuthenticate) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptWWWAuthenticate) Reset() {
+	var v WWWAuthenticate
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptWWWAuthenticate) SetTo(v WWWAuthenticate) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptWWWAuthenticate) Get() (v WWWAuthenticate, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptWWWAuthenticate) Or(d WWWAuthenticate) WWWAuthenticate {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptWorkDetail returns new OptWorkDetail with value set to v.
 func NewOptWorkDetail(v WorkDetail) OptWorkDetail {
 	return OptWorkDetail{
@@ -4712,6 +4888,8 @@ func (s *Order) UnmarshalText(data []byte) error {
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
+
+type Password string
 
 // PauseSourceNoContent is response for PauseSource operation.
 type PauseSourceNoContent struct{}
@@ -4960,9 +5138,10 @@ func (*ProblemHeaders) addSourceRes() {}
 
 // ProblemStatusCodeWithHeaders wraps Problem with status code and response headers.
 type ProblemStatusCodeWithHeaders struct {
-	StatusCode int
-	RetryAfter OptInt
-	Response   Problem
+	StatusCode      int
+	RetryAfter      OptInt
+	WWWAuthenticate OptWWWAuthenticate
+	Response        Problem
 }
 
 // GetStatusCode returns the value of StatusCode.
@@ -4973,6 +5152,11 @@ func (s *ProblemStatusCodeWithHeaders) GetStatusCode() int {
 // GetRetryAfter returns the value of RetryAfter.
 func (s *ProblemStatusCodeWithHeaders) GetRetryAfter() OptInt {
 	return s.RetryAfter
+}
+
+// GetWWWAuthenticate returns the value of WWWAuthenticate.
+func (s *ProblemStatusCodeWithHeaders) GetWWWAuthenticate() OptWWWAuthenticate {
+	return s.WWWAuthenticate
 }
 
 // GetResponse returns the value of Response.
@@ -4990,9 +5174,31 @@ func (s *ProblemStatusCodeWithHeaders) SetRetryAfter(val OptInt) {
 	s.RetryAfter = val
 }
 
+// SetWWWAuthenticate sets the value of WWWAuthenticate.
+func (s *ProblemStatusCodeWithHeaders) SetWWWAuthenticate(val OptWWWAuthenticate) {
+	s.WWWAuthenticate = val
+}
+
 // SetResponse sets the value of Response.
 func (s *ProblemStatusCodeWithHeaders) SetResponse(val Problem) {
 	s.Response = val
+}
+
+// Ref: #/components/schemas/RecoveryCodes
+type RecoveryCodes struct {
+	// Single-use codes for logging in without the authenticator app, shown only here (verbatim); empty
+	// when a password-only reset keeps the current ones.
+	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+// GetRecoveryCodes returns the value of RecoveryCodes.
+func (s *RecoveryCodes) GetRecoveryCodes() []string {
+	return s.RecoveryCodes
+}
+
+// SetRecoveryCodes sets the value of RecoveryCodes.
+func (s *RecoveryCodes) SetRecoveryCodes(val []string) {
+	s.RecoveryCodes = val
 }
 
 // RemoveSourceNoContent is response for RemoveSource operation.
@@ -5292,6 +5498,33 @@ func (s *RequestKind) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/ResetRequest
+type ResetRequest struct {
+	InviteToken InviteToken `json:"invite_token"`
+	// The new password; required exactly when the link's scope replaces it.
+	Password OptPassword `json:"password"`
+}
+
+// GetInviteToken returns the value of InviteToken.
+func (s *ResetRequest) GetInviteToken() InviteToken {
+	return s.InviteToken
+}
+
+// GetPassword returns the value of Password.
+func (s *ResetRequest) GetPassword() OptPassword {
+	return s.Password
+}
+
+// SetInviteToken sets the value of InviteToken.
+func (s *ResetRequest) SetInviteToken(val InviteToken) {
+	s.InviteToken = val
+}
+
+// SetPassword sets the value of Password.
+func (s *ResetRequest) SetPassword(val OptPassword) {
+	s.Password = val
 }
 
 // What a reset replaces.
@@ -5714,6 +5947,44 @@ func (s *SessionList) SetItems(val []Session) {
 
 // SetSourceSettingsNoContent is response for SetSourceSettings operation.
 type SetSourceSettingsNoContent struct{}
+
+// Ref: #/components/schemas/SignupRequest
+type SignupRequest struct {
+	InviteToken InviteToken `json:"invite_token"`
+	// 3 to 32 of a-z, 0-9, `_` and `-`; letters in either case, stored lower-case.
+	Username string   `json:"username"`
+	Password Password `json:"password"`
+}
+
+// GetInviteToken returns the value of InviteToken.
+func (s *SignupRequest) GetInviteToken() InviteToken {
+	return s.InviteToken
+}
+
+// GetUsername returns the value of Username.
+func (s *SignupRequest) GetUsername() string {
+	return s.Username
+}
+
+// GetPassword returns the value of Password.
+func (s *SignupRequest) GetPassword() Password {
+	return s.Password
+}
+
+// SetInviteToken sets the value of InviteToken.
+func (s *SignupRequest) SetInviteToken(val InviteToken) {
+	s.InviteToken = val
+}
+
+// SetUsername sets the value of Username.
+func (s *SignupRequest) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetPassword sets the value of Password.
+func (s *SignupRequest) SetPassword(val Password) {
+	s.Password = val
+}
 
 // Ref: #/components/schemas/SortDirection
 type SortDirection string
@@ -7386,6 +7657,8 @@ func (s *StatusWorksByStatusItemStatus) UnmarshalText(data []byte) error {
 	}
 }
 
+type TOTPCode string
+
 // A stored tag. Strings other than the `type`s and `info_fetched_at` are content, hashed unless
 // revealed. Lists are `[]` when empty.
 // Ref: #/components/schemas/Tag
@@ -8190,6 +8463,40 @@ func (s *Version) SetVersion(val string) {
 // SetParserVersion sets the value of ParserVersion.
 func (s *Version) SetParserVersion(val int) {
 	s.ParserVersion = val
+}
+
+type WWWAuthenticate string
+
+const (
+	WWWAuthenticateBearerRealmAo3mirror WWWAuthenticate = "Bearer realm=\"ao3mirror\""
+)
+
+// AllValues returns all WWWAuthenticate values.
+func (WWWAuthenticate) AllValues() []WWWAuthenticate {
+	return []WWWAuthenticate{
+		WWWAuthenticateBearerRealmAo3mirror,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s WWWAuthenticate) MarshalText() ([]byte, error) {
+	switch s {
+	case WWWAuthenticateBearerRealmAo3mirror:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *WWWAuthenticate) UnmarshalText(data []byte) error {
+	switch WWWAuthenticate(data) {
+	case WWWAuthenticateBearerRealmAo3mirror:
+		*s = WWWAuthenticateBearerRealmAo3mirror
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // A stored work. Strings other than `status`, tag `type` and the `_on`/`_at` dates are content, hashed

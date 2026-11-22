@@ -98,6 +98,23 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources/{id}/cancel
 	CancelSource(ctx context.Context, params CancelSourceParams, options ...RequestOption) (*SourceCancelled, error)
+	// ConfirmReset invokes confirmReset operation.
+	//
+	// Applies the new password and/or TOTP secret, clears the login backoff, revokes every session of the
+	// account and uses up the link. A reset that replaced the TOTP secret returns 10 new recovery codes
+	// (shown only here); a password-only reset keeps the current ones and returns an empty list. A wrong
+	// code or an unusable enrollment token is 401 `invalid-credentials`.
+	//
+	// POST /api/v1/auth/reset/confirm
+	ConfirmReset(ctx context.Context, request *ConfirmEnrollmentRequest, options ...RequestOption) (*RecoveryCodes, error)
+	// ConfirmSignup invokes confirmSignup operation.
+	//
+	// Creates the account, uses up the invite and returns 10 single-use recovery codes, shown only here.
+	// Then log in. A wrong code or an unusable enrollment token is 401 `invalid-credentials`; a username
+	// taken meanwhile is 409 `already-exists`.
+	//
+	// POST /api/v1/auth/signup/confirm
+	ConfirmSignup(ctx context.Context, request *ConfirmEnrollmentRequest, options ...RequestOption) (*RecoveryCodes, error)
 	// ConfirmSource invokes confirmSource operation.
 	//
 	// Any other state is 409 `state-conflict`.
@@ -453,6 +470,27 @@ type Invoker interface {
 	//
 	// PATCH /api/v1/sources/{id}
 	SetSourceSettings(ctx context.Context, request *SourceSettingsRequest, params SetSourceSettingsParams, options ...RequestOption) error
+	// Signup invokes signup operation.
+	//
+	// Takes the invite link's token (after `#token=`), a username and a password, and returns a new TOTP
+	// secret to add to an authenticator app plus the enrollment token to confirm it with
+	// (`/api/v1/auth/signup/confirm`) before `expires_at` (15 minutes, never past the invite). An unusable
+	// invite is 401 `invalid-credentials`, checked before anything else; then a taken username is 409
+	// `already-exists`, and a password the policy refuses is a 422 at `/password`. Starting again with the
+	// same invite replaces the pending signup. Rate limited per client by `api.rate.signup_per_hour`,
+	// shared by both steps of signup and reset.
+	//
+	// POST /api/v1/auth/signup
+	Signup(ctx context.Context, request *SignupRequest, options ...RequestOption) (*Enrollment, error)
+	// StartReset invokes startReset operation.
+	//
+	// Takes the reset link's token and, exactly when the link's scope replaces the password, the new
+	// password (else a 422 at `/password`). When the scope replaces the TOTP secret the response holds the
+	// new one; otherwise confirm with a code from the current one. An unusable link is 401
+	// `invalid-credentials`.
+	//
+	// POST /api/v1/auth/reset
+	StartReset(ctx context.Context, request *ResetRequest, options ...RequestOption) (*Enrollment, error)
 }
 
 // Client implements OAS client.
@@ -625,6 +663,139 @@ func (c *Client) sendCancelSource(ctx context.Context, params CancelSourceParams
 	}
 
 	result, err := decodeCancelSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConfirmReset invokes confirmReset operation.
+//
+// Applies the new password and/or TOTP secret, clears the login backoff, revokes every session of the
+// account and uses up the link. A reset that replaced the TOTP secret returns 10 new recovery codes
+// (shown only here); a password-only reset keeps the current ones and returns an empty list. A wrong
+// code or an unusable enrollment token is 401 `invalid-credentials`.
+//
+// POST /api/v1/auth/reset/confirm
+func (c *Client) ConfirmReset(ctx context.Context, request *ConfirmEnrollmentRequest, options ...RequestOption) (*RecoveryCodes, error) {
+	res, err := c.sendConfirmReset(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendConfirmReset(ctx context.Context, request *ConfirmEnrollmentRequest, requestOptions ...RequestOption) (res *RecoveryCodes, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/reset/confirm"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConfirmResetRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeConfirmResetResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConfirmSignup invokes confirmSignup operation.
+//
+// Creates the account, uses up the invite and returns 10 single-use recovery codes, shown only here.
+// Then log in. A wrong code or an unusable enrollment token is 401 `invalid-credentials`; a username
+// taken meanwhile is 409 `already-exists`.
+//
+// POST /api/v1/auth/signup/confirm
+func (c *Client) ConfirmSignup(ctx context.Context, request *ConfirmEnrollmentRequest, options ...RequestOption) (*RecoveryCodes, error) {
+	res, err := c.sendConfirmSignup(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendConfirmSignup(ctx context.Context, request *ConfirmEnrollmentRequest, requestOptions ...RequestOption) (res *RecoveryCodes, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/signup/confirm"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConfirmSignupRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeConfirmSignupResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -5326,6 +5497,143 @@ func (c *Client) sendSetSourceSettings(ctx context.Context, request *SourceSetti
 	}
 
 	result, err := decodeSetSourceSettingsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// Signup invokes signup operation.
+//
+// Takes the invite link's token (after `#token=`), a username and a password, and returns a new TOTP
+// secret to add to an authenticator app plus the enrollment token to confirm it with
+// (`/api/v1/auth/signup/confirm`) before `expires_at` (15 minutes, never past the invite). An unusable
+// invite is 401 `invalid-credentials`, checked before anything else; then a taken username is 409
+// `already-exists`, and a password the policy refuses is a 422 at `/password`. Starting again with the
+// same invite replaces the pending signup. Rate limited per client by `api.rate.signup_per_hour`,
+// shared by both steps of signup and reset.
+//
+// POST /api/v1/auth/signup
+func (c *Client) Signup(ctx context.Context, request *SignupRequest, options ...RequestOption) (*Enrollment, error) {
+	res, err := c.sendSignup(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendSignup(ctx context.Context, request *SignupRequest, requestOptions ...RequestOption) (res *Enrollment, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/signup"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSignupRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeSignupResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartReset invokes startReset operation.
+//
+// Takes the reset link's token and, exactly when the link's scope replaces the password, the new
+// password (else a 422 at `/password`). When the scope replaces the TOTP secret the response holds the
+// new one; otherwise confirm with a code from the current one. An unusable link is 401
+// `invalid-credentials`.
+//
+// POST /api/v1/auth/reset
+func (c *Client) StartReset(ctx context.Context, request *ResetRequest, options ...RequestOption) (*Enrollment, error) {
+	res, err := c.sendStartReset(ctx, request, options...)
+	return res, err
+}
+
+func (c *Client) sendStartReset(ctx context.Context, request *ResetRequest, requestOptions ...RequestOption) (res *Enrollment, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/auth/reset"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStartResetRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeStartResetResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -34,6 +34,7 @@ func testOptions(t *testing.T) runtime.Options {
 		GeneralPerMin:    1000,
 		SourceAddPerHour: 1000,
 		SearchPerMin:     1000,
+		SignupPerHour:    1000,
 	}
 }
 
@@ -58,6 +59,7 @@ func TestNewValidatesOptions(t *testing.T) {
 		"negative rate": func(o *runtime.Options) { o.GeneralPerMin = -1 },
 		"no add rate":   func(o *runtime.Options) { o.SourceAddPerHour = 0 },
 		"no search":     func(o *runtime.Options) { o.SearchPerMin = 0 },
+		"no signup":     func(o *runtime.Options) { o.SignupPerHour = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -215,6 +217,15 @@ var routeSamples = map[string]routeSample{
 	"DELETE /api/v1/admin/sessions/{id}":    {target: "/api/v1/admin/sessions/1", status: http.StatusNoContent, fresh: true},
 	"POST /api/v1/admin/signing-keys/rotate": {target: "/api/v1/admin/signing-keys/rotate", status: http.StatusNoContent,
 		fresh: true},
+	// Auth entry points over the seeded invites and pending enrollments.
+	"POST /api/v1/auth/signup": {target: "/api/v1/auth/signup", status: http.StatusOK, fresh: true,
+		body: `{"invite_token":"` + seedInviteToken + `","username":"Fixture_Signup","password":"fixture correct horse"}`},
+	"POST /api/v1/auth/signup/confirm": {target: "/api/v1/auth/signup/confirm", status: http.StatusCreated, fresh: true,
+		body: `{"enrollment_token":"` + seedSignupEnrollToken + `","code":"` + seedTOTPCode + `"}`},
+	"POST /api/v1/auth/reset": {target: "/api/v1/auth/reset", status: http.StatusOK, fresh: true,
+		body: `{"invite_token":"` + seedResetToken + `"}`},
+	"POST /api/v1/auth/reset/confirm": {target: "/api/v1/auth/reset/confirm", status: http.StatusOK, fresh: true,
+		body: `{"enrollment_token":"` + seedResetEnrollToken + `","code":"` + seedTOTPCode + `"}`},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.

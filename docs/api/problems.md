@@ -98,7 +98,7 @@ confirming a source that is not pending confirmation).
 ## already-exists
 
 **409 Already Exists.** The resource already exists (e.g. adding a source that was already
-added).
+added, or signing up with a username an account already has).
 
 ## work-too-large
 
@@ -125,10 +125,19 @@ delay (the limit's window, in seconds). Every response that passed a limit carri
 `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` for the last limit it
 passed (`openapi.yaml` lists the limits).
 
+## invalid-credentials
+
+**401 Invalid Credentials.** An auth step was refused: a wrong password, TOTP code or recovery
+code, or a token from the body (invite, enrollment, login challenge, refresh) that is unknown,
+expired, already used or revoked. The detail says only which of the two it was; it never says
+whether an account exists. Start the flow again (a new invite or reset link if that one is
+spent). Like every 401, it carries `WWW-Authenticate: Bearer realm="ao3mirror"`.
+
 ## unavailable
 
-**503 Service Unavailable.** The server is busy (too many requests in flight) or the request
-did not finish within the request timeout. Retry later; a busy response carries `Retry-After`.
+**503 Service Unavailable.** The server is busy (too many requests in flight, or too many
+password hashes at once) or the request did not finish within the request timeout. Retry
+later; a busy response carries `Retry-After`.
 
 ## internal-error
 

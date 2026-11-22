@@ -125,7 +125,7 @@ func TestAdminInvites(t *testing.T) {
 
 	// The default ttl is auth.invite_ttl (24h when unset).
 	created := requireInviteLink(t, postJSON(t, h, "/api/v1/admin/invites", `{}`), "signup", 24*time.Hour)
-	assert.Equal(t, seedInvite+1, created.ID)
+	assert.Equal(t, seedReset+1, created.ID)
 	requireInviteLink(t, postJSON(t, h, "/api/v1/admin/invites", `{"ttl":"1m"}`), "signup", time.Minute)
 	reset := requireInviteLink(t, postJSON(t, h, userPath(seedUser, "/reset"), `{"scope":"totp","ttl":"168h"}`), "reset",
 		7*24*time.Hour)
@@ -133,11 +133,11 @@ func TestAdminInvites(t *testing.T) {
 	requireNoContent(t, del(t, h, "/api/v1/admin/invites/1"), "revoke")
 	requireNoContent(t, del(t, h, "/api/v1/admin/invites/1"), "revoking twice is a no-op")
 	invites := getJSON[dto.Items[dto.Invite]](t, h, "/api/v1/admin/invites").Items
-	require.Len(t, invites, 4)
+	require.Len(t, invites, 5)
 	assert.Equal(t, dto.Invite{ID: reset.ID, Kind: "reset", UserID: seedUser, Scope: "totp", CreatedAt: seedTime,
 		ExpiresAt: seedTime.Add(7 * 24 * time.Hour)}, invites[0], "newest first")
 	assert.Equal(t, dto.Invite{ID: seedInvite, Kind: "signup", CreatedAt: seedTime.Add(-time.Minute),
-		ExpiresAt: seedTime.Add(time.Hour), RevokedAt: seedTime}, invites[3])
+		ExpiresAt: seedTime.Add(time.Hour), RevokedAt: seedTime}, invites[4])
 
 	w := del(t, h, "/api/v1/admin/invites/99")
 	require.Equal(t, http.StatusNotFound, w.Code)
@@ -156,7 +156,7 @@ func TestAdminInvites(t *testing.T) {
 	} {
 		assert.Equal(t, want, keys(problemPointers(t, postJSON(t, h, userPath(seedUser, "/reset"), body), body)), body)
 	}
-	assert.Len(t, getJSON[dto.Items[dto.Invite]](t, h, "/api/v1/admin/invites").Items, 4)
+	assert.Len(t, getJSON[dto.Items[dto.Invite]](t, h, "/api/v1/admin/invites").Items, 5)
 }
 
 func TestAdminRotateSigningKey(t *testing.T) {

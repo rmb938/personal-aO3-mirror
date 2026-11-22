@@ -282,10 +282,12 @@ func (a *API) recoverer(next http.Handler) http.Handler {
 }
 
 // securityHeaders sets the headers every response carries. There are no CORS headers: the UI is
-// same-origin.
+// same-origin. Cache-Control: no-store keeps tokens (RFC 6749 §5.1) and every other response
+// out of browser and Cloudflare caches.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		h.Set("Referrer-Policy", "no-referrer")

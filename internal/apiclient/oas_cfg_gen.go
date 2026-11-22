@@ -10,9 +10,16 @@ import (
 )
 
 var regexMap = map[string]ogenregex.Regexp{
-	"^[0-9a-f]{64}$":     ogenregex.MustCompile("^[0-9a-f]{64}$"),
-	"^[a-z0-9_-]{3,32}$": ogenregex.MustCompile("^[a-z0-9_-]{3,32}$"),
+	"^[0-9]{6}$":                                ogenregex.MustCompile("^[0-9]{6}$"),
+	"^[0-9a-f]{64}$":                            ogenregex.MustCompile("^[0-9a-f]{64}$"),
+	"^[A-Z2-7]{32}$":                            ogenregex.MustCompile("^[A-Z2-7]{32}$"),
+	"^[A-Za-z0-9_-]{3,32}$":                     ogenregex.MustCompile("^[A-Za-z0-9_-]{3,32}$"),
+	"^[a-z0-9_-]{3,32}$":                        ogenregex.MustCompile("^[a-z0-9_-]{3,32}$"),
+	"^[a-z2-7]{4}(?:-[a-z2-7]{4}){3}$":          ogenregex.MustCompile("^[a-z2-7]{4}(?:-[a-z2-7]{4}){3}$"),
+	"^enr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$": ogenregex.MustCompile("^enr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"),
 	"^https?://(?:(?:[a-z0-9-]{1,63}\\.){0,7}[a-z0-9-]{1,63}|\\[[0-9a-f:.]{2,45}\\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$": ogenregex.MustCompile("^https?://(?:(?:[a-z0-9-]{1,63}\\.){0,7}[a-z0-9-]{1,63}|\\[[0-9a-f:.]{2,45}\\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"),
+	"^inv_[A-Za-z0-9_-]{43}$": ogenregex.MustCompile("^inv_[A-Za-z0-9_-]{43}$"),
+	"^otpauth://totp/(?:[A-Za-z0-9._-]|%20){1,32}:[a-z0-9_-]{3,32}\\?secret=[A-Z2-7]{32}&issuer=(?:[A-Za-z0-9._-]|%20){1,32}&algorithm=SHA1&digits=6&period=30$": ogenregex.MustCompile("^otpauth://totp/(?:[A-Za-z0-9._-]|%20){1,32}:[a-z0-9_-]{3,32}\\?secret=[A-Z2-7]{32}&issuer=(?:[A-Za-z0-9._-]|%20){1,32}&algorithm=SHA1&digits=6&period=30$"),
 }
 
 type (

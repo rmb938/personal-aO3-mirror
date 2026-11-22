@@ -30,5 +30,8 @@ func Types() []any {
 		CreatorQuery{},
 		CreateInvite{},
 		CreateReset{},
+		Signup{},
+		Reset{},
+		ConfirmEnrollment{},
 	}
 }

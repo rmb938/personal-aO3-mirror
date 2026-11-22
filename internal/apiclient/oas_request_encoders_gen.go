@@ -24,6 +24,34 @@ func encodeAddSourceRequest(
 	return nil
 }
 
+func encodeConfirmResetRequest(
+	req *ConfirmEnrollmentRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeConfirmSignupRequest(
+	req *ConfirmEnrollmentRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeCreateInviteRequest(
 	req *CreateInviteRequest,
 	r *http.Request,
@@ -152,6 +180,34 @@ func encodeRefreshSourceRequest(
 
 func encodeSetSourceSettingsRequest(
 	req *SourceSettingsRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeSignupRequest(
+	req *SignupRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeStartResetRequest(
+	req *ResetRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

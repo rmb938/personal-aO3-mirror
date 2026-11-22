@@ -44,6 +44,12 @@ const (
 	// Path cannot build it.
 	Image = "/api/v1/images/{sha256}"
 
+	// Auth entry points (stage 16f): no access token needed.
+	AuthSignup        = "/api/v1/auth/signup"
+	AuthSignupConfirm = "/api/v1/auth/signup/confirm"
+	AuthReset         = "/api/v1/auth/reset"
+	AuthResetConfirm  = "/api/v1/auth/reset/confirm"
+
 	// Admin socket only.
 	SourceConfirm = "/api/v1/sources/{id}/confirm"
 	SourcePause   = "/api/v1/sources/{id}/pause"

@@ -113,6 +113,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		GeneralPerMin:    cfg.API.Rate.GeneralPerMin,
 		SourceAddPerHour: cfg.API.Rate.SourceAddPerHour,
 		SearchPerMin:     cfg.API.Rate.SearchPerMin,
+		SignupPerHour:    cfg.API.Rate.SignupPerHour,
 	}, log, controllers.New(ctlOpts))
 	if err != nil {
 		return nil, err
@@ -252,7 +253,7 @@ func (s *server) serve(ctx context.Context) (err error) {
 		"trusted_proxies", ac.TrustedProxies, "allowed_hosts", ac.AllowedHosts, "no_reveal", s.noReveal,
 		"request_timeout", ac.RequestTimeout.String(), "hash_key_rotation", ac.HashKeyRotation.String(),
 		"general_per_min", ac.Rate.GeneralPerMin, "search_per_min", ac.Rate.SearchPerMin,
-		"source_add_per_hour", ac.Rate.SourceAddPerHour,
+		"source_add_per_hour", ac.Rate.SourceAddPerHour, "signup_per_hour", ac.Rate.SignupPerHour,
 		"public_url", ac.PublicURL, "access_ttl", au.AccessTTL.String(), "refresh_ttl", au.RefreshTTL.String(),
 		"max_session_age", au.MaxSessionAge.String(), "invite_ttl", au.InviteTTL.String(),
 	}

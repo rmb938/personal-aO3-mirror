@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,17 +23,42 @@ const (
 	seedUser      int64 = 1 // seedUserName, with seedSession
 	seedOtherUser int64 = 2 // seedOtherName, disabled, no sessions
 	seedSession   int64 = 1
-	seedInvite    int64 = 1 // a usable signup invite
+	seedInvite    int64 = 1 // a usable signup invite (seedInviteToken), with a pending signup
+	seedReset     int64 = 2 // a usable TOTP reset of seedUser (seedResetToken), with a pending reset
 
 	seedUserName  = "fixture_user"
 	seedOtherName = "fixture_other"
+	seedNewName   = "fixture_new" // the pending signup's username
 )
+
+// fixtureToken is a well-formed opaque token of kind: tag, padded with base64url zero bits.
+func fixtureToken(kind auth.TokenKind, tag string) string {
+	return string(kind) + tag + strings.Repeat("A", 43-len(tag))
+}
+
+// The seeded tokens (stored as their hashes, like real ones) and the pending enrollments' TOTP
+// secret, whose code at seedTime confirms them.
+var (
+	seedInviteToken       = fixtureToken(auth.InviteToken, "fixtureSignupInvite")
+	seedResetToken        = fixtureToken(auth.InviteToken, "fixtureResetInvite")
+	seedSignupEnrollToken = fixtureToken(auth.EnrollmentToken, "fixtureSignup")
+	seedResetEnrollToken  = fixtureToken(auth.EnrollmentToken, "fixtureReset")
+	seedTOTPSecret        = []byte("fixture-totp-secret!") // 20 bytes
+	seedTOTPCode          = auth.TOTPCode(seedTOTPSecret, seedTime)
+)
+
+// tokenSum is a seeded token's stored hash.
+func tokenSum(tb testing.TB, kind auth.TokenKind, token string) [32]byte {
+	tb.Helper()
+	sum, ok := auth.TokenSum(kind, token)
+	require.True(tb, ok, "fixture token %s", kind)
+	return sum
+}
 
 // testPublicURL is the seeded Auth controller's api.public_url (the invite links' origin).
 const testPublicURL = "https://mirror.example.com"
 
-// cheapArgon2 keeps the tests fast (nothing here hashes a password, but NewHasher needs
-// parameters).
+// cheapArgon2 keeps the tests fast (only the signup and reset routes hash a password).
 var cheapArgon2 = auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
 // newTestAuth opens a temp users.db and auth.key, seeds the accounts above and returns the
@@ -63,9 +89,23 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 			seedTime.Add(24*time.Hour)); err != nil {
 			return err
 		}
-		_, err := tx.CreateInvite(ctx, model.Invite{Kind: model.InviteSignup, CreatedAt: seedTime.Add(-time.Minute),
-			ExpiresAt: seedTime.Add(time.Hour)}, sha256.Sum256([]byte("fixture invite")))
-		return err
+		if _, err := tx.CreateInvite(ctx, model.Invite{Kind: model.InviteSignup, CreatedAt: seedTime.Add(-time.Minute),
+			ExpiresAt: seedTime.Add(time.Hour)}, tokenSum(tb, auth.InviteToken, seedInviteToken)); err != nil {
+			return err
+		}
+		if _, err := tx.CreateInvite(ctx, model.Invite{Kind: model.InviteReset, TargetUserID: seedUser, Scope: model.ResetTOTP,
+			CreatedAt: seedTime.Add(-time.Minute), ExpiresAt: seedTime.Add(time.Hour)},
+			tokenSum(tb, auth.InviteToken, seedResetToken)); err != nil {
+			return err
+		}
+		if err := tx.PutEnrollment(ctx, model.Enrollment{InviteID: seedInvite, Username: seedNewName, PasswordPHC: "$fixture",
+			TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.EnrollmentTOTP(seedInvite), seedTOTPSecret),
+			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedSignupEnrollToken)); err != nil {
+			return err
+		}
+		return tx.PutEnrollment(ctx, model.Enrollment{InviteID: seedReset,
+			TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.EnrollmentTOTP(seedReset), seedTOTPSecret),
+			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedResetEnrollToken))
 	}))
 	a, err := controllers.NewAuth(ctx, controllers.AuthOptions{Users: users, Secrets: secrets, Hasher: hasher, Logger: log,
 		Now: func() time.Time { return seedTime }, PublicURL: testPublicURL})
