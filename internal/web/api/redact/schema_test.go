@@ -30,6 +30,7 @@ type tWork struct {
 	Status workStat   `json:"status"`
 	Title  string     `json:"title"`
 	Seen   []workStat `json:"seen,omitzero"`
+	Token  tToken     `json:"token,omitzero"` // Verbatim (verbatim_test.go)
 }
 
 type tImage struct {

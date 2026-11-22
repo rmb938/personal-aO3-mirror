@@ -122,7 +122,12 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
        hashed;
      - a field whose key ends in `_at` and whose value is strict RFC3339 UTC;
      - a field whose key ends in `_on` and whose value is `YYYY-MM-DD`;
-     - a `dto.Duration` field whose value is exactly a Go duration string (from 3f).
+     - a `dto.Duration` field whose value is exactly a Go duration string (from 3f);
+     - a **Verbatim** field (a `dto` type with `VerbatimPattern()`, from 16c: tokens, usernames,
+       TOTP secrets and URIs, recovery codes, invite URLs) whose whole value matches the
+       pattern. Any other value is a 500 in both modes, never a hash. Patterns are checked at
+       startup: printable ASCII without the space, bounded repetition, at most 1024 bytes, no
+       empty match.
    - **every other string is replaced with `h_` + 24 hex of HMAC-SHA256(key, value)**.
      - Within one key epoch the hash is deterministic, so equal names hash equally across fields,
        routes and requests (Claude can match a work's tag hash with `/tags/{id}`).
@@ -1737,9 +1742,31 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `unknown_kid`, `bad_signature`, `expired`, `not_yet_valid`, `bad_claims`) for the logs.
         `nbf`, `iat`, `sub`, `sid` and `jti` are all required; `sub`/`sid` are canonical
         positive decimal IDs.
-    - [ ] **16c. Enforcer pattern types**: the `redact`/`runtime` registry and the dto pattern
+    - [x] **16c. Enforcer pattern types**: the `redact`/`runtime` registry and the dto pattern
       types. The fuzz test keeps its guarantee (sentinels that can't match a pattern); new
       tests: a value missing its pattern is a 500, and a pattern key never passes free text.
+      As built:
+      - `redact.Verbatim` (`VerbatimPattern() string`, satisfied structurally like `Enum`) and
+        `ruleVerbatim`. A mismatch is a `*PatternError` (Go field path only) in hashed and
+        revealed mode, so `runtime.enforce` answers 500 and logs the path. A Verbatim type must
+        be a plain string kind that doesn't marshal itself and isn't also an Enum or Duration;
+        `RegisterFieldEnum` and `RegisterPointerField` refuse its fields.
+      - Patterns are parsed with `regexp/syntax` at registration and limited to literals,
+        classes, groups, alternation, `?` and bounded `{n,m}`, over `!`..`~` (no space, no
+        `.`, `*`, `+`, anchors or case folding), matching at most 1024 bytes and never the
+        empty string. They are anchored `\A(?:…)\z`. A value without a space and with a hard
+        length cap can't carry prose.
+      - The dto types are per value, tighter than the planned single `Token`: `Username`,
+        `AccessToken`, `EnrollmentToken`, `ChallengeToken`, `RefreshToken`, `TOTPSecret`,
+        `OTPAuthURI`, `RecoveryCode`, `InviteURL` (`dto/verbatim.go`). Invite tokens only
+        appear inside `InviteURL`. `AccessToken` pins the base64url of the fixed JWT header
+        (only the kid varies), since base64url alone matches `SENTINEL-…`; base64url last
+        characters are limited to the values with zero spare bits. `InviteURL` allows
+        `/signup` and `/reset`, an http(s) lower-case host or bracketed IPv6, a port, no path.
+      - `runtime/verbatim_test.go` registers a test DTO with every type, checks 32 values of
+        each from `internal/auth` pass unchanged in both modes, and checks sentinel, free text
+        and near misses (prefix, suffix, whitespace, case, non-ASCII) are 500s with no trace
+        in the body or logs. No route uses the types yet (16e adds the first).
     - [ ] **16d. users.db store + `Auth` controller**: schema, `OpenUsers`, transactions, every
       controller method, with clock-driven tests (expiry, replay, backoff, key rotation,
       refresh reuse).
