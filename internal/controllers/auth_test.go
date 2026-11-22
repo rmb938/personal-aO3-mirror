@@ -1,0 +1,435 @@
+package controllers
+
+import (
+	"bytes"
+	"context"
+	"encoding/base32"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
+	"github.com/rmb938/personal-aO3-mirror/internal/model"
+	"github.com/rmb938/personal-aO3-mirror/internal/store"
+)
+
+// cheapArgon2 keeps the tests fast; the parameters don't change any behaviour under test.
+var cheapArgon2 = auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
+
+// Fixture passwords (they pass the policy).
+const (
+	testPassword  = "fixture correct horse battery"
+	testPassword2 = "fixture new staple battery" //nolint:gosec // G101: a test fixture, not a credential
+)
+
+type authEnv struct {
+	a     *Auth
+	opts  AuthOptions
+	clk   *fakeClock
+	users *store.Users
+	logs  *bytes.Buffer
+}
+
+func newAuthEnv(t *testing.T) *authEnv {
+	t.Helper()
+	dir := t.TempDir()
+	clk := &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)} // on a TOTP step boundary
+	users, err := store.OpenUsers(context.Background(), filepath.Join(dir, "api"), store.Options{Now: clk.Now})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, users.Close()) })
+	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, "api", auth.KeyFileName))
+	require.NoError(t, err)
+	hasher, err := auth.NewHasher(auth.HasherOptions{Params: cheapArgon2})
+	require.NoError(t, err)
+	logs := &bytes.Buffer{}
+	opts := AuthOptions{Users: users, Secrets: secrets, Hasher: hasher, Now: clk.Now,
+		Logger:    slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		PublicURL: "https://mirror.example.com"}
+	a, err := NewAuth(context.Background(), opts)
+	require.NoError(t, err)
+	return &authEnv{a: a, opts: opts, clk: clk, users: users, logs: logs}
+}
+
+func (e *authEnv) advance(d time.Duration) { _ = e.clk.Sleep(context.Background(), d) }
+
+// nextStep moves the clock to the start of the next TOTP step, so a fresh code is accepted.
+func (e *authEnv) nextStep() {
+	now := e.clk.Now()
+	e.advance(now.Truncate(auth.TOTPPeriod).Add(auth.TOTPPeriod).Sub(now))
+}
+
+func inviteToken(t *testing.T, l InviteLink) string {
+	t.Helper()
+	_, tok, ok := strings.Cut(l.URL, "#token=")
+	require.True(t, ok, "invite URL has a token")
+	return tok
+}
+
+func (e *authEnv) invite(t *testing.T) string {
+	t.Helper()
+	l, err := e.a.CreateInvite(context.Background(), 0)
+	require.NoError(t, err)
+	return inviteToken(t, l)
+}
+
+func decodeSecret(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(s)
+	require.NoError(t, err)
+	return b
+}
+
+type testUser struct {
+	id     int64
+	name   string
+	secret []byte
+	codes  []string
+}
+
+// signup creates an account through both signup steps.
+func (e *authEnv) signup(t *testing.T, name string) testUser {
+	t.Helper()
+	ctx := context.Background()
+	en, err := e.a.Signup(ctx, e.invite(t), name, testPassword)
+	require.NoError(t, err)
+	secret := decodeSecret(t, en.TOTPSecret)
+	c, err := e.a.ConfirmSignup(ctx, en.Token, auth.TOTPCode(secret, e.clk.Now()))
+	require.NoError(t, err)
+	return testUser{id: c.UserID, name: name, secret: secret, codes: c.RecoveryCodes}
+}
+
+// login runs both login steps with a fresh TOTP code.
+func (e *authEnv) login(t *testing.T, u testUser) TokenPair {
+	t.Helper()
+	ctx := context.Background()
+	ch, err := e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	e.nextStep()
+	p, err := e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: auth.TOTPCode(u.secret, e.clk.Now())})
+	require.NoError(t, err)
+	return p
+}
+
+func TestAuthLoginRefreshLogout(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "Fixture_User")
+	assert.Len(t, u.codes, auth.RecoveryCodeCount)
+
+	// The username is stored lower-cased and logs in in any case.
+	u.name = "FIXTURE_user"
+	p := e.login(t, u)
+	assert.Equal(t, u.id, p.UserID)
+	assert.Equal(t, 15*time.Minute, p.AccessTTL)
+	assert.Equal(t, e.clk.Now().Add(720*time.Hour), p.RefreshExpiresAt)
+	got, err := e.a.Authenticate(ctx, p.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, Principal{UserID: u.id, SessionID: p.SessionID}, got)
+
+	acct, err := e.a.Account(ctx, u.id)
+	require.NoError(t, err)
+	assert.Equal(t, "fixture_user", acct.Username)
+	assert.Equal(t, e.clk.Now(), acct.LastLoginAt.UTC())
+
+	// Refresh rotates: the new token works once, the session is the same.
+	e.advance(time.Hour)
+	p2, err := e.a.Refresh(ctx, p.RefreshToken)
+	require.NoError(t, err)
+	assert.Equal(t, p.SessionID, p2.SessionID)
+	assert.NotEqual(t, p.RefreshToken, p2.RefreshToken)
+	assert.Equal(t, e.clk.Now().Add(720*time.Hour), p2.RefreshExpiresAt, "sliding expiry")
+	_, err = e.a.Authenticate(ctx, p2.AccessToken)
+	require.NoError(t, err)
+
+	// Logout revokes the session: both access tokens stop at once.
+	require.NoError(t, e.a.Logout(ctx, got))
+	_, err = e.a.Authenticate(ctx, p2.AccessToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	_, err = e.a.Refresh(ctx, p2.RefreshToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestAuthRefreshReuseRevokes(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	p := e.login(t, e.signup(t, "fixture_user"))
+	p2, err := e.a.Refresh(ctx, p.RefreshToken)
+	require.NoError(t, err)
+
+	// The old refresh token again (a copy): refused, and the whole session is revoked.
+	_, err = e.a.Refresh(ctx, p.RefreshToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	_, err = e.a.Authenticate(ctx, p2.AccessToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	_, err = e.a.Refresh(ctx, p2.RefreshToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	assert.Contains(t, e.logs.String(), `"reason":"refresh_reuse"`)
+
+	for _, bad := range []string{"", "rt_short", "chl_" + strings.Repeat("A", 43), p.AccessToken} {
+		_, err = e.a.Refresh(ctx, bad)
+		require.ErrorIs(t, err, ErrInvalidToken)
+	}
+}
+
+func TestAuthRefreshExpires(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	p := e.login(t, e.signup(t, "fixture_user"))
+	e.advance(720 * time.Hour)
+	_, err := e.a.Refresh(ctx, p.RefreshToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestAuthSessionMaxAge(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	p := e.login(t, e.signup(t, "fixture_user"))
+	loggedIn := e.clk.Now()
+	maxAge := loggedIn.Add(2160 * time.Hour)
+
+	// Refreshed well within the idle limit every time, the session still ends at the cap.
+	for e.clk.Now().Add(29 * 24 * time.Hour).Before(maxAge) {
+		e.advance(29 * 24 * time.Hour)
+		var err error
+		p, err = e.a.Refresh(ctx, p.RefreshToken)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, maxAge, p.RefreshExpiresAt.UTC(), "capped, not now + refresh TTL")
+	sessions, err := e.a.UserSessions(ctx, p.UserID)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, maxAge, sessions[0].ExpiresAt.UTC())
+
+	e.advance(maxAge.Sub(e.clk.Now()))
+	_, err = e.a.Refresh(ctx, p.RefreshToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestAuthAccessTokenExpiresAndChecksSession(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	a := e.signup(t, "fixture_a")
+	b := e.signup(t, "fixture_b")
+	pa := e.login(t, a)
+	pb := e.login(t, b)
+
+	// A validly signed token naming B's session as A's is refused.
+	forged, _, err := e.a.keys().issuer.Issue(a.id, pb.SessionID)
+	require.NoError(t, err)
+	_, err = e.a.Authenticate(ctx, forged)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	assert.Contains(t, e.logs.String(), `"reason":"session_user_mismatch"`)
+
+	e.advance(15*time.Minute + auth.JWTLeeway + time.Second)
+	_, err = e.a.Authenticate(ctx, pa.AccessToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	var te *auth.TokenError
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, auth.TokenExpired, te.Reason)
+}
+
+func TestAuthTOTPReplayRejected(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	ch, err := e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	// The signup confirm used this step's code: it can't log in.
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: auth.TOTPCode(u.secret, e.clk.Now())})
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+
+	e.advance(time.Minute) // past the backoff, and a new step
+	code := auth.TOTPCode(u.secret, e.clk.Now())
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: code})
+	require.NoError(t, err)
+
+	// The same code in the same step, on a new challenge: replay.
+	ch, err = e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: code})
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+}
+
+func TestAuthChallengeLimits(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	ch, err := e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	for i := range MaxChallengeAttempts {
+		_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: "000000"})
+		require.ErrorIs(t, err, ErrInvalidCredentials, "attempt %d", i+1)
+		e.advance(backoffDelay(i + 1))
+	}
+	e.nextStep()
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: auth.TOTPCode(u.secret, e.clk.Now())})
+	require.ErrorIs(t, err, ErrInvalidToken, "out of attempts")
+
+	// A challenge expires after ChallengeTTL.
+	e.advance(backoffMax)
+	ch, err = e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	e.advance(ChallengeTTL)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: auth.TOTPCode(u.secret, e.clk.Now())})
+	require.ErrorIs(t, err, ErrInvalidToken)
+
+	// Both factors at once, or neither, never passes.
+	e.advance(backoffMax)
+	ch, err = e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	e.nextStep()
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: auth.TOTPCode(u.secret, e.clk.Now()), RecoveryCode: u.codes[0]})
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+}
+
+func TestAuthRecoveryCodeLogin(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	ch, err := e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: strings.ToUpper(u.codes[0])})
+	require.NoError(t, err)
+	acct, err := e.a.Account(ctx, u.id)
+	require.NoError(t, err)
+	assert.Equal(t, auth.RecoveryCodeCount-1, acct.RecoveryCodesLeft)
+
+	ch, err = e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: u.codes[0]})
+	require.ErrorIs(t, err, ErrInvalidCredentials, "single use")
+}
+
+func TestAuthKeyRotation(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	p := e.login(t, u)
+	oldKey := e.a.ring.Load().active
+
+	kid, err := e.a.RotateSigningKey(ctx)
+	require.NoError(t, err)
+	assert.NotEqual(t, oldKey.ID, kid)
+	_, err = e.a.Authenticate(ctx, p.AccessToken)
+	require.NoError(t, err, "the old key verifies until its tokens expire")
+	p2, err := e.a.Refresh(ctx, p.RefreshToken)
+	require.NoError(t, err)
+	_, err = e.a.Authenticate(ctx, p2.AccessToken)
+	require.NoError(t, err)
+
+	// A restart keeps both keys (the old one still in its grace period).
+	e.a, err = NewAuth(ctx, e.opts)
+	require.NoError(t, err)
+	assert.Equal(t, kid, e.a.ring.Load().active.ID)
+	_, err = e.a.Authenticate(ctx, p.AccessToken)
+	require.NoError(t, err)
+
+	// After the grace period the old key is gone, even for a token that hasn't expired.
+	longLived := auth.NewIssuer(e.opts.PublicURL, oldKey, 24*time.Hour, e.clk.Now)
+	e.advance(15*time.Minute + auth.JWTLeeway)
+	tok, _, err := longLived.Issue(u.id, p.SessionID)
+	require.NoError(t, err)
+	_, err = e.a.Authenticate(ctx, tok)
+	var te *auth.TokenError
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, auth.TokenUnknownKey, te.Reason)
+	p3, err := e.a.Refresh(ctx, p2.RefreshToken)
+	require.NoError(t, err)
+	_, err = e.a.Authenticate(ctx, p3.AccessToken)
+	require.NoError(t, err, "the new key still signs and verifies")
+
+	// And a restart then deletes it.
+	_, err = NewAuth(ctx, e.opts)
+	require.NoError(t, err)
+	keys, err := e.users.AutoCommitForTestOnly().SigningKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	assert.Equal(t, kid, keys[0].ID)
+}
+
+func TestAuthHashingRefusedInsideTx(t *testing.T) {
+	e := newAuthEnv(t)
+	err := e.users.InReadTx(context.Background(), func(ctx context.Context, _ *store.UsersReadTx) error {
+		_, err := e.a.hashPassword(ctx, testPassword)
+		return err
+	})
+	require.ErrorIs(t, err, store.ErrTxMisuse)
+	require.ErrorContains(t, err, "password hash inside a transaction")
+}
+
+func TestNewAuthChecksOptions(t *testing.T) {
+	e := newAuthEnv(t)
+	for _, u := range []string{"", "mirror.example.com", "ftp://mirror.example.com", "https://mirror.example.com/api",
+		"https://mirror.example.com/?x=1", "https://user@mirror.example.com", "https://mirror.example.com/#frag"} {
+		o := e.opts
+		o.PublicURL = u
+		_, err := NewAuth(context.Background(), o)
+		require.Error(t, err, u)
+	}
+	o := e.opts
+	o.Hasher = nil
+	_, err := NewAuth(context.Background(), o)
+	require.Error(t, err)
+}
+
+// TestAuthLogsAreSecretFree runs every flow with recognisable values and checks no username,
+// password, token, code or secret reaches the logs.
+func TestAuthLogsAreSecretFree(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	var secrets []string
+	keep := func(s ...string) { secrets = append(secrets, s...) }
+
+	l, err := e.a.CreateInvite(ctx, 0)
+	require.NoError(t, err)
+	keep(l.URL, inviteToken(t, l))
+	en, err := e.a.Signup(ctx, inviteToken(t, l), "sentinel_user", testPassword)
+	require.NoError(t, err)
+	keep(en.Token, en.TOTPSecret, en.OTPAuthURI)
+	secret := decodeSecret(t, en.TOTPSecret)
+	code := auth.TOTPCode(secret, e.clk.Now())
+	c, err := e.a.ConfirmSignup(ctx, en.Token, code)
+	require.NoError(t, err)
+	keep(code)
+	keep(c.RecoveryCodes...)
+	u := testUser{id: c.UserID, name: "sentinel_user", secret: secret, codes: c.RecoveryCodes}
+
+	_, err = e.a.Login(ctx, "sentinel_user", "SENTINEL wrong password")
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	_, err = e.a.Login(ctx, "sentinel_nobody", "SENTINEL wrong password")
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	e.advance(time.Minute)
+	ch, err := e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	keep(ch.Token)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{Code: "123456"})
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	e.advance(time.Minute)
+	p, err := e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: u.codes[0]})
+	require.NoError(t, err)
+	keep(p.AccessToken, p.RefreshToken)
+	p2, err := e.a.Refresh(ctx, p.RefreshToken)
+	require.NoError(t, err)
+	keep(p2.AccessToken, p2.RefreshToken)
+	_, err = e.a.Refresh(ctx, p.RefreshToken)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	r, err := e.a.CreateReset(ctx, u.id, model.ResetBoth, time.Hour)
+	require.NoError(t, err)
+	keep(r.URL, inviteToken(t, r))
+	en, err = e.a.StartReset(ctx, inviteToken(t, r), "SENTINEL new password ok")
+	require.NoError(t, err)
+	keep(en.Token, en.TOTPSecret, en.OTPAuthURI)
+	_, err = e.a.RotateSigningKey(ctx)
+	require.NoError(t, err)
+
+	logs := e.logs.String()
+	require.NotEmpty(t, logs)
+	for _, s := range append(secrets, "sentinel", "SENTINEL", testPassword) {
+		assert.NotContains(t, logs, s)
+	}
+}

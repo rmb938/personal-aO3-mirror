@@ -1655,7 +1655,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       one transaction, and returns `{recovery_codes}`. The user then logs in.
     - Reset: `POST /auth/reset` `{invite_token, password?}` (a new TOTP secret and URI when the
       scope includes TOTP), then `POST /auth/reset/confirm`, shaped like signup confirm. A reset
-      revokes every session of that user.
+      revokes every session of that user. Only a scope that includes TOTP issues new recovery
+      codes; a password-only reset keeps them and returns none (16d).
     - Login: `POST /auth/login` `{username, password}` → `{challenge_token, expires_at}`. An
       unknown user, a wrong password and a disabled account all get the same 401
       `invalid-credentials` with equal timing; backoff is 429 `rate-limited` with `Retry-After`.
@@ -1696,7 +1697,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       rate: { ..., login_per_min: 10, signup_per_hour: 5, refresh_per_min: 30 }
     auth:   # replaces plan.md's placeholder `auth: { enabled: false }`; auth cannot be turned off
       access_ttl: 15m          # 5m..1h
-      refresh_ttl: 720h        # 1h..2160h
+      refresh_ttl: 720h        # 1h..2160h; the idle limit: each refresh extends the session by it
+      max_session_age: 2160h   # refresh_ttl..8760h; a session ends this long after login (16d)
       invite_ttl: 24h          # default; max 168h
       totp_issuer: ao3mirror   # [A-Za-z0-9 ._-]{1,32}
     ```
@@ -1767,7 +1769,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         each from `internal/auth` pass unchanged in both modes, and checks sentinel, free text
         and near misses (prefix, suffix, whitespace, case, non-ASCII) are 500s with no trace
         in the body or logs. No route uses the types yet (16e adds the first).
-    - [ ] **16d. users.db store + `Auth` controller**: schema, `OpenUsers`, transactions, every
+    - [x] **16d. users.db store + `Auth` controller**: schema, `OpenUsers`, transactions, every
       controller method, with clock-driven tests (expiry, replay, backoff, key rotation,
       refresh reuse). Two PRs: the store, then the controller. As built:
       - Store: `store.Users` (`users.go`, queries in `users_accounts.go`, `users_invites.go`,
@@ -1782,6 +1784,36 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         never gets a challenge. `enrollments` has `username` '' for a reset, `password_phc` ''
         and `totp_secret_enc` NULL for "keep the current one". `invites.reset_scope` is '' for
         signup (a CHECK ties kind, target and scope).
+      - Controller: `controllers.NewAuth(ctx, AuthOptions)`; the config `auth:` section and the
+        wiring come in 16e. Errors: `ErrInvalidCredentials`, `ErrInvalidToken`,
+        `ErrInvalidUsername`, `ErrUsernameTaken`, `ErrResetPassword`, `ErrResetScope`,
+        `ErrInviteTTL`, `RateLimitedError{RetryAfter}`, plus `auth.ErrPassword*`,
+        `auth.ErrHasherBusy` and `store.ErrNo{User,Invite,Session}` passed through. Methods:
+        `Login`, `LoginSecondFactor`, `Refresh`, `Logout`, `Authenticate`, `Signup`,
+        `ConfirmSignup`, `StartReset`, `ConfirmReset`, `Account`, `ChangePassword`,
+        `RegenerateRecoveryCodes`, `UserSessions`, `RevokeUserSession`, `CreateInvite`,
+        `CreateReset`, `ListInvites`, `RevokeInvite`, `ListUsers`, `DisableUser`,
+        `EnableUser`, `DeleteUser`, `RevokeSession`, `RotateSigningKey`. Password hashing
+        calls `store.NotInTx(ctx, "password hash")` first.
+      - Lockout: the count resets only on a full login, a password change or a reset confirm,
+        never on the password step alone (else TOTP could be guessed 5 at a time without
+        limit). A right password on a disabled account counts as a failure, like a wrong one.
+        The backoff is also re-checked in the write transaction (a concurrent failure wins).
+        `next_attempt_at` is rounded up to the second; Retry-After too.
+      - Usernames: `NormalizeUsername` lower-cases ASCII only and refuses anything else (no
+        Unicode folding: U+212A KELVIN SIGN would become `k`). Signup checks the invite before
+        the username and password, so nothing is said about names without one.
+      - Sessions: every refresh issues a new refresh token (the old one becomes the reuse
+        tripwire) and extends the session by `refresh_ttl`, but never past `max_session_age`
+        (new, default 90d) after the login. A recovery code doesn't advance the TOTP step.
+      - Reset confirm clears the backoff and revokes every session (OWASP Forgot Password).
+        Only a scope with TOTP issues new recovery codes; a password-only reset keeps them and
+        confirms with the current TOTP secret (replay-checked).
+      - Keys: the in-memory ring (an atomic pointer) drops a retired key at `retired_at +
+        access_ttl + auth.JWTLeeway` (now exported), even for a token that hasn't expired;
+        `NewAuth` deletes keys past that. Invite TTLs are 1m..7d.
+      - Logs: `auth event` with `event`, `reason` (closed set) and IDs; a test runs every flow
+        with sentinel names, passwords, tokens, codes and secrets and finds none in the logs.
     - [ ] **16e. Admin API + CLI**: socket routes, OpenAPI (`x-admin-only`), `make generate`, CLI
       commands.
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;

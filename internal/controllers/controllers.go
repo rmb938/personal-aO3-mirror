@@ -11,6 +11,7 @@
 //   - workview.go: read a stored work, its chapters and skin (the API's work views)
 //   - tags.go, series.go: tag and series info pages
 //   - reparse.go: rebuild parsed data from stored raw pages (zero requests)
+//   - auth*.go: the API's accounts over users.db (a separate Auth controller; see auth.go)
 //
 // Logging is content-free: ids, counts, classes, timings, hashed names.
 package controllers

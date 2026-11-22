@@ -17,8 +17,9 @@ const (
 	Audience = "ao3mirror-api"
 	// MaxAccessTokenBytes bounds a presented token before it is parsed.
 	MaxAccessTokenBytes = 2048
-	// jwtLeeway is the clock skew allowed on exp, nbf and iat.
-	jwtLeeway = 30 * time.Second
+	// JWTLeeway is the clock skew allowed on exp, nbf and iat. A retired signing key must verify
+	// until rotation + access TTL + JWTLeeway.
+	JWTLeeway = 30 * time.Second
 )
 
 // SigningKey is an Ed25519 key that signs access tokens. ID is the JWT kid. The store keeps the
@@ -162,7 +163,7 @@ func NewVerifier(iss string, keys []VerifyKey, now func() time.Time) *Verifier {
 		jwt.WithExpirationRequired(),
 		jwt.WithNotBeforeRequired(),
 		jwt.WithIssuedAt(),
-		jwt.WithLeeway(jwtLeeway),
+		jwt.WithLeeway(JWTLeeway),
 		jwt.WithTimeFunc(now),
 		jwt.WithStrictDecoding(),
 	)}
