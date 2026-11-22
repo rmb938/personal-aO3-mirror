@@ -31,6 +31,8 @@ const (
 	MaxURLBytes = 4 << 10
 	// MaxClientReqIDBytes caps a client-sent X-Request-Id we keep.
 	MaxClientReqIDBytes = 64
+	// MaxCFRayBytes caps a Cf-Ray header we log.
+	MaxCFRayBytes = 64
 	// Throttle: requests handled at once, requests allowed to wait, and how long they wait.
 	maxInFlight = 64
 	maxBacklog  = 256
@@ -40,7 +42,7 @@ const (
 const (
 	HeaderRequestID       = "X-Request-ID"
 	HeaderClientRequestID = "X-Client-Request-Id"
-	HeaderFunnel          = "Tailscale-Funnel-Request"
+	HeaderCFRay           = "Cf-Ray"
 )
 
 // reqState is the per-request state the middleware share. requestID puts it in the context;
@@ -90,14 +92,27 @@ func requestID(next http.Handler) http.Handler {
 }
 
 // validClientReqID accepts 1..64 bytes of [A-Za-z0-9._:-].
-func validClientReqID(s string) bool {
-	if s == "" || len(s) > MaxClientReqIDBytes {
+func validClientReqID(s string) bool { return validHeaderID(s, MaxClientReqIDBytes, "._:-") }
+
+// cfRay is the request's Cf-Ray header when it is sent once and is 1..64 bytes of
+// [A-Za-z0-9-] (Cloudflare's "<hex>-<colo>"), else "". Any client can send one, so it only
+// ties a log line to Cloudflare's; it proves nothing about where the request came from.
+func cfRay(r *http.Request) string {
+	if vals := r.Header.Values(HeaderCFRay); len(vals) == 1 && validHeaderID(vals[0], MaxCFRayBytes, "-") {
+		return vals[0]
+	}
+	return ""
+}
+
+// validHeaderID accepts 1..maxBytes bytes of ASCII letters, digits and the bytes in extra.
+func validHeaderID(s string, maxBytes int, extra string) bool {
+	if s == "" || len(s) > maxBytes {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-			c == '.' || c == '_' || c == ':' || c == '-'
+			strings.IndexByte(extra, c) >= 0
 		if !ok {
 			return false
 		}
@@ -160,9 +175,11 @@ func (a *API) accessLog(listener string) func(http.Handler) http.Handler {
 				slog.Int("bytes", sw.bytes),
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 				slog.String("client_ip", middleware.GetClientIP(r.Context())),
-				slog.Bool("funnel", r.Header.Get(HeaderFunnel) == "?1"),
 				slog.Bool("reveal", st.reveal),
 			)
+			if ray := cfRay(r); ray != "" {
+				attrs = append(attrs, slog.String("cf_ray", ray))
+			}
 			if st.clientID != "" {
 				attrs = append(attrs, slog.String("client_req_id", st.clientID))
 			}
