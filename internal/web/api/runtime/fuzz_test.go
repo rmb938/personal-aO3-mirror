@@ -382,6 +382,9 @@ func FuzzDecodeJSON(f *testing.F) {
 		`{"challenge_token":"chl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","recovery_code":" ABCD EFGH-IJKL-MN23"}`,
 		`{"challenge_token":"chl_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"123456","recovery_code":"abcd"}`,
 		`{"refresh_token":"rt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
+		`{"current_password":"fixture pass","password":"fixture new pass","code":"123456"}`,
+		`{"current_password":"","password":"x","code":"1234567"}`,
+		`{"code":"654321"}`,
 	} {
 		for k := range types {
 			f.Add(uint8(k), []byte(s))
@@ -556,6 +559,14 @@ func requireInBounds(t *testing.T, body any) {
 		}
 	case *request.Refresh:
 		requireOpaqueToken(t, b.RefreshToken, "rt_")
+	case *request.ChangePassword:
+		require.NotEmpty(t, b.CurrentPassword)
+		require.LessOrEqual(t, len(b.CurrentPassword), request.MaxPasswordBytes)
+		require.NotEmpty(t, b.Password)
+		require.LessOrEqual(t, len(b.Password), request.MaxPasswordBytes)
+		require.Regexp(t, `\A[0-9]{6}\z`, b.Code)
+	case *request.RegenerateRecoveryCodes:
+		require.Regexp(t, `\A[0-9]{6}\z`, b.Code)
 	default:
 		t.Fatalf("requireInBounds: no bounds for %T; add them", body)
 	}

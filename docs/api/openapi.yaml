@@ -1066,6 +1066,98 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TokenPair" }
         default: { $ref: "#/components/responses/Problem" }
+  # The signed-in user's own account. Each route needs `Authorization: Bearer <access_token>`
+  # (401 unauthorized without a usable one, 400 bad-request for a malformed header). The admin
+  # socket never reads Authorization, so there they are always 401.
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: End the access token's session.
+      description: |
+        The session's refresh token stops working, and so does its access token (every request
+        checks the session). Needs a bearer access token.
+      x-problems: [forbidden, unauthorized]
+      responses:
+        "204": { description: The session is ended. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/account:
+    get:
+      operationId: getAccount
+      summary: The signed-in user's account.
+      description: Needs a bearer access token.
+      x-problems: [unauthorized]
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/account/password:
+    put:
+      operationId: changePassword
+      summary: Replace the password; every other session is revoked.
+      description: |
+        Needs a bearer access token, the current password and a TOTP code. A wrong password or
+        code is 403 `forbidden` and counts against the account like a failed login (too many
+        is 429 `rate-limited` with `Retry-After`). The new password must meet the policy (422
+        on `/password`). This session stays signed in.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, unauthorized]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: The password is replaced. }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/account/recovery-codes:
+    post:
+      operationId: regenerateRecoveryCodes
+      summary: Replace the recovery codes.
+      description: |
+        Needs a bearer access token and a TOTP code. The new codes are in this response only;
+        the old ones stop working. A wrong code is 403 `forbidden` and counts against the
+        account like a failed login (too many is 429 `rate-limited` with `Retry-After`).
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, unauthorized]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegenerateRecoveryCodesRequest" }
+      responses:
+        "200":
+          description: The new recovery codes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/account/sessions:
+    get:
+      operationId: listAccountSessions
+      summary: The signed-in user's active sessions, newest first.
+      description: Needs a bearer access token.
+      x-problems: [unauthorized]
+      responses:
+        "200":
+          description: The sessions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionList" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/account/sessions/{id}:
+    delete:
+      operationId: revokeAccountSession
+      summary: End one of the signed-in user's sessions.
+      description: |
+        Needs a bearer access token. Another account's session is 404, like a missing one.
+        Revoking a revoked session is a no-op (still 204).
+      x-problems: [forbidden, unauthorized, not-found]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204": { description: The session is ended. }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/admin/invites:
     post:
       operationId: createInvite
@@ -1279,8 +1371,16 @@ components:
         seconds left (1 to 900); on a busy 503, 1.
       schema: { type: integer, minimum: 1 }
     WWWAuthenticate:
-      description: On every 401, the accepted scheme (RFC 9110 §15.5.2, RFC 6750 §3).
-      schema: { type: string, enum: ['Bearer realm="ao3mirror"'] }
+      description: |
+        On every 401, the accepted scheme (RFC 9110 §15.5.2, RFC 6750 §3). When the request
+        sent bearer credentials, also why they were refused: `invalid_token` (401) or
+        `invalid_request` (400, a malformed `Authorization`).
+      schema:
+        type: string
+        enum:
+          - 'Bearer realm="ao3mirror"'
+          - 'Bearer realm="ao3mirror", error="invalid_token"'
+          - 'Bearer realm="ao3mirror", error="invalid_request"'
   responses:
     Problem:
       description: |
@@ -3225,6 +3325,20 @@ components:
       additionalProperties: false
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/User" } }
+    Account:
+      type: object
+      description: The signed-in user's own account.
+      required: [id, username, created_at, recovery_codes_left]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        username:
+          type: string
+          description: Verbatim (an account name, not fanwork).
+          pattern: "^[a-z0-9_-]{3,32}$"
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        password_changed_at: { $ref: "#/components/schemas/Timestamp" }
+        recovery_codes_left: { type: integer, minimum: 0, maximum: 10 }
     Session:
       type: object
       required: [id, created_at, last_used_at, expires_at]
@@ -3357,6 +3471,25 @@ components:
           type: string
           description: The session's current refresh token, from the login or the last refresh.
           pattern: "^rt_[A-Za-z0-9_-]{43}$"
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, password, code]
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        password:
+          allOf: [{ $ref: "#/components/schemas/Password" }]
+          description: The new password.
+        code: { $ref: "#/components/schemas/TOTPCode" }
+    RegenerateRecoveryCodesRequest:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code: { $ref: "#/components/schemas/TOTPCode" }
     LoginChallenge:
       type: object
       required: [challenge_token, expires_at]

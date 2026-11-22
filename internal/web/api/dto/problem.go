@@ -64,6 +64,7 @@ const (
 	TypeWorkTooLarge         ProblemType = ProblemTypeBase + "work-too-large"
 	TypeURITooLong           ProblemType = ProblemTypeBase + "uri-too-long"
 	TypeRateLimited          ProblemType = ProblemTypeBase + "rate-limited"
+	TypeUnauthorized         ProblemType = ProblemTypeBase + "unauthorized"
 	TypeInvalidCredentials   ProblemType = ProblemTypeBase + "invalid-credentials"
 	TypeUnavailable          ProblemType = ProblemTypeBase + "unavailable"
 	TypeInternal             ProblemType = ProblemTypeBase + "internal-error"
@@ -100,6 +101,7 @@ var problemInfo = map[ProblemType]ProblemInfo{
 	TypeWorkTooLarge:         {http.StatusUnprocessableEntity, "Work Too Large"},
 	TypeURITooLong:           {http.StatusRequestURITooLong, "URI Too Long"},
 	TypeRateLimited:          {http.StatusTooManyRequests, "Too Many Requests"},
+	TypeUnauthorized:         {http.StatusUnauthorized, "Unauthorized"},
 	TypeInvalidCredentials:   {http.StatusUnauthorized, "Invalid Credentials"},
 	TypeUnavailable:          {http.StatusServiceUnavailable, "Service Unavailable"},
 	TypeInternal:             {http.StatusInternalServerError, "Internal Server Error"},

@@ -86,4 +86,11 @@ var (
 	DetailPasswordIsUsername = problem.NewDetail("must not be the username")
 	DetailPasswordCommon     = problem.NewDetail("is a commonly used password; choose another")
 	DetailResetPassword      = problem.NewDetail("is required when the reset link replaces the password, and must be omitted otherwise")
+
+	// Bearer access tokens (stage 16f): the account routes.
+	DetailNoAccessToken     = problem.NewDetail("this route needs an access token: send Authorization: Bearer with the login's access_token")
+	DetailBadAccessToken    = problem.NewDetail("the access token is not valid: expired, revoked or malformed; refresh it or log in again")
+	DetailBadAuthorization  = problem.NewDetail("the Authorization header must be sent once, as Bearer and then the access token")
+	DetailAdminNoAccount    = problem.NewDetail("the admin socket has no signed-in account; use the public listener with an access token")
+	DetailReauthCredentials = problem.NewDetail("the current password or the TOTP code is not valid")
 )

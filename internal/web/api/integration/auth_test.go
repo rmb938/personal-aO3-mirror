@@ -40,13 +40,14 @@ func totpCode(t *testing.T, secret dto.TOTPSecret, at time.Time) string {
 	return auth.TOTPCode(b, at)
 }
 
-// requireProblem requires a problem of typ with detail d; a 401 also names the bearer scheme.
+// requireProblem requires a problem of typ with detail d; a 401 also names the bearer scheme
+// (with no RFC 6750 error code: the account routes' tests check those themselves).
 func requireProblem(t *testing.T, w *httptest.ResponseRecorder, typ dto.ProblemType, d string) {
 	t.Helper()
 	p := testutil.DecodeProblem(t, w)
 	require.Equal(t, typ, p.Type, w.Body.String())
 	assert.Equal(t, d, p.Detail)
-	if w.Code == http.StatusUnauthorized {
+	if w.Code == http.StatusUnauthorized && typ != dto.TypeUnauthorized {
 		assert.Equal(t, runtime.WWWAuthenticate, w.Header().Get("WWW-Authenticate"))
 	}
 }

@@ -71,6 +71,16 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.With(a.LoginRateLimit(listener, admin)).Post(route.AuthLogin, a.Handle(h.Login))
 	r.With(a.LoginRateLimit(listener, admin)).Post(route.AuthLoginTOTP, a.Handle(h.LoginSecondFactor))
 	r.With(a.RefreshRateLimit(listener, admin)).Post(route.AuthRefresh, a.Handle(h.Refresh))
+	// The signed-in user's account: always 401 on the admin socket, which has no user.
+	r.Group(func(r chi.Router) {
+		r.Use(a.RequireAuth(admin))
+		r.Post(route.AuthLogout, a.Handle(h.Logout))
+		r.Get(route.Account, a.Handle(h.Account))
+		r.Put(route.AccountPassword, a.Handle(h.ChangePassword))
+		r.Post(route.AccountRecoveryCodes, a.Handle(h.RegenerateRecoveryCodes))
+		r.Get(route.AccountSessions, a.Handle(h.AccountSessions))
+		r.Delete(route.AccountSession, a.Handle(h.RevokeAccountSession))
+	})
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.IDAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.IDAction(c.PauseSource)))
