@@ -1815,7 +1815,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `NewAuth` deletes keys past that. Invite TTLs are 1m..7d.
       - Logs: `auth event` with `event`, `reason` (closed set) and IDs; a test runs every flow
         with sentinel names, passwords, tokens, codes and secrets and finds none in the logs.
-    - [ ] **16e. Admin API + CLI**: socket routes, OpenAPI (`x-admin-only`), `make generate`, CLI
+    - [x] **16e. Admin API + CLI**: socket routes, OpenAPI (`x-admin-only`), `make generate`, CLI
       commands. Three PRs: config and serve wiring, the admin routes, the CLI. As built:
       - Config: the `auth:` section replaces the `enabled` placeholder (an old config with
         `auth.enabled` no longer parses). `api.public_url` defaults to `http://localhost:8080`;
@@ -1841,6 +1841,13 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         refuses controllers without `Auth`; `handlers.SourceAction` became `IDAction`, shared
         by the source and account changes. The integration seed adds a users.db with two
         accounts (one disabled), a session and an invite (`seed_auth_test.go`).
+      - CLI (`cmd/ao3mirror/accounts.go`, one usage text for the four groups, shown by
+        `ao3mirror invite` without a config): the commands above, over the admin socket like
+        `source`. `invite create` and `user reset` print the link once with its invite id and
+        expiry; `user reset` checks `--scope` before sending (the generated client would refuse
+        an unknown value with a vaguer error). Lists are tables, times local to the minute;
+        `invite list` never shows a link (the API keeps only the token hash). `TestAccountCLI`
+        seeds two accounts and a session into the temp users.db before `serve`.
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
       auth rate limits; `Cache-Control: no-store`.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
