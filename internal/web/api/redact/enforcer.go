@@ -20,8 +20,8 @@ type Mode int
 const (
 	// Hashed replaces every string that is not provably safe with a keyed hash (the default).
 	Hashed Mode = iota
-	// Revealed checks the structure (keys and shapes) but returns strings as they are. Only a
-	// request with the reveal param gets it.
+	// Revealed checks the structure (keys, shapes and Verbatim patterns) but returns strings as
+	// they are. Only a request with the reveal param gets it.
 	Revealed
 )
 
@@ -124,9 +124,11 @@ func NewEnforcer(reg *Registry, h *Hasher) (*Enforcer, error) {
 //   - each object must be the struct at that position: a key it doesn't declare is an
 //     *UnknownKeyError;
 //   - a value of the wrong JSON kind is a *SchemaError; null is allowed anywhere;
+//   - a string in a Verbatim field must fully match the field type's pattern, in both modes,
+//     else a *PatternError (it is never hashed, so it must never hold anything else);
 //   - numbers and booleans pass through;
 //   - in Hashed mode a string passes unhashed only when its own field allows it: a value of
-//     the field's Enum type or RegisterFieldEnum set, a JSON Pointer into a RegisterPointerField
+//     the field's Enum type or RegisterFieldEnum set, a Verbatim field's match, a JSON Pointer into a RegisterPointerField
 //     field's request types, or an RFC3339 UTC timestamp or a
 //     YYYY-MM-DD date in a field whose key ends in "_at" or "_on" (strings in arrays use the
 //     array field's rule). Two fields sharing a key (two `status` enums) each allow only their
@@ -192,6 +194,9 @@ func (w *walker) value(dec *json.Decoder, n *node) error {
 	case string:
 		if err := n.want(kindString); err != nil {
 			return err
+		}
+		if n.rule == ruleVerbatim && !n.allows(t) {
+			return &PatternError{Path: n.path}
 		}
 		if n.offEnum(t) && !slices.Contains(w.offEnum, n.path) {
 			w.offEnum = append(w.offEnum, n.path)

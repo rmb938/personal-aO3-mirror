@@ -89,7 +89,9 @@ func (r *Registry) RegisterPointerField(v any, key string, requestTypes ...any) 
 // Types with their own JSON or text marshaling (e.g. time.Time) are leaves.
 //
 // A field whose type implements Enum allows its own values. It is an error for an Enum to be a
-// non-string kind, to marshal itself, or to list no values or an empty value.
+// non-string kind, to marshal itself, or to list no values or an empty value. A field whose type
+// implements Verbatim allows only full matches of its pattern; the type and pattern must follow
+// Verbatim's rules.
 func (r *Registry) RegisterTypes(vals ...any) error {
 	for _, v := range vals {
 		t := rootType(reflect.TypeOf(v))

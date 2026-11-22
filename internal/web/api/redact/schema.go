@@ -3,6 +3,7 @@ package redact
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ const (
 	ruleDate                     // YYYY-MM-DD (key ends in "_on")
 	rulePointer                  // a JSON Pointer into one of the node's request types
 	ruleDuration                 // a Go duration string (a Duration type)
+	ruleVerbatim                 // matches the node's pattern, else the response fails (a Verbatim type)
 )
 
 // durationType is time.Duration, which a DTO may not use directly: encoding/json/v2 has no
@@ -47,6 +49,7 @@ type node struct {
 	rule   strRule             // kindString, kindOpaque
 	enum   map[string]struct{} // ruleEnum
 	ptrs   []*node             // rulePointer: the request types' struct nodes
+	re     *regexp.Regexp      // ruleVerbatim: the anchored pattern
 	// path names the Go field this node is (e.g. "dto.Health.Status"): code, never content.
 	path string
 }
@@ -64,6 +67,8 @@ func (n *node) allows(s string) bool {
 		return pointerIn(s, n.ptrs)
 	case ruleDuration:
 		return isDuration(s)
+	case ruleVerbatim:
+		return n.re.MatchString(s)
 	default:
 		return false
 	}
@@ -166,8 +171,8 @@ func (c *compiler) pointerNode(t reflect.Type, path string, types []reflect.Type
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	if t.Kind() != reflect.String || implements(t, enumType) || implements(t, jsonMarshalerType) ||
-		implements(t, textMarshalerType) {
+	if t.Kind() != reflect.String || implements(t, enumType) || implements(t, verbatimType) ||
+		implements(t, jsonMarshalerType) || implements(t, textMarshalerType) {
 		return nil, fmt.Errorf("redact: %s: RegisterPointerField on a field that is not a plain string", path)
 	}
 	n := &node{kind: kindString, rule: rulePointer, path: path}
@@ -190,6 +195,16 @@ func (c *compiler) compile(t reflect.Type, key, path string, manual map[string]s
 	if t == durationType {
 		// encoding/json/v2 has no default time.Duration format (and no format tag).
 		return nil, fmt.Errorf("redact: %s: use a Duration type (a duration string), not time.Duration", path)
+	}
+	if implements(t, verbatimType) {
+		if manual != nil {
+			return nil, fmt.Errorf("redact: %s: RegisterFieldEnum on a Verbatim field", path)
+		}
+		re, err := compileVerbatim(t, path)
+		if err != nil {
+			return nil, err
+		}
+		return &node{kind: kindString, rule: ruleVerbatim, re: re, path: path}, nil
 	}
 	if implements(t, durationIface) {
 		if manual != nil {

@@ -21,7 +21,41 @@ import (
 var (
 	fuzzTimestampRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d*[1-9])?Z$`)
 	fuzzDateRE      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	// fuzzTokenRE is tToken's pattern, written out again: lower case only, so no sentinel
+	// ("SENTINEL") can ever match it.
+	fuzzTokenRE = regexp.MustCompile(`\Atok_[a-z0-9]{8}\z`)
 )
+
+// verbatimMismatch reports whether some tToken string in the decoded JSON v (at typ) does not
+// match fuzzTokenRE: the enforcer must then refuse the body with a *PatternError.
+func verbatimMismatch(typ reflect.Type, v any) bool {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	switch iv := v.(type) {
+	case map[string]any:
+		if typ.Kind() != reflect.Struct {
+			return false // a shape mismatch (raw JSON fuzzing), not a token
+		}
+		for k, child := range iv {
+			if f, ok := fieldByKey(typ, k); ok && verbatimMismatch(f, child) {
+				return true
+			}
+		}
+	case []any:
+		if typ.Kind() != reflect.Slice && typ.Kind() != reflect.Array {
+			return false
+		}
+		for _, child := range iv {
+			if verbatimMismatch(typ.Elem(), child) {
+				return true
+			}
+		}
+	case string:
+		return typ == reflect.TypeFor[tToken]() && !fuzzTokenRE.MatchString(iv)
+	}
+	return false
+}
 
 // fuzzSuffixAllowed is the _at/_on rule for a non-enum string field.
 func fuzzSuffixAllowed(key, s string) bool {
@@ -80,6 +114,9 @@ func checkTyped(t *testing.T, ep *Epoch, typ reflect.Type, key string, in, out a
 	case string:
 		var allowed bool
 		switch {
+		case typ == reflect.TypeFor[tToken]():
+			require.Regexp(t, fuzzTokenRE, iv, "a Verbatim value passed without matching")
+			allowed = true
 		case implements(typ, enumType):
 			allowed = slices.Contains(reflect.New(typ).Interface().(Enum).EnumValues(), iv)
 		case typ == reflect.TypeFor[time.Time]() || typ.Kind() == reflect.String:
@@ -187,19 +224,26 @@ func FuzzEnforceStructured(f *testing.F) {
 		strs := append([]string{
 			"SENTINEL-1", "SENTINEL-" + s, s + "SENTINEL", "SENTINEL", "v1.2.3",
 			"2026-01-02T03:04:05Z", "2026-01-02", "2026-01-02T03:04:05.120Z", s,
+			"tok_abcd1234", "tok_" + s, "tok_SENTINEL",
 		}, enumVals...)
 		var v tStatus
 		(&fuzzGen{b: b, strs: strs, times: times}).fill(reflect.ValueOf(&v).Elem(), 0)
 		in, err := jsonv2.Marshal(v)
 		require.NoError(t, err)
+		mismatch := verbatimMismatch(typ, decodeAny(t, in))
 
 		res, err := e.Enforce(Hashed, typ, in)
+		rev, rerr := e.Enforce(Revealed, typ, in)
+		if mismatch {
+			require.True(t, isErr[*PatternError](err), "hashed: want *PatternError, got %v", err)
+			require.True(t, isErr[*PatternError](rerr), "revealed: want *PatternError, got %v", rerr)
+			return
+		}
 		require.NoError(t, err)
 		require.NotContains(t, string(res.Body), "SENTINEL")
 		checkTyped(t, h.Current(), typ, "", decodeAny(t, in), decodeAny(t, res.Body))
 
-		rev, err := e.Enforce(Revealed, typ, in)
-		require.NoError(t, err)
+		require.NoError(t, rerr)
 		require.Equal(t, decodeAny(t, in), decodeAny(t, rev.Body))
 	})
 }
@@ -211,6 +255,7 @@ func FuzzEnforceRawJSON(f *testing.F) {
 		`{"matrix":[["a"],[]],"sampled_at":["2026-01-02T03:04:05.5Z"],"day_on":"2026-02-29","paused":false}`,
 		`{"next":{"status":"ok","next":{"works":[{"status":"stored"}]}}}`,
 		`{"works":[{"title":"\ud800 <>&","id":1e400}]}`,
+		`{"works":[{"token":"tok_abcd1234"},{"token":"tok_SENTINEL"}]}`, `{"works":[{"token":"tok_0000000a"}]}`,
 		`{"works":[{"stored_at":"x"}]}`, `{"next":[]}`, `{"status":1}`, `{"id":1}{}`, `[]`, `"x"`, `"`, ``,
 	} {
 		f.Add([]byte(s))
@@ -228,6 +273,10 @@ func FuzzEnforceRawJSON(f *testing.F) {
 			// The walk stops at the first unknown key or mismatch, so later syntax errors go
 			// unreported.
 		case isErr[*SchemaError](err):
+		case isErr[*PatternError](err):
+			if json.Valid(body) {
+				require.True(t, verbatimMismatch(typ, decodeAny(t, body)), "*PatternError without a mismatching token")
+			}
 		case errors.Is(err, ErrInvalidJSON):
 			require.False(t, json.Valid(body), "valid JSON rejected: %v", err)
 		default:

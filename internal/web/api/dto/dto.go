@@ -9,6 +9,11 @@
 // `EnumValues() []string` method (it satisfies redact.Enum structurally; this package never
 // imports redact). The enforcer passes those values unhashed. A plain string field is free
 // text and is always hashed.
+//
+// Verbatim rule: a server-generated or strictly shaped non-fanwork value (a token, username,
+// TOTP secret or URI, recovery code, invite URL) has a named string type with a
+// `VerbatimPattern() string` method (redact.Verbatim; see verbatim.go). The enforcer passes it
+// only on a full match, else the response is a 500.
 package dto
 
 import (
