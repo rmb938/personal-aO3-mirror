@@ -85,6 +85,15 @@ var limitGroups = map[string]limitGroup{
 			return jsonRequest(http.MethodPost, route.Sources, `{"url":"/tags/load`+strconv.Itoa(i)+`/works"}`)
 		},
 	},
+	"signup": {
+		set:    func(o *runtime.Options, n int) { o.SignupPerHour = n },
+		window: time.Hour,
+		okCode: http.StatusUnprocessableEntity, // an empty body passes the limiter, then fails validation
+		request: func(i int) *http.Request {
+			targets := []string{route.AuthSignup, route.AuthSignupConfirm, route.AuthReset, route.AuthResetConfirm}
+			return jsonRequest(http.MethodPost, targets[i%len(targets)], `{}`)
+		},
+	},
 }
 
 // burst sends m requests to h at once (each goroutine waits on one start signal) and returns

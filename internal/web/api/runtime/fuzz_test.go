@@ -256,6 +256,7 @@ func fuzzAPI(f *testing.F, noReveal bool, logs *bytes.Buffer) *API {
 	opts := Options{
 		Version: "test", TrustedProxies: []string{"127.0.0.1/32"}, AllowedHosts: testHosts, RequestTimeout: 10 * time.Second,
 		GeneralPerMin: math.MaxInt32, SourceAddPerHour: math.MaxInt32, SearchPerMin: math.MaxInt32, NoReveal: noReveal,
+		SignupPerHour: math.MaxInt32,
 	}
 	a, err := New(opts, log, ctrls, func(a *API, _ *controllers.Controllers, r *chi.Mux, _ bool) {
 		r.Get(route.Healthz, a.Handle(func(req *http.Request) (any, error) {
@@ -369,6 +370,11 @@ func FuzzDecodeJSON(f *testing.F) {
 		`{"name":"fixture tag","types":["fandom","fandom","x"],"canonical":true,"parent_ids":[1],"sort":"name","direction":"desc"}`,
 		`{"name":" ","sort":"works","direction":"up"}`,
 		`{"ttl":"1h"}`, `{"ttl":"59s"}`, `{"scope":"both","ttl":"168h"}`, `{"scope":"Totp","ttl":"-1m"}`,
+		`{"invite_token":"inv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","username":"Fixture_1","password":"fixture pass"}`,
+		`{"invite_token":"inv_AAAA","username":"a b","password":""}`,
+		`{"invite_token":"inv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
+		`{"enrollment_token":"enr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"123456"}`,
+		`{"enrollment_token":"enr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","code":"12345a"}`,
 	} {
 		for k := range types {
 			f.Add(uint8(k), []byte(s))
@@ -517,6 +523,17 @@ func requireInBounds(t *testing.T, body any) {
 	case *request.CreateReset:
 		require.Contains(t, b.Scope.EnumValues(), string(b.Scope))
 		requireInviteTTL(t, b.TTL)
+	case *request.Signup:
+		requireOpaqueToken(t, b.InviteToken, "inv_")
+		require.Regexp(t, `\A[A-Za-z0-9_-]{3,32}\z`, b.Username)
+		require.NotEmpty(t, b.Password)
+		require.LessOrEqual(t, len(b.Password), request.MaxPasswordBytes)
+	case *request.Reset:
+		requireOpaqueToken(t, b.InviteToken, "inv_")
+		require.LessOrEqual(t, len(b.Password), request.MaxPasswordBytes)
+	case *request.ConfirmEnrollment:
+		requireOpaqueToken(t, b.EnrollmentToken, "enr_")
+		require.Regexp(t, `\A[0-9]{6}\z`, b.Code)
 	default:
 		t.Fatalf("requireInBounds: no bounds for %T; add them", body)
 	}
@@ -558,6 +575,11 @@ func requirePollInterval(t *testing.T, d dto.Duration) {
 	t.Helper()
 	p := d.Duration()
 	require.True(t, p == 0 || (p >= request.MinPollInterval && p <= request.MaxPollInterval))
+}
+
+func requireOpaqueToken(t *testing.T, s, prefix string) {
+	t.Helper()
+	require.Regexp(t, `\A`+prefix+`[A-Za-z0-9_-]{43}\z`, s)
 }
 
 func requireInviteTTL(t *testing.T, d dto.Duration) {

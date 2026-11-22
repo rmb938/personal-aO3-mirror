@@ -66,11 +66,13 @@ type API struct {
 }
 
 // APIRate holds the per-client rate limits of the public listener (the admin socket's are
-// higher). SearchPerMin is shared by the QUERY search routes.
+// higher). SearchPerMin is shared by the QUERY search routes, SignupPerHour by the signup and
+// reset routes (both steps).
 type APIRate struct {
 	GeneralPerMin    int `yaml:"general_per_min"`
 	SearchPerMin     int `yaml:"search_per_min"`
 	SourceAddPerHour int `yaml:"source_add_per_hour"`
+	SignupPerHour    int `yaml:"signup_per_hour"`
 }
 
 // MaxRequestTimeout caps api.request_timeout below the server's 60s write timeout, so a slow
@@ -185,7 +187,7 @@ func Default() Config {
 			RequestTimeout:  10 * time.Second,
 			HashKeyRotation: 24 * time.Hour,
 			PublicURL:       "http://localhost:8080",
-			Rate:            APIRate{GeneralPerMin: 120, SearchPerMin: 30, SourceAddPerHour: 10},
+			Rate:            APIRate{GeneralPerMin: 120, SearchPerMin: 30, SourceAddPerHour: 10, SignupPerHour: 5},
 		},
 	}
 }
@@ -364,8 +366,8 @@ func (a API) validate() []error {
 	if a.HashKeyRotation < 0 || (a.HashKeyRotation > 0 && a.HashKeyRotation < redact.MinRotation) {
 		add("api.hash_key_rotation %s must be 0 (once per process) or >= %s", a.HashKeyRotation, redact.MinRotation)
 	}
-	if a.Rate.GeneralPerMin < 1 || a.Rate.SearchPerMin < 1 || a.Rate.SourceAddPerHour < 1 {
-		add("api.rate.general_per_min, search_per_min and source_add_per_hour must be >= 1")
+	if a.Rate.GeneralPerMin < 1 || a.Rate.SearchPerMin < 1 || a.Rate.SourceAddPerHour < 1 || a.Rate.SignupPerHour < 1 {
+		add("api.rate.general_per_min, search_per_min, source_add_per_hour and signup_per_hour must be >= 1")
 	}
 	if err := a.validatePublicURL(); err != nil {
 		errs = append(errs, err)

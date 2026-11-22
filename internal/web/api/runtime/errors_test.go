@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"regexp"
@@ -16,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
@@ -48,6 +51,13 @@ func TestProblemFor(t *testing.T) {
 		{store.ErrNoUser, dto.TypeNotFound, http.StatusNotFound, false},
 		{fmt.Errorf("revoke: %w", store.ErrNoInvite), dto.TypeNotFound, http.StatusNotFound, false},
 		{store.ErrNoSession, dto.TypeNotFound, http.StatusNotFound, false},
+		{controllers.ErrInvalidCredentials, dto.TypeInvalidCredentials, http.StatusUnauthorized, false},
+		{fmt.Errorf("confirm: %w", controllers.ErrInvalidToken), dto.TypeInvalidCredentials, http.StatusUnauthorized, false},
+		{controllers.ErrUsernameTaken, dto.TypeAlreadyExists, http.StatusConflict, false},
+		{auth.ErrHasherBusy, dto.TypeUnavailable, http.StatusServiceUnavailable, false},
+		{controllers.ErrInvalidUsername, dto.TypeValidation, http.StatusUnprocessableEntity, false},
+		{fmt.Errorf("signup: %w", auth.ErrPasswordCommon), dto.TypeValidation, http.StatusUnprocessableEntity, false},
+		{controllers.ErrResetPassword, dto.TypeValidation, http.StatusUnprocessableEntity, false},
 		{store.ErrStateConflict, dto.TypeStateConflict, http.StatusConflict, false},
 		{store.ErrSourceExists, dto.TypeAlreadyExists, http.StatusConflict, false},
 		{fmt.Errorf("add: %w", controllers.ExistsError{ID: 3}), dto.TypeAlreadyExists, http.StatusConflict, false},
@@ -65,6 +75,27 @@ func TestProblemFor(t *testing.T) {
 			assert.Equal(t, info.Title, p.Title)
 			assert.Equal(t, c.internal, internal)
 		})
+	}
+}
+
+// The Auth controller's input errors are validation errors on the member they concern, and
+// respondError adds the headers a 401 and a busy hasher need.
+func TestAuthProblems(t *testing.T) {
+	for _, m := range authMemberDetails {
+		p, internal := ProblemFor(fmt.Errorf("wrap: %w", m.err))
+		assert.False(t, internal)
+		assert.Equal(t, []dto.ProblemError{{Detail: m.detail.Message(), Pointer: "/" + m.member}}, p.Errors, m.err)
+	}
+	for err, want := range map[error]map[string]string{
+		controllers.ErrInvalidToken: {"WWW-Authenticate": WWWAuthenticate},
+		auth.ErrHasherBusy:          {"Retry-After": "1"},
+		store.ErrNoUser:             {},
+	} {
+		w := httptest.NewRecorder()
+		respondError(w, httptest.NewRequest(http.MethodPost, "/", nil), slog.New(slog.DiscardHandler), err)
+		for _, k := range []string{"WWW-Authenticate", "Retry-After"} {
+			assert.Equal(t, want[k], w.Header().Get(k), "%v: %s", err, k)
+		}
 	}
 }
 

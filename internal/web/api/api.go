@@ -61,6 +61,12 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 	r.With(runtime.AcceptQuery).Get(route.CollectionWorks, a.Handle(h.ListCollectionWorks))
 	r.With(runtime.AcceptQuery, search).Query(route.CollectionWorks, a.Handle(h.QueryCollectionWorks))
 	r.Get(route.Image, a.Handle(h.GetImage))
+
+	signup := a.SignupRateLimit(listener, admin) // one budget for both steps of signup and reset
+	r.With(signup).Post(route.AuthSignup, a.Handle(h.Signup))
+	r.With(signup).Post(route.AuthSignupConfirm, a.Handle(h.ConfirmSignup))
+	r.With(signup).Post(route.AuthReset, a.Handle(h.StartReset))
+	r.With(signup).Post(route.AuthResetConfirm, a.Handle(h.ConfirmReset))
 	if admin {
 		r.Post(route.SourceConfirm, a.Handle(h.IDAction(c.ConfirmSource)))
 		r.Post(route.SourcePause, a.Handle(h.IDAction(c.PauseSource)))

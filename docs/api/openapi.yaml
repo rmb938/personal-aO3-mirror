@@ -28,8 +28,9 @@ info:
 
     Limits: per client IP (IPv6 by /64; behind a trusted proxy, the rightmost untrusted
     `X-Forwarded-For` entry), `api.rate.general_per_min` requests a minute (default 120) on
-    every route, plus `api.rate.search_per_min` (30) shared by every `QUERY` search route and
-    `api.rate.source_add_per_hour` (10) on `POST /api/v1/sources`. The admin socket allows 10×
+    every route, plus `api.rate.search_per_min` (30) shared by every `QUERY` search route,
+    `api.rate.source_add_per_hour` (10) on `POST /api/v1/sources` and
+    `api.rate.signup_per_hour` (5) shared by the four signup and reset routes. The admin socket allows 10x
     each. Over a limit is 429 `rate-limited` with `Retry-After` (the window: 60 or 3600 s). At
     most 64 requests are handled at once and 256 more wait up to 5 s (then 503 `unavailable`
     with `Retry-After: 1`); a request runs at most `api.request_timeout` (default 10 s, then
@@ -897,6 +898,98 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/WorkDebug" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/signup:
+    post:
+      operationId: signup
+      summary: Start a signup with an invite.
+      description: |
+        Takes the invite link's token (after `#token=`), a username and a password, and returns
+        a new TOTP secret to add to an authenticator app plus the enrollment token to confirm it
+        with (`/api/v1/auth/signup/confirm`) before `expires_at` (15 minutes, never past the
+        invite). An unusable invite is 401 `invalid-credentials`, checked before anything else;
+        then a taken username is 409 `already-exists`, and a password the policy refuses is a
+        422 at `/password`. Starting again with the same invite replaces the pending signup.
+        Rate limited per client by `api.rate.signup_per_hour`, shared by both steps of signup
+        and reset.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials, already-exists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "200":
+          description: The new TOTP secret and the enrollment token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Enrollment" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/signup/confirm:
+    post:
+      operationId: confirmSignup
+      summary: Finish a signup with a TOTP code.
+      description: |
+        Creates the account, uses up the invite and returns 10 single-use recovery codes, shown
+        only here. Then log in. A wrong code or an unusable enrollment token is 401
+        `invalid-credentials`; a username taken meanwhile is 409 `already-exists`.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials, already-exists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmEnrollmentRequest" }
+      responses:
+        "201":
+          description: The account exists; its recovery codes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/reset:
+    post:
+      operationId: startReset
+      summary: Start a reset with a reset link.
+      description: |
+        Takes the reset link's token and, exactly when the link's scope replaces the password,
+        the new password (else a 422 at `/password`). When the scope replaces the TOTP secret
+        the response holds the new one; otherwise confirm with a code from the current one. An
+        unusable link is 401 `invalid-credentials`.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResetRequest" }
+      responses:
+        "200":
+          description: The enrollment token, and the new TOTP secret when there is one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Enrollment" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/auth/reset/confirm:
+    post:
+      operationId: confirmReset
+      summary: Finish a reset with a TOTP code.
+      description: |
+        Applies the new password and/or TOTP secret, clears the login backoff, revokes every
+        session of the account and uses up the link. A reset that replaced the TOTP secret
+        returns 10 new recovery codes (shown only here); a password-only reset keeps the current
+        ones and returns an empty list. A wrong code or an unusable enrollment token is 401
+        `invalid-credentials`.
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmEnrollmentRequest" }
+      responses:
+        "200":
+          description: The reset is applied; new recovery codes, if any.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/admin/invites:
     post:
       operationId: createInvite
@@ -1107,6 +1200,9 @@ components:
     RetryAfter:
       description: Seconds to wait. On 429 the limit's window (60 or 3600); on a busy 503, 1.
       schema: { type: integer, minimum: 1 }
+    WWWAuthenticate:
+      description: On every 401, the accepted scheme (RFC 9110 §15.5.2, RFC 6750 §3).
+      schema: { type: string, enum: ['Bearer realm="ao3mirror"'] }
   responses:
     Problem:
       description: |
@@ -1116,6 +1212,7 @@ components:
         [bad-request, misdirected-request, validation-error, reveal-disabled, uri-too-long, rate-limited, unavailable, internal-error]
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        WWW-Authenticate: { $ref: "#/components/headers/WWWAuthenticate" }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -3069,3 +3166,79 @@ components:
       additionalProperties: false
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/Session" } }
+    InviteToken:
+      type: string
+      description: An invite or reset link's token, the part after `#token=`.
+      pattern: "^inv_[A-Za-z0-9_-]{43}$"
+    EnrollmentToken:
+      type: string
+      description: A pending signup's or reset's token, from its first step (verbatim).
+      pattern: "^enr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+    TOTPCode:
+      type: string
+      description: The current 6-digit code from the authenticator app.
+      pattern: "^[0-9]{6}$"
+    Password:
+      type: string
+      description: |
+        8 to 128 characters after Unicode NFKC normalization (at most 2048 bytes as sent), no
+        control characters, not the username and not a common password. There are no
+        composition rules.
+      minLength: 1
+      maxLength: 2048
+    SignupRequest:
+      type: object
+      required: [invite_token, username, password]
+      additionalProperties: false
+      properties:
+        invite_token: { $ref: "#/components/schemas/InviteToken" }
+        username:
+          type: string
+          description: 3 to 32 of a-z, 0-9, `_` and `-`; letters in either case, stored lower-case.
+          pattern: "^[A-Za-z0-9_-]{3,32}$"
+        password: { $ref: "#/components/schemas/Password" }
+    ResetRequest:
+      type: object
+      required: [invite_token]
+      additionalProperties: false
+      properties:
+        invite_token: { $ref: "#/components/schemas/InviteToken" }
+        password:
+          allOf: [{ $ref: "#/components/schemas/Password" }]
+          description: The new password; required exactly when the link's scope replaces it.
+    ConfirmEnrollmentRequest:
+      type: object
+      required: [enrollment_token, code]
+      additionalProperties: false
+      properties:
+        enrollment_token: { $ref: "#/components/schemas/EnrollmentToken" }
+        code:
+          allOf: [{ $ref: "#/components/schemas/TOTPCode" }]
+          description: From the new TOTP secret, or the current one when a reset keeps it.
+    Enrollment:
+      type: object
+      required: [enrollment_token, expires_at]
+      additionalProperties: false
+      properties:
+        enrollment_token: { $ref: "#/components/schemas/EnrollmentToken" }
+        totp_secret:
+          type: string
+          description: The new TOTP secret in base32 (verbatim), to type into an authenticator app; omitted when a reset keeps the current one.
+          pattern: "^[A-Z2-7]{32}$"
+        otpauth_uri:
+          type: string
+          description: The same secret as an `otpauth://totp/` URI, to show as a QR code (verbatim); omitted with `totp_secret`.
+          pattern: '^otpauth://totp/(?:[A-Za-z0-9._-]|%20){1,32}:[a-z0-9_-]{3,32}\?secret=[A-Z2-7]{32}&issuer=(?:[A-Za-z0-9._-]|%20){1,32}&algorithm=SHA1&digits=6&period=30$'
+        expires_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: Confirm before this.
+    RecoveryCodes:
+      type: object
+      required: [recovery_codes]
+      additionalProperties: false
+      properties:
+        recovery_codes:
+          type: array
+          description: Single-use codes for logging in without the authenticator app, shown only here (verbatim); empty when a password-only reset keeps the current ones.
+          maxItems: 10
+          items: { type: string, pattern: "^[a-z2-7]{4}(?:-[a-z2-7]{4}){3}$" }

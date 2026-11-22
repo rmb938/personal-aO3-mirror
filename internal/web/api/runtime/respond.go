@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
@@ -18,6 +19,8 @@ import (
 const (
 	ContentTypeJSON    = "application/json"
 	ContentTypeProblem = "application/problem+json"
+	// WWWAuthenticate is every 401's challenge: a bearer access token (RFC 6750 §3).
+	WWWAuthenticate = `Bearer realm="ao3mirror"`
 )
 
 // HandlerFunc is the shape of a handler: it gets the request and returns a value or an error.
@@ -102,6 +105,13 @@ func respondError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err 
 	}
 	if ex, ok := errors.AsType[controllers.ExistsError](err); ok {
 		w.Header().Set("Location", route.Path(route.Source, ex.ID)) // the source that already exists
+	}
+	switch {
+	case p.Status == http.StatusUnauthorized:
+		// RFC 9110 §15.5.2: a 401 always names the scheme that would be accepted.
+		w.Header().Set("WWW-Authenticate", WWWAuthenticate)
+	case errors.Is(err, auth.ErrHasherBusy):
+		w.Header().Set("Retry-After", "1")
 	}
 	Respond(w, r, log, p.Status, ContentTypeProblem, p)
 }

@@ -270,7 +270,7 @@ api:
   allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # public listener's Host names (stage 15d)
   request_timeout: 10s
   hash_key_rotation: 24h     # in-memory random key; 0 = once per process; min 1h
-  rate: { general_per_min: 120, search_per_min: 30, source_add_per_hour: 10 }
+  rate: { general_per_min: 120, search_per_min: 30, source_add_per_hour: 10, signup_per_hour: 5 }
 ```
 
 ---
@@ -1849,7 +1849,35 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `invite list` never shows a link (the API keeps only the token hash). `TestAccountCLI`
         seeds two accounts and a session into the temp users.db before `serve`.
     - [ ] **16f. Public auth flows**: signup, reset, login, refresh, logout and account routes;
-      auth rate limits; `Cache-Control: no-store`.
+      auth rate limits; `Cache-Control: no-store`. Three PRs (agreed with the user 2026-11-22):
+      signup and reset; login and refresh; bearer extraction with logout and the account
+      routes. The account routes are on both listeners (the OpenAPI test keeps the socket a
+      superset of the public listener); the socket never reads `Authorization`, so there they
+      are always 401. 16g then puts the middleware on every public route. As built:
+      - Part 1 (signup and reset): `POST /api/v1/auth/signup`, `/signup/confirm`, `/reset`,
+        `/reset/confirm` on both listeners (`handlers/auth.go`). Bodies `request.Signup`,
+        `request.Reset` and `request.ConfirmEnrollment` (shared by both confirms: the same
+        enrollment row). They only bound and shape-check (tokens are prefix + 43 base64url,
+        username `[A-Za-z0-9_-]{3,32}`, password 1..2048 bytes, code 6 digits); the controller
+        checks the tokens, the username and the password policy. Step 1s are 200 `Enrollment
+        {enrollment_token, totp_secret?, otpauth_uri?, expires_at}` (a reset that keeps the
+        secret omits the TOTP fields); signup confirm is 201 `{recovery_codes}` with no
+        `Location` (like an invite, nothing a caller can GET yet); reset confirm is 200, with
+        an empty list for a password-only reset.
+      - Errors in `runtime.ProblemFor`: `ErrInvalidCredentials` and `ErrInvalidToken` are the
+        new 401 `invalid-credentials` (details "the credentials are not valid" / "the token is
+        not valid: …"); `ErrUsernameTaken` is 409 `already-exists`; `auth.ErrPassword*`,
+        `ErrResetPassword` and `ErrInvalidUsername` are 422s on `/password` or `/username`,
+        one detail per rule (every auth body names its new password `password`, so the
+        pointer is the same everywhere); `auth.ErrHasherBusy` is 503 with `Retry-After: 1`.
+        Every 401 carries `WWW-Authenticate: Bearer realm="ao3mirror"` (RFC 9110 §15.5.2 makes
+        it a MUST; part 3 adds `error="invalid_token"` for a bad bearer token).
+      - `api.rate.signup_per_hour` (default 5, admin socket 10×) is one budget for all four
+        routes, both steps. `securityHeaders` sets `Cache-Control: no-store` on every response
+        (the enforcer still sets it on revealed ones).
+      - Tests: the integration seed adds a reset invite for `fixture_user` and a pending signup
+        and reset with fixed fake tokens and a fixed TOTP secret, so the leak-test samples
+        succeed; `auth_test.go` runs both flows and every refusal the spec declares.
     - [ ] **16g. Require auth on the public listener**: the middleware, 401 and
       `WWW-Authenticate`, OpenAPI `securitySchemes.bearerAuth` applied globally with explicit
       exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the

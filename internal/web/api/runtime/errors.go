@@ -6,21 +6,28 @@ import (
 	"context"
 	"errors"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 )
 
 // problemFor maps any handler error to a problem, in one place: *problem.Error as is; store
 // (and controllers) not-found sentinels → 404; state conflicts → 409; a work over the whole-work cap → 422
-// work-too-large; an existing source → 409 already-exists; a
-// cancelled or timed-out request → 503; anything else → 500 internal. internal reports
+// work-too-large; an existing source → 409 already-exists; failed credentials or an unusable
+// auth token → 401 invalid-credentials; a taken username → 409 already-exists; an auth input
+// the controller refuses (username, password policy) → 422 on its member; a busy password
+// hasher, a cancelled or timed-out request → 503; anything else → 500 internal. internal reports
 // whether the error is unexpected (the caller logs it).
 func ProblemFor(err error) (p dto.Problem, internal bool) {
 	if e, ok := errors.AsType[*problem.Error](err); ok {
 		p = e.Problem()
 		return p, p.Type == dto.TypeInternal
+	}
+	if e := authMemberError(err); e != nil {
+		return e.Problem(), false
 	}
 	var e *problem.Error
 	switch {
@@ -52,6 +59,14 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoInvite)
 	case errors.Is(err, store.ErrNoSession):
 		e = problem.WithDetail(dto.TypeNotFound, DetailNoSession)
+	case errors.Is(err, controllers.ErrInvalidCredentials):
+		e = problem.WithDetail(dto.TypeInvalidCredentials, DetailInvalidCredentials)
+	case errors.Is(err, controllers.ErrInvalidToken):
+		e = problem.WithDetail(dto.TypeInvalidCredentials, DetailInvalidToken)
+	case errors.Is(err, controllers.ErrUsernameTaken):
+		e = problem.WithDetail(dto.TypeAlreadyExists, DetailUsernameTaken)
+	case errors.Is(err, auth.ErrHasherBusy):
+		e = problem.WithDetail(dto.TypeUnavailable, DetailBusy)
 	case errors.Is(err, store.ErrNoRawPage):
 		e = problem.New(dto.TypeNotFound)
 	case errors.Is(err, store.ErrStateConflict):
@@ -64,6 +79,36 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		return problem.New(dto.TypeInternal).Problem(), true
 	}
 	return e.Problem(), false
+}
+
+// authMemberDetails maps the Auth controller's input errors to the body member they concern
+// and its detail. Every auth body names its (new) password "password".
+var authMemberDetails = []struct {
+	err    error
+	member string
+	detail problem.Detail
+}{
+	{controllers.ErrInvalidUsername, "username", request.DetailUsername},
+	{controllers.ErrResetPassword, "password", DetailResetPassword},
+	{auth.ErrPasswordInvalid, "password", DetailPasswordInvalid},
+	{auth.ErrPasswordTooShort, "password", DetailPasswordTooShort},
+	{auth.ErrPasswordTooLong, "password", DetailPasswordTooLong},
+	{auth.ErrPasswordIsUsername, "password", DetailPasswordIsUsername},
+	{auth.ErrPasswordCommon, "password", DetailPasswordCommon},
+}
+
+// authMemberError is err as a validation error on its body member, or nil when it is not
+// one of authMemberDetails.
+func authMemberError(err error) *problem.Error {
+	for _, m := range authMemberDetails {
+		if errors.Is(err, m.err) {
+			var v problem.Validation
+			v.Member(m.detail, m.member)
+			e, _ := errors.AsType[*problem.Error](v.Err())
+			return e
+		}
+	}
+	return nil
 }
 
 func isExists(err error) bool {

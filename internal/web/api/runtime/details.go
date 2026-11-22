@@ -3,6 +3,7 @@ package runtime
 import (
 	"strconv"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
@@ -73,4 +74,15 @@ var (
 	DetailRateLimited      = problem.NewDetail("too many requests; retry after the Retry-After delay")
 	DetailBusy             = problem.NewDetail("the server is busy; retry after the Retry-After delay")
 	DetailTimeout          = problem.NewDetail("the request did not finish in time; retry later")
+
+	// Auth (stage 16f). The password policy errors are validation errors on /password.
+	DetailInvalidCredentials = problem.NewDetail("the credentials are not valid")
+	DetailInvalidToken       = problem.NewDetail("the token is not valid: unknown, expired, already used or revoked")
+	DetailUsernameTaken      = problem.NewDetail("an account already has this username")
+	DetailPasswordInvalid    = problem.NewDetail("must be valid UTF-8 without control characters")
+	DetailPasswordTooShort   = problem.NewDetail("must be at least " + itoa(auth.MinPasswordRunes) + " characters (after Unicode NFKC normalization)")
+	DetailPasswordTooLong    = problem.NewDetail("must be at most " + itoa(auth.MaxPasswordRunes) + " characters (after Unicode NFKC normalization)")
+	DetailPasswordIsUsername = problem.NewDetail("must not be the username")
+	DetailPasswordCommon     = problem.NewDetail("is a commonly used password; choose another")
+	DetailResetPassword      = problem.NewDetail("is required when the reset link replaces the password, and must be omitted otherwise")
 )

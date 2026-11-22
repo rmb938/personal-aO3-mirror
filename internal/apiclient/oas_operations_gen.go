@@ -8,6 +8,8 @@ type OperationName = string
 const (
 	AddSourceOperation            OperationName = "AddSource"
 	CancelSourceOperation         OperationName = "CancelSource"
+	ConfirmResetOperation         OperationName = "ConfirmReset"
+	ConfirmSignupOperation        OperationName = "ConfirmSignup"
 	ConfirmSourceOperation        OperationName = "ConfirmSource"
 	CreateInviteOperation         OperationName = "CreateInvite"
 	CreateResetOperation          OperationName = "CreateReset"
@@ -58,4 +60,6 @@ const (
 	RevokeSessionOperation        OperationName = "RevokeSession"
 	RotateSigningKeyOperation     OperationName = "RotateSigningKey"
 	SetSourceSettingsOperation    OperationName = "SetSourceSettings"
+	SignupOperation               OperationName = "Signup"
+	StartResetOperation           OperationName = "StartReset"
 )

@@ -210,6 +210,7 @@ func TestSecurityHeaders(t *testing.T) {
 		assert.Equal(t, "default-src 'none'; frame-ancestors 'none'", h.Get("Content-Security-Policy"))
 		assert.Equal(t, "no-referrer", h.Get("Referrer-Policy"))
 		assert.Equal(t, "same-origin", h.Get("Cross-Origin-Resource-Policy"))
+		assert.Equal(t, "no-store", h.Get("Cache-Control"))
 		assert.Empty(t, h.Get("Access-Control-Allow-Origin"))
 	}
 }
@@ -401,7 +402,7 @@ func TestReveal(t *testing.T) {
 
 	w = testutil.Get(t, a.Public(), "/api/v1/healthz")
 	assert.Equal(t, "hashed", w.Header().Get(HeaderFanwork))
-	assert.Empty(t, w.Header().Get("Cache-Control"))
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"), "securityHeaders: every response")
 	assert.NotEmpty(t, w.Header().Get(HeaderFanworkEpoch))
 
 	for name, q := range map[string]string{
