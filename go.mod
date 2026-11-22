@@ -8,12 +8,15 @@ require (
 	github.com/go-chi/httprate v0.16.1
 	github.com/go-faster/errors v0.8.0
 	github.com/go-faster/jx v1.2.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/klauspost/compress v1.20.4
 	github.com/ogen-go/ogen v1.25.0
 	github.com/stretchr/testify v1.12.1
 	github.com/temoto/robotstxt v1.1.2
+	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.63.0
 	golang.org/x/sync v0.25.0
+	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.62.0
 )
@@ -45,7 +48,6 @@ require (
 	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261116191925-e77a43154acb // indirect
-	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/tools v0.53.0 // indirect
 	golang.org/x/vuln v1.10.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect

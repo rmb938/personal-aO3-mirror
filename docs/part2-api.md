@@ -1707,9 +1707,33 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
   - Split into seven PRs (the box is ticked by the last one):
     - [x] **16a. Docs**: this design; Cloudflare Tunnel replaces Tailscale Funnel in the docs;
       CLAUDE.md auth rules.
-    - [ ] **16b. `internal/auth` primitives**: password, TOTP, secrets, tokens, JWT, the
-      common-password list. New deps: `golang-jwt/jwt/v5`, `golang.org/x/crypto` (argon2,
-      hkdf), `golang.org/x/text` (promoted from indirect).
+    - [x] **16b. `internal/auth` primitives**: password, TOTP, secrets, tokens, JWT, the
+      common-password list. New deps: `golang-jwt/jwt/v5` v5.3.1, `golang.org/x/crypto` v0.59.0
+      (argon2 only), `golang.org/x/text` (promoted from indirect). As built:
+      - HKDF is the standard library's `crypto/hkdf` (Go 1.24+), not x/crypto's. `crypto/rand`
+        can't fail since Go 1.24, so token, secret and key generators return no error.
+      - Common-password list: SecLists' `100k-most-used-passwords-NCSC.txt` (MIT), NFKC + lower
+        case, 8..128 runes, 46,483 entries; source, commit, SHA-256 and licence in
+        `internal/auth/common-passwords.md`, rebuilt by `gen_common_passwords.go`. The username
+        and list checks ignore case. `CheckPassword` also refuses invalid UTF-8 and control
+        characters, and returns the first rule broken (`ErrPassword*`).
+      - `Hasher` (`HasherOptions`: params, concurrency 2, max wait 5s → `ErrHasherBusy`) hashes
+        the NFKC form; `Verify` uses the parameters in the PHC string (bounded, strictly parsed),
+        so `NeedsRehash` then a new `Hash` upgrades old hashes. `VerifyDummy` for unknown users.
+      - TOTP AAD is a `TOTPContext`: `UserTOTP(user_id)`, or `EnrollmentTOTP(invite_id)` for a
+        pending enrollment, which has no user yet (confirm re-encrypts it for the user). Ciphertext
+        is version byte, nonce, sealed secret. `last_totp_step` 0 means never used.
+      - `auth.key` is written to a temp file and hard-linked into place (no partial key, and two
+        processes starting at once agree); a key file with group/other bits is refused.
+      - `RecoveryCodeMAC` and `NameMAC` return `[32]byte`; recovery codes are lower-case base32,
+        normalized by `NormalizeRecoveryCode` (case, dashes and spaces ignored).
+      - `TokenSum(kind, token)` refuses a wrong prefix, length or non-canonical base64url
+        before any database read.
+      - `Verifier` is immutable (rebuild it after a rotation with the keys still in their grace
+        period); refusals are `*TokenError` with an enum `TokenReason` (`malformed`, `bad_alg`,
+        `unknown_kid`, `bad_signature`, `expired`, `not_yet_valid`, `bad_claims`) for the logs.
+        `nbf`, `iat`, `sub`, `sid` and `jti` are all required; `sub`/`sid` are canonical
+        positive decimal IDs.
     - [ ] **16c. Enforcer pattern types**: the `redact`/`runtime` registry and the dto pattern
       types. The fuzz test keeps its guarantee (sentinels that can't match a pattern); new
       tests: a value missing its pattern is a 500, and a pattern key never passes free text.
