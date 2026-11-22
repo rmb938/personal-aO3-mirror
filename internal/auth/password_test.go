@@ -69,7 +69,7 @@ func TestCommonPasswordList(t *testing.T) {
 	}
 }
 
-var phcRE = regexp.MustCompile(`^\$argon2id\$v=19\$m=19456,t=2,p=1\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$`)
+var phcRE = regexp.MustCompile(`^\$argon2id\$v=19\$m=65536,t=3,p=4\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$`)
 
 func TestHasherDefaultParams(t *testing.T) {
 	h, err := NewHasher(HasherOptions{})

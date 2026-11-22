@@ -1586,7 +1586,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     | Tokens | Access JWT, 15m, whose `sid` is checked against users.db on every request (revocation is immediate). Opaque refresh token, 30d, stored as SHA-256, rotated on each use; presenting the previous one revokes the session (reuse detection). |
     | Signing | Ed25519 (`EdDSA`) via `github.com/golang-jwt/jwt/v5` (v5.3.1 when planned; run `go list -m …@latest` again). The key is stored in users.db with a `kid`. Rotation keeps the old public key for verification until `rotated_at + access_ttl`. |
     | Enforcer | New verbatim **pattern types** in `dto` (`Token`, `Username`, `TOTPSecret`, `OTPAuthURI`, `RecoveryCode`, `InviteURL`): named string types with a `VerbatimPattern() string` method, found by reflection like `EnumValues`. The enforcer passes a value only on a full regex match, else 500 (fail closed). Plain `string` fields are still always hashed. Approved by the user as a change to the enforcer. |
-    | Password | 8..128 runes after NFKC (NIST SP 800-63B-4's minimum with MFA), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL). Argon2id with OWASP's m=19 MiB, t=2, p=1, in PHC string format; rehashed on login when the parameters change. |
+    | Password | 8..128 runes after NFKC (NIST SP 800-63B-4's minimum with MFA), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL). Argon2id with RFC 9106 §4's second recommended option (m=64 MiB, t=3, p=4; changed from OWASP's m=19 MiB, t=2, p=1 in 16b), in PHC string format; rehashed on login when the parameters change. |
     | TOTP | Mandatory. Hand-rolled RFC 4226/6238 on `crypto/hmac` (SHA1, 6 digits, 30s, ±1 step, 20-byte secret), tested with the RFC appendix vectors. It returns the matched step and `last_totp_step` blocks replay (pquerna/otp v1.5.0's `totp.ValidateCustom` returns only a bool). |
     | TOTP at rest | AES-256-GCM, AAD = user ID, key derived from `data/api/auth.key` (32 random bytes, 0600, in the 0700 socket dir), never stored in users.db. Losing the file means every user needs a 2FA reset: back it up with users.db. |
     | Recovery | 10 single-use recovery codes (16 base32 chars, `xxxx-xxxx-xxxx-xxxx`), shown once, stored as HMAC values; an admin can also issue a reset link. |
@@ -1717,6 +1717,9 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         `internal/auth/common-passwords.md`, rebuilt by `gen_common_passwords.go`. The username
         and list checks ignore case. `CheckPassword` also refuses invalid UTF-8 and control
         characters, and returns the first rule broken (`ErrPassword*`).
+      - Argon2id parameters: RFC 9106 §4's second option (64 MiB, t=3, p=4), the one the
+        x/crypto `IDKey` docs give when 2 GiB is too much, instead of OWASP's minimum. ~27 ms
+        a hash on the dev machine (OWASP's: ~15 ms); at most 128 MiB with 2 concurrent hashes.
       - `Hasher` (`HasherOptions`: params, concurrency 2, max wait 5s → `ErrHasherBusy`) hashes
         the NFKC form; `Verify` uses the parameters in the PHC string (bounded, strictly parsed),
         so `NeedsRehash` then a new `Hash` upgrades old hashes. `VerifyDummy` for unknown users.

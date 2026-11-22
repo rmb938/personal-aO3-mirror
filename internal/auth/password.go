@@ -103,9 +103,10 @@ type Argon2Params struct {
 	KeyLen  uint32
 }
 
-// DefaultArgon2 is OWASP's Argon2id recommendation (m=19 MiB, t=2, p=1) with a 16-byte salt and
-// a 32-byte hash.
-var DefaultArgon2 = Argon2Params{Memory: 19 * 1024, Time: 2, Threads: 1, SaltLen: 16, KeyLen: 32}
+// DefaultArgon2 is RFC 9106 §4's second recommended Argon2id option, for when the first's 2 GiB
+// is too much: m=64 MiB, t=3, p=4, with RFC 9106's 16-byte salt and a 32-byte hash. With the
+// Hasher's 2 concurrent hashes that is at most 128 MiB.
+var DefaultArgon2 = Argon2Params{Memory: 64 * 1024, Time: 3, Threads: 4, SaltLen: 16, KeyLen: 32}
 
 // Bounds on parameters read back from a stored hash, so a corrupt row can't make Verify allocate
 // without limit.
