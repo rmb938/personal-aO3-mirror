@@ -54,6 +54,9 @@ type AuthOptions struct {
 	MaxSessionAge time.Duration
 	InviteTTL     time.Duration // auth.invite_ttl, the default for new invites; 24h
 	TOTPIssuer    string        // auth.totp_issuer; "ao3mirror"
+	// SigningKeyRotation is auth.signing_key_rotation: RotateSigningKeyIfDue replaces a signing
+	// key this old; 720h.
+	SigningKeyRotation time.Duration
 
 	UnknownNames int // unknown usernames whose backoff is remembered; 10000
 }
@@ -121,6 +124,7 @@ func NewAuth(ctx context.Context, opts AuthOptions) (*Auth, error) {
 	opts.RefreshTTL = durationOr(opts.RefreshTTL, 720*time.Hour)
 	opts.MaxSessionAge = durationOr(opts.MaxSessionAge, 2160*time.Hour)
 	opts.InviteTTL = durationOr(opts.InviteTTL, 24*time.Hour)
+	opts.SigningKeyRotation = durationOr(opts.SigningKeyRotation, 720*time.Hour)
 	if opts.TOTPIssuer == "" {
 		opts.TOTPIssuer = "ao3mirror"
 	}
@@ -175,6 +179,8 @@ const (
 	reasonRefreshReuse   = "refresh_reuse"
 	reasonSessionUser    = "session_user_mismatch"
 	reasonSessionRevoked = "session_inactive"
+	reasonAdmin          = "admin"     // an admin asked (signing key rotation)
+	reasonScheduled      = "scheduled" // the key reached auth.signing_key_rotation
 )
 
 // ---- passwords (never inside a transaction) ----
@@ -269,6 +275,7 @@ func (a *Auth) newRecoveryCodes(ctx context.Context, tx *store.UsersTx, userID i
 // the retired keys still in their grace period. It is replaced, never changed.
 type keyRing struct {
 	active   auth.SigningKey
+	created  time.Time // the active key's created_at
 	retired  []retiredKey
 	issuer   *auth.Issuer
 	verifier *auth.Verifier
@@ -284,8 +291,8 @@ type retiredKey struct {
 // then (exp ≤ rotation + access TTL, plus the verifier's leeway).
 func (a *Auth) keyGrace() time.Duration { return a.opts.AccessTTL + auth.JWTLeeway }
 
-func (a *Auth) newRing(active auth.SigningKey, retired []retiredKey, now time.Time) *keyRing {
-	r := &keyRing{active: active, issuer: auth.NewIssuer(a.opts.PublicURL, active, a.opts.AccessTTL, a.opts.Now)}
+func (a *Auth) newRing(active auth.SigningKey, created time.Time, retired []retiredKey, now time.Time) *keyRing {
+	r := &keyRing{active: active, created: created, issuer: auth.NewIssuer(a.opts.PublicURL, active, a.opts.AccessTTL, a.opts.Now)}
 	keys := []auth.VerifyKey{active.VerifyKey()}
 	for _, k := range retired {
 		if !now.Before(k.until) {
@@ -312,7 +319,7 @@ func (a *Auth) keys() *keyRing {
 	defer a.keysMu.Unlock()
 	r = a.ring.Load()
 	if !r.nextDrop.IsZero() && !now.Before(r.nextDrop) {
-		r = a.newRing(r.active, r.retired, now)
+		r = a.newRing(r.active, r.created, r.retired, now)
 		a.ring.Store(r)
 	}
 	return r
@@ -342,6 +349,7 @@ func (a *Auth) loadKeys(ctx context.Context) error {
 		return err
 	}
 	var active *auth.SigningKey
+	var created time.Time
 	var retired []retiredKey
 	for _, row := range rows { // oldest first: the newest active key signs
 		k, err := auth.SigningKeyFromSeed(row.ID, row.Seed)
@@ -352,39 +360,87 @@ func (a *Auth) loadKeys(ctx context.Context) error {
 			if active != nil { // more than one active (never written so): the older only verifies
 				retired = append(retired, retiredKey{key: active.VerifyKey(), until: now.Add(a.keyGrace())})
 			}
-			active = &k
+			active, created = &k, row.CreatedAt
 			continue
 		}
 		retired = append(retired, retiredKey{key: k.VerifyKey(), until: row.RetiredAt.Add(a.keyGrace())})
 	}
-	a.ring.Store(a.newRing(*active, retired, now))
+	a.ring.Store(a.newRing(*active, created, retired, now))
 	return nil
 }
 
-// RotateSigningKey retires the signing key and starts a new one. Tokens signed by the old key
-// keep verifying until they expire. It returns the new key's kid.
+// RotateSigningKey retires the signing key and starts a new one at once (an admin's request).
+// Tokens signed by the old key keep verifying until they expire. It returns the new key's kid.
 func (a *Auth) RotateSigningKey(ctx context.Context) (string, error) {
+	kid, _, err := a.rotateSigningKey(ctx, false)
+	return kid, err
+}
+
+// RotateSigningKeyIfDue rotates the signing key once it is auth.signing_key_rotation old, so a
+// leaked key stops working without an admin acting. serve calls it at startup and then hourly.
+// It is false when the key isn't due yet.
+func (a *Auth) RotateSigningKeyIfDue(ctx context.Context) (bool, error) {
+	if !a.signingKeyDue(a.keys().created, a.now()) {
+		return false, nil // the common case, without the lock or a transaction
+	}
+	_, rotated, err := a.rotateSigningKey(ctx, true)
+	return rotated, err
+}
+
+func (a *Auth) signingKeyDue(created, now time.Time) bool {
+	return !now.Before(created.Add(a.opts.SigningKeyRotation))
+}
+
+// rotateSigningKey replaces the active signing key in one transaction. With ifDue it first
+// re-checks, inside that transaction, that the stored active key is due, so two triggers at
+// once rotate only once.
+func (a *Auth) rotateSigningKey(ctx context.Context, ifDue bool) (kid string, rotated bool, err error) {
 	a.keysMu.Lock()
 	defer a.keysMu.Unlock()
 	now := a.now()
 	k := auth.NewSigningKey()
-	err := a.users.InTx(ctx, func(ctx context.Context, tx *store.UsersTx) error {
+	rotated, err = store.WriteUsersValue(ctx, a.users, func(ctx context.Context, tx *store.UsersTx) (bool, error) {
+		if ifDue {
+			due, err := a.storedKeyDue(ctx, tx, now)
+			if err != nil || !due {
+				return false, err
+			}
+		}
 		if err := tx.RetireSigningKeys(ctx, now); err != nil {
-			return err
+			return false, err
 		}
 		if err := tx.DeleteSigningKeysRetiredBy(ctx, now.Add(-a.keyGrace())); err != nil {
-			return err
+			return false, err
 		}
-		return tx.AddSigningKey(ctx, model.SigningKey{ID: k.ID, Seed: k.Seed(), CreatedAt: now})
+		return true, tx.AddSigningKey(ctx, model.SigningKey{ID: k.ID, Seed: k.Seed(), CreatedAt: now})
 	})
-	if err != nil {
-		return "", err
+	if err != nil || !rotated {
+		return "", false, err
 	}
 	old := a.ring.Load()
 	retired := append(slices.Clip(old.retired), retiredKey{key: old.active.VerifyKey(), until: now.Add(a.keyGrace())})
-	a.ring.Store(a.newRing(k, retired, now))
-	a.event(ctx, slog.LevelInfo, "signing_key_rotated")
-	return k.ID, nil
+	a.ring.Store(a.newRing(k, now, retired, now))
+	reason := reasonAdmin
+	if ifDue {
+		reason = reasonScheduled
+	}
+	a.event(ctx, slog.LevelInfo, "signing_key_rotated", "reason", reason)
+	return k.ID, true, nil
+}
+
+// storedKeyDue reports whether users.db's active signing key (the newest unretired one) has
+// reached auth.signing_key_rotation; true when there is none.
+func (a *Auth) storedKeyDue(ctx context.Context, tx *store.UsersTx, now time.Time) (bool, error) {
+	rows, err := tx.SigningKeys(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, row := range slices.Backward(rows) { // stored oldest first
+		if row.RetiredAt.IsZero() {
+			return a.signingKeyDue(row.CreatedAt, now), nil
+		}
+	}
+	return true, nil
 }
 
 // ---- access tokens ----

@@ -352,6 +352,69 @@ func TestAuthKeyRotation(t *testing.T) {
 	assert.Equal(t, kid, keys[0].ID)
 }
 
+func TestAuthScheduledKeyRotation(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	first := e.a.ring.Load().active.ID
+	rotateIfDue := func() bool {
+		t.Helper()
+		rotated, err := e.a.RotateSigningKeyIfDue(ctx)
+		require.NoError(t, err)
+		return rotated
+	}
+	storedKeys := func() int {
+		t.Helper()
+		keys, err := e.users.AutoCommitForTestOnly().SigningKeys(ctx)
+		require.NoError(t, err)
+		return len(keys)
+	}
+
+	e.advance(720*time.Hour - time.Second)
+	assert.False(t, rotateIfDue(), "not due yet")
+	assert.Equal(t, first, e.a.ring.Load().active.ID)
+
+	// A restart keeps the key's age (created_at comes from users.db).
+	var err error
+	e.a, err = NewAuth(ctx, e.opts)
+	require.NoError(t, err)
+	assert.False(t, rotateIfDue())
+
+	p := e.login(t, u)
+	e.advance(time.Second)
+	assert.True(t, rotateIfDue(), "due at exactly auth.signing_key_rotation")
+	second := e.a.ring.Load().active.ID
+	assert.NotEqual(t, first, second)
+	assert.False(t, rotateIfDue(), "due twice in a row rotates once")
+	assert.Equal(t, second, e.a.ring.Load().active.ID)
+	assert.Equal(t, 2, storedKeys())
+	_, err = e.a.Authenticate(ctx, p.AccessToken)
+	require.NoError(t, err, "the old key verifies until its tokens expire")
+	assert.Contains(t, e.logs.String(), `"event":"signing_key_rotated","reason":"scheduled"`)
+
+	// The re-check inside the transaction: a stale ring whose key users.db has already
+	// replaced (say, by another process) doesn't rotate again.
+	e.advance(10 * 24 * time.Hour)
+	stale := *e.a.ring.Load()
+	stale.created = stale.created.Add(-720 * time.Hour)
+	e.a.ring.Store(&stale)
+	assert.False(t, rotateIfDue())
+	assert.Equal(t, second, e.a.ring.Load().active.ID)
+
+	// A manual rotation resets the age.
+	e.advance(10 * 24 * time.Hour)
+	_, err = e.a.RotateSigningKey(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, e.logs.String(), `"event":"signing_key_rotated","reason":"admin"`)
+	third := e.a.ring.Load().active.ID
+	e.advance(20 * 24 * time.Hour)
+	assert.False(t, rotateIfDue(), "30 days since the start, 20 since the manual rotation")
+	e.advance(10 * 24 * time.Hour)
+	assert.True(t, rotateIfDue())
+	assert.NotEqual(t, third, e.a.ring.Load().active.ID)
+	assert.Equal(t, 2, storedKeys(), "retired keys past their grace are deleted")
+}
+
 func TestAuthHashingRefusedInsideTx(t *testing.T) {
 	e := newAuthEnv(t)
 	err := e.users.InReadTx(context.Background(), func(ctx context.Context, _ *store.UsersReadTx) error {

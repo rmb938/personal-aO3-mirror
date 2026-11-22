@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,6 +160,71 @@ func TestOpenAuth(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o750)) //nolint:gosec // deliberately unsafe mode under test
 	_, _, err = openAuth(t.Context(), cfg, log)
 	require.ErrorContains(t, err, "chmod 700")
+}
+
+// lockedBuffer is a log sink shared with a goroutine under test.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) count(s string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.b.String(), s)
+}
+
+// TestRotateSigningKeys checks serve's rotation loop: a key already due rotates at once, a key
+// that becomes due rotates on a later tick, and the loop stops with its context.
+func TestRotateSigningKeys(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "api")
+	var offset atomic.Int64
+	t0 := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return t0.Add(time.Duration(offset.Load())) }
+	users, err := store.OpenUsers(t.Context(), dir, store.Options{Now: now})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, users.Close()) })
+	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
+	require.NoError(t, err)
+	hasher, err := auth.NewHasher(auth.HasherOptions{})
+	require.NoError(t, err)
+	logs := &lockedBuffer{}
+	log := slog.New(slog.NewJSONHandler(logs, nil))
+	ctl, err := controllers.NewAuth(t.Context(), controllers.AuthOptions{Users: users, Secrets: secrets,
+		Hasher: hasher, Logger: log, Now: now, PublicURL: "https://mirror.example.com",
+		SigningKeyRotation: 24 * time.Hour})
+	require.NoError(t, err)
+	const rotated = `"event":"signing_key_rotated","reason":"scheduled"`
+
+	offset.Store(int64(25 * time.Hour)) // the server was down past the due date
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		rotateSigningKeys(ctx, ctl, log, 10*time.Millisecond)
+	}()
+	require.Eventually(t, func() bool { return logs.count(rotated) == 1 }, 5*time.Second, 5*time.Millisecond,
+		"rotated at startup")
+	time.Sleep(50 * time.Millisecond) // a few ticks with nothing due
+	assert.Equal(t, 1, logs.count(rotated), "not due again yet")
+
+	offset.Store(int64(49 * time.Hour))
+	require.Eventually(t, func() bool { return logs.count(rotated) == 2 }, 5*time.Second, 5*time.Millisecond,
+		"rotated on a tick")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("rotation loop did not stop")
+	}
+	assert.Zero(t, logs.count("rotation check failed"))
 }
 
 // TestAuthBoundsMatchController keeps config's invite TTL bounds in step with the controller's.

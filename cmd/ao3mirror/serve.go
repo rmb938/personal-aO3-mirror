@@ -73,6 +73,7 @@ type server struct {
 	noReveal      bool
 	store         *store.Store
 	users         *store.Users
+	auth          *controllers.Auth
 	tcp, sock     net.Listener
 	public, admin *http.Server
 }
@@ -129,7 +130,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		return nil, errors.Join(fmt.Errorf("admin socket: %w", err), tcp.Close())
 	}
 	return &server{
-		log: log, cfg: cfg, noReveal: noReveal, store: st, users: users, tcp: tcp, sock: sock,
+		log: log, cfg: cfg, noReveal: noReveal, store: st, users: users, auth: authCtl, tcp: tcp, sock: sock,
 		public: newHTTPServer(ctx, a.Public(), log),
 		admin:  newHTTPServer(ctx, a.Admin(), log),
 	}, nil
@@ -162,6 +163,8 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (users *
 		MaxSessionAge: cfg.Auth.MaxSessionAge,
 		InviteTTL:     cfg.Auth.InviteTTL,
 		TOTPIssuer:    cfg.Auth.TOTPIssuer,
+
+		SigningKeyRotation: cfg.Auth.SigningKeyRotation,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(err, users.Close())
@@ -258,6 +261,7 @@ func (s *server) serve(ctx context.Context) (err error) {
 		"login_per_min", ac.Rate.LoginPerMin, "refresh_per_min", ac.Rate.RefreshPerMin,
 		"public_url", ac.PublicURL, "access_ttl", au.AccessTTL.String(), "refresh_ttl", au.RefreshTTL.String(),
 		"max_session_age", au.MaxSessionAge.String(), "invite_ttl", au.InviteTTL.String(),
+		"signing_key_rotation", au.SigningKeyRotation.String(),
 	}
 	s.log.Info("api serving", attrs...)
 
@@ -278,6 +282,10 @@ func (s *server) serve(ctx context.Context) (err error) {
 		})
 	}
 	g.Go(func() error {
+		rotateSigningKeys(gctx, s.auth, s.log, signingKeyCheckInterval)
+		return nil
+	})
+	g.Go(func() error {
 		<-gctx.Done()
 		s.log.Info("api shutting down")
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
@@ -291,4 +299,26 @@ func (s *server) serve(ctx context.Context) (err error) {
 		return errors.Join(errs...)
 	})
 	return g.Wait()
+}
+
+// signingKeyCheckInterval is how often serve checks the signing key's age: a rotation only
+// needs to land within an hour of its due time.
+const signingKeyCheckInterval = time.Hour
+
+// rotateSigningKeys rotates the access-token signing key when it is due. It checks straight away
+// (a server that was down past the due date rotates at startup), then every tick until ctx ends. A
+// failed check is logged and retried on the next tick.
+func rotateSigningKeys(ctx context.Context, ctl *controllers.Auth, log *slog.Logger, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if _, err := ctl.RotateSigningKeyIfDue(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("signing key rotation check failed", "err", err.Error())
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
