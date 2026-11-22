@@ -79,6 +79,8 @@ func TestRecoveryCodes(t *testing.T) {
 	for _, bad := range []string{
 		"", "abcd-efgh-ijkl-mno", "abcd-efgh-ijkl-mnopq", "abcd-efgh-ijkl-mn01", "abcd-efgh-ijkl-mn8p",
 		"abcd_efgh_ijkl_mnop", strings.Repeat("-", 100) + "abcdefghijklmnop", "abcd-efgh-ijkl-mnoé",
+		"abcd-efgh-ijKl-mnop", // the Kelvin sign, which strings.ToLower folds to 'k'
+		"abcd-efgh-ijkl-mno\n",
 	} {
 		_, ok := NormalizeRecoveryCode(bad)
 		require.False(t, ok, "%q", bad)

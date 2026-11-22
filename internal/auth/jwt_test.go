@@ -171,6 +171,13 @@ func TestVerifyRejects(t *testing.T) {
 	forged := signEdDSA(t, other.private, key.ID, with("sub", "99"))
 	_, err = v.Verify(parts[0] + "." + strings.Split(forged, ".")[1] + "." + parts[2])
 	requireReason(t, err, TokenBadSig)
+
+	// Go's base64 decoders skip CR and LF, so these decode to the good signature: only the
+	// character check refuses them (found by FuzzVerifier).
+	for _, nl := range []string{"\n", "\r", "\r\n"} {
+		_, err = v.Verify(parts[0] + "." + parts[1] + "." + parts[2][:10] + nl + parts[2][10:])
+		requireReason(t, err, TokenMalformed)
+	}
 }
 
 func requireReason(t *testing.T, err error, want TokenReason) {

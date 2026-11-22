@@ -152,8 +152,10 @@ func TestDecodePHC(t *testing.T) {
 		"$argon2id$v=19$m=64,t=0,p=1$" + salt + "$" + key,
 		"$argon2id$v=19$m=64,t=1,p=0$" + salt + "$" + key,
 		"$argon2id$v=19$m=64,t=1,p=300$" + salt + "$" + key,
-		"$argon2id$v=19$m=64,t=1,p=1$" + salt + "==$" + key, // padding
-		"$argon2id$v=19$m=64,t=1,p=1$c2Fsd$" + key,          // salt too short
+		"$argon2id$v=19$m=64,t=1,p=1$" + salt + "==$" + key,                      // padding
+		"$argon2id$v=19$m=64,t=1,p=1$c2Fsd$" + key,                               // salt too short
+		"$argon2id$v=19$m=64,t=1,p=1$" + salt[:4] + "\n" + salt[4:] + "$" + key,  // base64 skips LF
+		"$argon2id$v=19$m=64,t=1,p=1$" + salt + "$" + key[:8] + "\r\n" + key[8:], // and CR
 		"$argon2id$v=19$m=64,t=1,p=1$" + salt + "$" + key + "$",
 		"x$argon2id$v=19$m=64,t=1,p=1$" + salt + "$" + key,
 	} {

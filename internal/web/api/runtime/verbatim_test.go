@@ -58,8 +58,8 @@ func verbatimAPI(t *testing.T) (serve func(target, key, value string) (code int,
 }
 
 // verbatimValues are values for each field as internal/auth generates them, by json key.
-func verbatimValues(t *testing.T) map[string][]string {
-	t.Helper()
+func verbatimValues(tb testing.TB) map[string][]string {
+	tb.Helper()
 	// Several of each random value, so the bit-limited last characters vary.
 	const n = 32
 	many := func(f func(i int) string) []string {
@@ -75,7 +75,7 @@ func verbatimValues(t *testing.T) map[string][]string {
 	jwt := func(i int) string {
 		s, _, err := auth.NewIssuer("https://mirror.example.com", auth.NewSigningKey(), 15*time.Minute, time.Now).
 			Issue(int64(i+1), int64(i+1)*1_000_000_007)
-		require.NoError(t, err)
+		require.NoError(tb, err)
 		return s
 	}
 	hosts := []string{"https://mirror.example.com/signup", "http://127.0.0.1:8080/reset", "http://[::1]:8080/signup"}

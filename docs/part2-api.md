@@ -2057,9 +2057,30 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
   and `/admin/users` routes, and 16g wrote up only API1, API2 and API5. This stage repeats
   stage 15's four passes over that surface. Small gaps are fixed in the PR that finds them;
   anything costly is written up and decided with the user. In five PRs (this plan, then 17a–d):
-  - [ ] **17a. Fuzz the auth parsers.** As in 15a, each target checks against an oracle
+  - [x] **17a. Fuzz the auth parsers.** As in 15a, each target checks against an oracle
     written from the documented rules, not by calling the parser; `make test` replays the
-    seeds and `make fuzz` finds the targets.
+    seeds and `make fuzz` finds the targets. As built:
+    - `auth.FuzzVerifier`, `FuzzPHC`, `FuzzTokenSum`, `FuzzNormalizeRecoveryCode`,
+      `FuzzVerifyTOTP` and `FuzzCheckPassword` (`internal/auth/fuzz_test.go`);
+      `runtime.FuzzBearerToken` and `runtime.FuzzVerbatimPatterns`
+      (`internal/web/api/runtime/auth_fuzz_test.go`), the latter through the real enforcer
+      with every dto Verbatim type, also checking that a passing value has internal/auth's
+      format; `integration.FuzzRoutes` now also targets the seven `/auth` entry points,
+      `PUT /account/password`, `POST /account/recovery-codes`, and admin invite and reset
+      creation, seeded with the fixture tokens and codes and the sentinel as a password.
+    - Found and fixed (all from Go's base64 and case folding): `Verifier.Verify` accepted a
+      token with CR or LF inside its signature (the decoder skips them, so it verified as the
+      issued one; now only base64url and `.` pass, as `malformed`); `decodePHC` took a salt or
+      hash with CR/LF in it (now the field must re-encode to itself); and
+      `NormalizeRecoveryCode` folded the Kelvin sign U+212A to `k` (now only ASCII is folded).
+      None was reachable over HTTP (net/http refuses CR/LF in headers, and the stored PHC is
+      ours), but each broke its documented rule. Each has a unit test case as well as a seed.
+    - Accepted: `dto.AccessToken`'s pattern pins the JWT header except the 18 bytes of the kid
+      (its quotes and 16 characters), which may be any bytes; pinning them to base64url would
+      need a far longer regex, and the claims segment is up to 700 free characters by design.
+      The guarantee for access tokens is that the server signs them, not the pattern.
+    - The stage 16 request bodies were already `FuzzDecodeJSON` seeds (stage 16 added them,
+      with bounds in `requireInBounds`).
     - `runtime.bearerToken`: the `Authorization` header (scheme case, spaces, repeats, empty
       or oversized values) gives a token only for exactly one well-formed `Bearer` value.
     - `auth.Verifier`: arbitrary token strings and mutations of a valid token are never
