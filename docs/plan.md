@@ -246,7 +246,7 @@ sources: { auto_confirm_max: 2000, default_backfill_order: kudos_desc, poll_inte
 tags: { info_ttl: 720h }
 images: { enabled: true, per_host_interval: 3s, max_bytes: 26214400 }
 content: { keep_versions: 1 }
-auth: { enabled: false }       # future login
+auth: { enabled: false }       # placeholder; Part 2 stage 16 replaces it with API user auth (docs/part2-api.md)
 ```
 
 ### Milestones

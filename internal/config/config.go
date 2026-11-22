@@ -44,14 +44,14 @@ type Config struct {
 
 // API configures `ao3mirror serve` (docs/part2-api.md, "Config").
 type API struct {
-	// Listen is the public TCP listener (host:port); Tailscale Funnel points here.
+	// Listen is the public TCP listener (host:port); the Cloudflare Tunnel points here.
 	Listen string `yaml:"listen"`
 	// AdminSocket is the admin unix socket, relative to data_dir.
 	AdminSocket string `yaml:"admin_socket"`
 	// TrustedProxies are the CIDR prefixes whose X-Forwarded-For is trusted.
 	TrustedProxies []string `yaml:"trusted_proxies"`
 	// AllowedHosts are the host names (no port) the public listener answers to; any other Host
-	// header gets 421, which stops DNS rebinding. Add the Funnel name when enabling Funnel.
+	// header gets 421, which stops DNS rebinding. Add the tunnel's custom domain when enabling it.
 	AllowedHosts []string `yaml:"allowed_hosts"`
 	// RequestTimeout is the per-request context deadline.
 	RequestTimeout time.Duration `yaml:"request_timeout"`

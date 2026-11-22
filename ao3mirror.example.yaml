@@ -59,10 +59,10 @@ auth:
 # `ao3mirror serve`: the JSON API (docs/part2-api.md). Every fanwork string is hashed unless a
 # request asks to reveal it; `serve --no-reveal` refuses even that.
 api:
-  listen: 127.0.0.1:8080        # public listener; Tailscale Funnel points here. No auth yet.
+  listen: 127.0.0.1:8080        # public listener; the Cloudflare Tunnel points here. No auth yet (stage 16).
   admin_socket: api/admin.sock  # relative to data_dir; its directory must be mode 700
   trusted_proxies: ["127.0.0.1/32", "::1/128"]  # X-Forwarded-For is trusted only from these peers
-  allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # Host names the public listener answers (no port); add the Funnel name
+  allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # Host names the public listener answers (no port); add the tunnel's domain
   request_timeout: 10s          # per-request deadline (1s-50s)
   hash_key_rotation: 24h        # in-memory random hash key; 0 = once per process; min 1h
   rate:                         # per client IP, public listener (the admin socket allows 10x)

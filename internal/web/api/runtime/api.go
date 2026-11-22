@@ -113,7 +113,7 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 	return a, nil
 }
 
-// Public is the handler for the public TCP listener (the one Funnel exposes).
+// Public is the handler for the public TCP listener (the one the Cloudflare Tunnel exposes).
 func (a *API) Public() http.Handler { return a.public }
 
 // Admin is the handler for the admin unix socket: every public route plus the admin routes.

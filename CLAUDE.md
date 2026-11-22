@@ -61,6 +61,10 @@ Claude must NOT:
   rejects free text anyway; test search with synthetic fixtures in Go tests.
 - Weaken the response enforcer (`internal/web/api/redact`), bypass it, or add a route outside it.
   Every route needs a sample request in the all-routes leak test.
+- Run live auth flows (invite, signup, login, token calls) against the real server, or create
+  accounts in the real users DB. Auth is tested in Go tests with temp stores; manual checks are
+  commands the user runs. `data/api/auth.key` and the users DB are under `data/`, so the guard
+  already covers them.
 
 Design rules for API code:
 - Handlers call controllers (see Layering) and return values; only `runtime.Respond` writes JSON.
@@ -74,6 +78,15 @@ Design rules for API code:
 - A string field with a closed value set is a named string type in `dto` with an
   `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
   `string` field is free text and always hashed.
+- Server-generated or strictly-shaped non-fanwork values (tokens, TOTP secrets and URIs,
+  recovery codes, usernames, invite URLs; stage 16) are named string types in `dto` with a
+  `VerbatimPattern() string` method. The enforcer passes them only on a full regex match, else
+  500. Never give a pattern type to anything that could hold fanwork or free text, and keep each
+  pattern as tight as the value allows.
+- Auth (stage 16): the public listener requires a bearer JWT except on `healthz` and the auth
+  entry points; the admin socket needs none. Responses and logs never carry passwords, codes or
+  tokens (logs also never carry usernames, only `user_id`). Objects a user owns (sessions) are
+  always queried with the user's ID (`WHERE id=? AND user_id=?`, else 404).
 - Errors are RFC 9457 problems (`docs/api/problems.md`). A problem `detail` is only ever a
   catalogue message from `problem.NewDetail` (`internal/web/api/problem`; package-level vars only,
   e.g. `internal/web/api/details.go`), never built from input or content; a new problem type gets
