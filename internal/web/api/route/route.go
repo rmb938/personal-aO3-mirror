@@ -44,7 +44,7 @@ const (
 	// Path cannot build it.
 	Image = "/api/v1/images/{sha256}"
 
-	// Auth entry points (stage 16f): no access token needed.
+	// Auth entry points (stage 16f): no access token needed (Anonymous).
 	AuthSignup        = "/api/v1/auth/signup"
 	AuthSignupConfirm = "/api/v1/auth/signup/confirm"
 	AuthReset         = "/api/v1/auth/reset"
@@ -53,8 +53,8 @@ const (
 	AuthLoginTOTP     = "/api/v1/auth/login/totp"
 	AuthRefresh       = "/api/v1/auth/refresh"
 
-	// The signed-in user's own account (stage 16f): they need a bearer access token, so they
-	// work only on the public listener (the admin socket never reads Authorization: always 401).
+	// The signed-in user's own account (stage 16f): like every route but the ones above, they
+	// need a bearer access token, and on the admin socket (which has no user) they are always 401.
 	AuthLogout           = "/api/v1/auth/logout"
 	Account              = "/api/v1/account"
 	AccountPassword      = "/api/v1/account/password" //nolint:gosec // G101: a route pattern, not a credential
@@ -83,6 +83,17 @@ const (
 	AdminSession          = "/api/v1/admin/sessions/{id}"
 	AdminSigningKeyRotate = "/api/v1/admin/signing-keys/rotate"
 )
+
+// Anonymous reports whether the public listener serves pattern without an access token: the
+// health check and the auth entry points (stage 16g). Every other route, and a path that
+// matches no route, needs one. The admin socket never asks for one.
+func Anonymous(pattern string) bool {
+	switch pattern {
+	case Healthz, AuthSignup, AuthSignupConfirm, AuthReset, AuthResetConfirm, AuthLogin, AuthLoginTOTP, AuthRefresh:
+		return true
+	}
+	return false
+}
 
 // Path fills pattern's {param} segments with ids, in order: Path(Source, 3) is
 // /api/v1/sources/3. It builds paths from IDs only, never from input or content. A count

@@ -23,7 +23,7 @@ func imagePath(sha string) string {
 // TestGetImage reads seedImageBody, the downloaded image seedFetchedWork embeds.
 func TestGetImage(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	path := imagePath(seedImageSHA)
 
 	w := testutil.Get(t, h, path+revealQuery)
@@ -66,7 +66,7 @@ func TestGetImage(t *testing.T) {
 // sha256 naming GET /api/v1/images/{sha256}.
 func TestWorkImages(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	path := route.Path(route.Work, seedFetchedWork)
 
 	hashed := getJSON[dto.Work](t, h, path).Images

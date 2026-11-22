@@ -38,7 +38,7 @@ func isHash(t *testing.T, s string) bool {
 
 func TestListSources(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	l := getJSON[dto.List[dto.Source]](t, h, "/api/v1/sources")
 	assert.Equal(t, int64(1), l.Page)
@@ -87,7 +87,7 @@ func TestListSources(t *testing.T) {
 
 func TestGetSource(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	s := getJSON[dto.Source](t, h, "/api/v1/sources/2")
 	assert.Equal(t, seedSeriesSource, s.ID)
@@ -116,7 +116,7 @@ func TestGetSource(t *testing.T) {
 
 func TestGetSourceAdd(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	done := getJSON[dto.SourceAdd](t, h, "/api/v1/source-adds/1")
 	assert.Equal(t, seedDoneAdd, done.JobID)
@@ -152,7 +152,7 @@ func postJSON(t *testing.T, h http.Handler, target, body string) *httptest.Respo
 
 func TestAddSource(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	const tagURL = `{"url":"https://archiveofourown.org/tags/Fixture%20Tag/works","order":"hits_desc","priority":5,"poll_interval":"1h"}`
 
 	w := postJSON(t, h, "/api/v1/sources", tagURL)
@@ -206,7 +206,7 @@ func TestAddSource(t *testing.T) {
 func TestAddSourceRejectedURLIsContentFree(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	for _, u := range []string{"/tags/" + sentinel + "%zz/works", "https://" + sentinel + ".example/x", "/tags/" + sentinel + "/bookmarks"} {
-		w := postJSON(t, a.Public(), "/api/v1/sources", `{"url":"`+u+`"}`)
+		w := postJSON(t, signedIn(t, a), "/api/v1/sources", `{"url":"`+u+`"}`)
 		require.Equal(t, http.StatusUnprocessableEntity, w.Code, u)
 		testutil.AssertNoSentinel(t, w, logs, sentinel)
 	}
@@ -225,7 +225,7 @@ var testDetailOrder = problem.OneOf(dto.Order(""))
 // member (and the listener's confirm rule) comes back at once, by pointer, unhashed.
 func TestAddSourceValidation(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	got := memberErrors(t, h, `{"url":"/works/search","order":"x","priority":1001,"poll_interval":"1s","confirm":true}`)
 	assert.Equal(t, []string{"/confirm", "/order", "/poll_interval", "/priority", "/url"}, slices.Sorted(maps.Keys(got)))
 	assert.Equal(t, ao3url.ReasonWorkSearch.Hint(), got["/url"])
@@ -260,13 +260,13 @@ func TestAddSourceValidation(t *testing.T) {
 
 func TestAddSourceRateLimit(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SourceAddPerHour = 1 })
-	w := postJSON(t, a.Public(), "/api/v1/sources", `{"url":"/tags/a/works"}`)
+	w := postJSON(t, signedIn(t, a), "/api/v1/sources", `{"url":"/tags/a/works"}`)
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
-	w = postJSON(t, a.Public(), "/api/v1/sources", `{"url":"/tags/b/works"}`)
+	w = postJSON(t, signedIn(t, a), "/api/v1/sources", `{"url":"/tags/b/works"}`)
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, dto.TypeRateLimited, testutil.DecodeProblem(t, w).Type)
 	assert.NotEmpty(t, w.Header().Get("Retry-After"))
-	assert.Equal(t, http.StatusOK, testutil.Get(t, a.Public(), "/api/v1/sources").Code, "other routes keep the general limit")
+	assert.Equal(t, http.StatusOK, testutil.Get(t, signedIn(t, a), "/api/v1/sources").Code, "other routes keep the general limit")
 
 	// The admin socket has a separate bucket with a 10x limit.
 	for i := range 10 {
@@ -451,7 +451,7 @@ func TestSetSourceSettings(t *testing.T) {
 // PATCH and DELETE on a source are 405 (the path has GET only there).
 func TestSourceAdminActionsNotPublic(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	for _, action := range []string{"confirm", "pause", "resume", "cancel", "refresh"} {
 		w := postJSON(t, h, "/api/v1/sources/1/"+action, `{}`)
 		require.Equal(t, http.StatusNotFound, w.Code, action)
@@ -470,7 +470,7 @@ func TestSourceAdminActionsNotPublic(t *testing.T) {
 // The access log names the numeric path ID, never the response's content.
 func TestSourceAccessLog(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	w := testutil.Do(t, a.Public(), httptest.NewRequest(http.MethodGet, "/api/v1/source-adds/2", nil))
+	w := testutil.Do(t, signedIn(t, a), httptest.NewRequest(http.MethodGet, "/api/v1/source-adds/2", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 	l := testutil.AccessLine(t, logs)
 	assert.Equal(t, "/api/v1/source-adds/{job_id}", l["route"])

@@ -71,8 +71,10 @@ type API struct {
 	admin  *chi.Mux
 }
 
-// New validates opts and builds both routers.
-func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, registerRoutes RouteBuilder) (*API, error) {
+// New validates opts and builds both routers. anonymous reports the route patterns the public
+// listener serves without an access token (route.Anonymous); every other public route needs
+// one, so the controllers need an Auth controller unless anonymous admits every route.
+func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, registerRoutes RouteBuilder, anonymous func(pattern string) bool) (*API, error) {
 	if log == nil {
 		return nil, errors.New("api: nil logger")
 	}
@@ -81,6 +83,9 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 	}
 	if registerRoutes == nil {
 		return nil, errors.New("api: nil registerRoutes")
+	}
+	if anonymous == nil {
+		return nil, errors.New("api: nil anonymous")
 	}
 	if opts.Version == "" {
 		return nil, errors.New("api: empty version")
@@ -117,8 +122,8 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 		return nil, err
 	}
 	a := &API{opts: opts, log: log, ctl: controllers, enf: enf}
-	a.public = a.router(false, registerRoutes)
-	a.admin = a.router(true, registerRoutes)
+	a.public = a.router(false, registerRoutes, anonymous)
+	a.admin = a.router(true, registerRoutes, anonymous)
 	return a, nil
 }
 
@@ -186,7 +191,7 @@ func (a *API) perMinute(n int, listener string, admin bool) func(http.Handler) h
 
 // router builds one listener's router with the full middleware chain (docs/part2-api.md, "HTTP
 // hardening"; the order matters).
-func (a *API) router(admin bool, registerRoutes RouteBuilder) *chi.Mux {
+func (a *API) router(admin bool, registerRoutes RouteBuilder, anonymous func(string) bool) *chi.Mux {
 	listener, rate := "public", a.opts.GeneralPerMin
 	if admin {
 		listener, rate = "admin", rate*AdminRateFactor
@@ -213,8 +218,13 @@ func (a *API) router(admin bool, registerRoutes RouteBuilder) *chi.Mux {
 		a.throttle(maxInFlight, maxBacklog, backlogWait),
 		timeout(a.opts.RequestTimeout),
 		a.crossOrigin(),
-		a.reveal,
 	)
+	if !admin {
+		// Before reveal, so a request without a valid access token is always hashed. The
+		// socket's file permissions are its boundary; it never reads Authorization.
+		r.Use(a.authenticate(anonymous))
+	}
+	r.Use(a.reveal)
 	r.NotFound(a.Handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, DetailNoRoute) }))
 	r.MethodNotAllowed(a.methodNotAllowed)
 	registerRoutes(a, a.ctl, r, admin)

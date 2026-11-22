@@ -266,7 +266,7 @@ func fuzzAPI(f *testing.F, noReveal bool, logs *bytes.Buffer) *API {
 			}
 			return dto.Health{Status: dto.HealthOK}, nil
 		}))
-	})
+	}, allAnonymous)
 	require.NoError(f, err)
 	return a
 }

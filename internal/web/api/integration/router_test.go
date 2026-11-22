@@ -18,6 +18,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	api "github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
@@ -42,7 +43,7 @@ func testOptions(t *testing.T) runtime.Options {
 
 func testNew(t *testing.T, opts runtime.Options, log *slog.Logger) (*runtime.API, error) {
 	t.Helper()
-	return api.New(opts, log, newTestControllers(t, log))
+	return newAPI(t, opts, log, newTestControllers(t, log))
 }
 
 // revealQuery is the query string that asks for revealed content.
@@ -83,7 +84,7 @@ func TestNewValidatesOptions(t *testing.T) {
 
 func TestHealthzAndVersion(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	for _, h := range []http.Handler{a.Public(), a.Admin()} {
+	for _, h := range []http.Handler{signedIn(t, a), a.Admin()} {
 		w := testutil.Get(t, h, "/api/v1/healthz")
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.JSONEq(t, `{"status":"ok"}`, w.Body.String())
@@ -97,19 +98,68 @@ func TestHealthzAndVersion(t *testing.T) {
 
 		testutil.RequireParamProblem(t, testutil.Get(t, h, "/api/v1/healthz?page=1"), dto.ParamPage, "not taken here")
 	}
+	assert.Equal(t, http.StatusOK, testutil.Get(t, a.Public(), "/api/v1/healthz").Code, "healthz needs no token")
+	assert.Equal(t, http.StatusUnauthorized, testutil.Get(t, a.Public(), "/api/v1/version").Code, "version needs one")
 }
 
 func TestNotFoundAndMethodNotAllowed(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	w := testutil.Get(t, a.Public(), "/api/v1/nope")
+	w := testutil.Get(t, signedIn(t, a), "/api/v1/nope")
 	require.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, dto.TypeNotFound, testutil.DecodeProblem(t, w).Type)
 	assert.Equal(t, "hashed", w.Header().Get(runtime.HeaderFanwork))
+	// Without a token an unrouted path is refused like any route: what exists is for users.
+	assert.Equal(t, http.StatusUnauthorized, testutil.Get(t, a.Public(), "/api/v1/nope").Code)
+	assert.Equal(t, http.StatusNotFound, testutil.Get(t, a.Admin(), "/api/v1/nope").Code)
 
+	// An anonymous route's other methods are 405 without a token; another route's are 401.
 	w = testutil.Do(t, a.Public(), httptest.NewRequest(http.MethodDelete, "/api/v1/healthz", nil))
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	assert.Equal(t, dto.TypeMethodNotAllowed, testutil.DecodeProblem(t, w).Type)
 	assert.Equal(t, []string{http.MethodGet}, w.Header().Values("Allow"))
+	w = testutil.Do(t, a.Public(), httptest.NewRequest(http.MethodGet, "/api/v1/auth/login", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	assert.Equal(t, []string{http.MethodPost}, w.Header().Values("Allow"))
+	w = testutil.Do(t, a.Public(), httptest.NewRequest(http.MethodDelete, "/api/v1/works", nil))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	w = testutil.Do(t, signedIn(t, a), httptest.NewRequest(http.MethodDelete, "/api/v1/works", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestPublicRoutesNeedToken: every public route but the route.Anonymous ones is 401 without a
+// token, also with the reveal param (refused before it is looked at). TestAllRoutesLeak sends
+// every route to the admin socket without one.
+func TestPublicRoutesNeedToken(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	var anonymous []string
+	for _, rt := range walkRoutes(t, a.Router(false)) {
+		method, pattern, _ := strings.Cut(rt, " ")
+		s := routeSamples[rt]
+		if route.Anonymous(pattern) {
+			anonymous = append(anonymous, rt)
+			continue
+		}
+		for _, suffix := range []string{"", revealSuffix(s.target)} {
+			w := testutil.Do(t, a.Public(), s.request(method, suffix))
+			require.Equal(t, http.StatusUnauthorized, w.Code, "%s%s", rt, suffix)
+			requireProblem(t, w, dto.TypeUnauthorized, runtime.DetailNoAccessToken.Message())
+			assert.Equal(t, "hashed", w.Header().Get(runtime.HeaderFanwork), rt)
+		}
+	}
+	assert.ElementsMatch(t, []string{
+		"GET /api/v1/healthz", "POST /api/v1/auth/signup", "POST /api/v1/auth/signup/confirm",
+		"POST /api/v1/auth/reset", "POST /api/v1/auth/reset/confirm", "POST /api/v1/auth/login",
+		"POST /api/v1/auth/login/totp", "POST /api/v1/auth/refresh",
+	}, anonymous, "the routes open without a token")
+	assert.NotContains(t, logs.String(), sentinel)
+}
+
+// revealSuffix is the reveal param appended to target's query.
+func revealSuffix(target string) string {
+	if strings.Contains(target, "?") {
+		return "&" + runtime.RevealParam + "=1"
+	}
+	return "?" + runtime.RevealParam + "=1"
 }
 
 // routeSample is one request the all-routes leak test sends to a route.
@@ -128,9 +178,10 @@ type routeSample struct {
 	// store (first sent the POSTs in before, e.g. a pause before a resume).
 	fresh  bool
 	before []string
-	// bearer: the route needs an access token. On the public listener every request carries
-	// one of seedSession's; on the admin socket every request is 401 (it has no user).
-	bearer bool
+	// account: the route is the signed-in user's own, so on the admin socket (which has no
+	// user) every request is 401. On the public listener every request to a route that is not
+	// route.Anonymous carries an access token of seedSession's.
+	account bool
 }
 
 // request builds the sample's request, with suffix appended to its target.
@@ -240,16 +291,16 @@ var routeSamples = map[string]routeSample{
 	"POST /api/v1/auth/refresh": {target: "/api/v1/auth/refresh", status: http.StatusOK, fresh: true,
 		body: `{"refresh_token":"` + seedRefreshToken + `"}`},
 	// The signed-in account, as seedUser in seedSession.
-	"POST /api/v1/auth/logout": {target: "/api/v1/auth/logout", status: http.StatusNoContent, fresh: true, bearer: true},
-	"GET /api/v1/account":      {target: "/api/v1/account", status: http.StatusOK, bearer: true},
+	"POST /api/v1/auth/logout": {target: "/api/v1/auth/logout", status: http.StatusNoContent, fresh: true, account: true},
+	"GET /api/v1/account":      {target: "/api/v1/account", status: http.StatusOK, account: true},
 	"PUT /api/v1/account/password": {target: "/api/v1/account/password", status: http.StatusNoContent, fresh: true,
-		bearer: true, body: `{"current_password":"` + fixturePassword + `","password":"fixture battery staple","code":"` +
+		account: true, body: `{"current_password":"` + fixturePassword + `","password":"fixture battery staple","code":"` +
 			seedTOTPCode + `"}`},
 	"POST /api/v1/account/recovery-codes": {target: "/api/v1/account/recovery-codes", status: http.StatusOK, fresh: true,
-		bearer: true, body: `{"code":"` + seedTOTPCode + `"}`},
-	"GET /api/v1/account/sessions": {target: "/api/v1/account/sessions", status: http.StatusOK, bearer: true},
+		account: true, body: `{"code":"` + seedTOTPCode + `"}`},
+	"GET /api/v1/account/sessions": {target: "/api/v1/account/sessions", status: http.StatusOK, account: true},
 	"DELETE /api/v1/account/sessions/{id}": {target: "/api/v1/account/sessions/1", status: http.StatusNoContent,
-		fresh: true, bearer: true},
+		fresh: true, account: true},
 }
 
 // sentinel marks seeded content: no response or log line may contain it in hashed mode.
@@ -273,7 +324,6 @@ func walkRoutes(t *testing.T, r chi.Routes) []string {
 // every text field is SENTINEL-<field>.
 func TestAllRoutesLeak(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	sharedToken := "" // an access token on a's public router, made at first use
 	for name, r := range map[string]*chi.Mux{"public": a.Router(false), "admin": a.Router(true)} {
 		routes := walkRoutes(t, r)
 		for _, rt := range routes {
@@ -289,44 +339,29 @@ func TestAllRoutesLeak(t *testing.T) {
 			if !ok {
 				continue
 			}
-			method, _, _ := strings.Cut(rt, " ")
+			method, pattern, _ := strings.Cut(rt, " ")
 			t.Run(name+" "+rt, func(t *testing.T) {
-				// to is the router a request goes to: r, or for a fresh sample a new one.
-				to := func() http.Handler {
-					if !s.fresh {
-						return r
+				// send sends req to r, or for a fresh sample to a new API, with an access token
+				// on the public listener unless the route is anonymous.
+				send := func(req *http.Request) *httptest.ResponseRecorder {
+					b := a
+					if s.fresh {
+						opts := testOptions(t)
+						log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+						var err error
+						b, err = newAPI(t, opts, log, newTestControllers(t, log))
+						require.NoError(t, err)
 					}
-					opts := testOptions(t)
-					log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-					b, err := api.New(opts, log, newTestControllers(t, log))
-					require.NoError(t, err)
-					h := b.Router(false)
-					if name == "admin" {
-						h = b.Router(true)
-					}
+					h := b.Router(name == "admin")
 					for _, target := range s.before {
 						require.Less(t, testutil.Do(t, h, httptest.NewRequest(http.MethodPost, target, nil)).Code, 300, target)
 					}
-					return h
-				}
-				// send sends req to to(), with an access token for a bearer route on the
-				// public listener.
-				send := func(req *http.Request) *httptest.ResponseRecorder {
-					h := to()
-					if s.bearer && name == "public" {
-						tok := sharedToken
-						switch {
-						case s.fresh:
-							tok = accessToken(t, h)
-						case tok == "":
-							tok = accessToken(t, h)
-							sharedToken = tok
-						}
-						req.Header.Set("Authorization", "Bearer "+tok)
+					if name == "public" && !route.Anonymous(pattern) {
+						req.Header.Set("Authorization", "Bearer "+tokenFor(t, b))
 					}
 					return testutil.Do(t, h, req)
 				}
-				noUser := s.bearer && name == "admin"
+				noUser := s.account && name == "admin"
 				w := send(s.request(method, ""))
 				if noUser {
 					assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -364,7 +399,7 @@ func TestAllRoutesLeak(t *testing.T) {
 				testutil.AssertNoSentinel(t, w, logs, sentinel)
 
 				if s.content {
-					w = testutil.Do(t, to(), s.request(method, sep+runtime.RevealParam+"=1"))
+					w = send(s.request(method, sep+runtime.RevealParam+"=1"))
 					assert.Equal(t, cmp.Or(s.revealStatus, s.status), w.Code)
 					assert.Equal(t, "revealed", w.Header().Get(runtime.HeaderFanwork))
 					assert.Contains(t, w.Body.String(), sentinel, "revealed response holds the seeded content")
@@ -383,7 +418,7 @@ func TestLeakHarnessDetectsContent(t *testing.T) {
 		return dto.Health{Status: sentinel + "status"}, nil
 	}))
 
-	w := testutil.Get(t, a.Router(false), "/leaktest")
+	w := testutil.Get(t, signedIn(t, a), "/leaktest")
 	require.Equal(t, http.StatusOK, w.Code)
 	testutil.AssertNoSentinel(t, w, logs, sentinel)
 	var h dto.Health
@@ -391,7 +426,7 @@ func TestLeakHarnessDetectsContent(t *testing.T) {
 	assert.True(t, strings.HasPrefix(string(h.Status), "h_"), "hashed")
 	assert.Contains(t, logs.String(), "enum value outside its set", "off-set enum value is warned about")
 
-	w = testutil.Get(t, a.Router(false), "/leaktest"+revealQuery)
+	w = testutil.Get(t, signedIn(t, a), "/leaktest"+revealQuery)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "revealed", w.Header().Get(runtime.HeaderFanwork))
 	assert.Contains(t, w.Body.String(), sentinel+"status")
@@ -415,7 +450,7 @@ func TestEnumScopedToField(t *testing.T) {
 			continue
 		}
 		value = v
-		w := testutil.Get(t, a.Router(false), "/enum")
+		w := testutil.Get(t, signedIn(t, a), "/enum")
 		require.Equal(t, http.StatusOK, w.Code)
 		var h dto.Health
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &h))
@@ -424,7 +459,7 @@ func TestEnumScopedToField(t *testing.T) {
 	assert.Contains(t, logs.String(), "dto.Health.Status", "off-set enum warning names the field")
 
 	value = string(dto.HealthOK)
-	assert.JSONEq(t, `{"status":"ok"}`, testutil.Get(t, a.Router(false), "/enum").Body.String())
+	assert.JSONEq(t, `{"status":"ok"}`, testutil.Get(t, signedIn(t, a), "/enum").Body.String())
 }
 
 // TestPathParamsDeclared: every route's path parameter is an id the access log records

@@ -23,7 +23,7 @@ func jobIDs(t *testing.T, l dto.List[dto.Job]) []int64 {
 
 func TestListJobs(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	l := getJSON[dto.List[dto.Job]](t, h, "/api/v1/jobs")
 	assert.Equal(t, 4, l.Total)
@@ -85,7 +85,7 @@ func TestListJobs(t *testing.T) {
 
 func TestGetJob(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	j := getJSON[dto.Job](t, h, "/api/v1/jobs/3")
 	assert.Equal(t, seedOtherJob, j.ID)

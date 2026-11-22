@@ -19,7 +19,7 @@ import (
 
 func TestGetTag(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	tag := getJSON[dto.Tag](t, h, "/api/v1/tags/3")
 	assert.Equal(t, seedTag, tag.ID)
@@ -74,7 +74,7 @@ func TestGetTag(t *testing.T) {
 
 func TestGetTagByName(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	path := "/api/v1/tags/by-name/" + sentinel + "fandom"
 
 	// Hashed: the name is free text, refused before the store is read.
@@ -103,7 +103,7 @@ func TestGetTagByName(t *testing.T) {
 // Requests refused before the handler (wrong method, URL too long) never log the name either.
 func TestGetTagByNameRefusedNotLogged(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	path := "/api/v1/tags/by-name/" + sentinel + "fandom"
 
 	w := testutil.Do(t, h, httptest.NewRequest(http.MethodPost, path, nil))
@@ -119,7 +119,7 @@ func TestGetTagByNameRefusedNotLogged(t *testing.T) {
 
 func TestTagWorks(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 2 })
-	h := a.Public()
+	h := signedIn(t, a)
 	fandom := "/api/v1/tags/" + strconv.FormatInt(seedTag, 10) + "/works"
 	blurb := getJSON[dto.Work](t, h, "/api/v1/works/"+strconv.FormatInt(seedWork, 10))
 	require.Len(t, blurb.Tags, 1)
@@ -178,7 +178,7 @@ func tagIDs(l dto.List[dto.TagListItem]) []int64 {
 // meta tag and a synonym) among the seeded works' other tags.
 func TestQueryTags(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	tag := getJSON[dto.Tag](t, h, "/api/v1/tags/"+strconv.FormatInt(seedTag, 10))
 	require.Len(t, tag.Parents, 1)
 	require.Len(t, tag.Synonyms, 1)
@@ -251,8 +251,8 @@ func TestQueryTags(t *testing.T) {
 
 func TestQueryTagsRateLimit(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 1 })
-	queryWorks(t, a.Public(), "/api/v1/works", `{}`)
-	w := queryJSON(t, a.Public(), "/api/v1/tags", `{}`)
+	queryWorks(t, signedIn(t, a), "/api/v1/works", `{}`)
+	w := queryJSON(t, signedIn(t, a), "/api/v1/tags", `{}`)
 	require.Equal(t, http.StatusTooManyRequests, w.Code, "one search budget with QUERY /works")
 	assert.Equal(t, dto.TypeRateLimited, testutil.DecodeProblem(t, w).Type)
 }

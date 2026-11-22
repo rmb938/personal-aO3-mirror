@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
@@ -75,8 +74,9 @@ func FuzzRoutes(f *testing.F) {
 		GeneralPerMin:  math.MaxInt32, SourceAddPerHour: math.MaxInt32, SearchPerMin: math.MaxInt32,
 		SignupPerHour: math.MaxInt32, LoginPerMin: math.MaxInt32, RefreshPerMin: math.MaxInt32,
 	}
-	a, err := api.New(opts, log, newTestControllers(f, log))
+	a, err := newAPI(f, opts, log, newTestControllers(f, log))
 	require.NoError(f, err)
+	public := signedIn(f, a)
 
 	f.Fuzz(func(t *testing.T, kind uint8, query string, body []byte, seg string, reveal bool) {
 		logs.Reset()
@@ -95,7 +95,7 @@ func FuzzRoutes(f *testing.F) {
 			}
 			r.URL.RawQuery += runtime.RevealParam + "=1"
 		}
-		h := a.Public()
+		h := public
 		if tg.admin {
 			h = a.Admin()
 		}

@@ -50,7 +50,7 @@ type reqState struct {
 	clientID        string
 	clientIDInvalid bool
 	reveal          bool
-	// auth is RequireAuth's outcome ("" when the route needs no token), principal the
+	// auth is authenticate's outcome ("" when the route needs no token), principal the
 	// signed-in user when it is authOK, and tokenReason why a JWT was refused (authInvalid).
 	auth        authResult
 	principal   controllers.Principal
@@ -200,15 +200,36 @@ func loggedRoute(r *http.Request) (route string, rctx *chi.Context, prerouted bo
 	if p := rctx.RoutePattern(); p != "" || rctx.Routes == nil {
 		return p, rctx, false
 	}
+	if p, found := findRoute(r, rctx, r.Method); p != "" {
+		return p, found, true
+	}
+	return "", rctx, false
+}
+
+// findRoute resolves the pattern r's path has for method before routing, with a new route
+// context holding its path params; "" when no route matches. rctx.Routes must not be nil.
+func findRoute(r *http.Request, rctx *chi.Context, method string) (string, *chi.Context) {
 	path := r.URL.RawPath // the path chi itself routes on
 	if path == "" {
 		path = r.URL.Path
 	}
 	found := chi.NewRouteContext()
-	if p := rctx.Routes.Find(found, r.Method, path); p != "" {
-		return p, found, true
+	return rctx.Routes.Find(found, method, path), found
+}
+
+// pathPattern is the route pattern of r's path before routing: the one for r's method, else
+// the first routed method's (so a 405 still knows its route), else "".
+func pathPattern(r *http.Request) string {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil || rctx.Routes == nil {
+		return ""
 	}
-	return "", rctx, false
+	for _, m := range append([]string{r.Method}, routedMethods...) {
+		if p, _ := findRoute(r, rctx, m); p != "" {
+			return p
+		}
+	}
+	return ""
 }
 
 // routePattern is the matched chi route pattern, or "" when nothing matched.

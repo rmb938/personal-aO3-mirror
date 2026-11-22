@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
@@ -261,9 +260,6 @@ func (s *server) serve(ctx context.Context) (err error) {
 		"max_session_age", au.MaxSessionAge.String(), "invite_ttl", au.InviteTTL.String(),
 	}
 	s.log.Info("api serving", attrs...)
-	if ap, err := netip.ParseAddrPort(s.tcp.Addr().String()); err == nil && !ap.Addr().IsLoopback() {
-		s.log.Warn("api public listener is not loopback; it has no auth yet", "listen", s.tcp.Addr().String())
-	}
 
 	bound := []struct {
 		srv *http.Server

@@ -393,7 +393,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         0600. A stale socket (nothing listening) is replaced; a live one or a non-socket file is
         an error. The path must fit `sun_path` (107 bytes). It is unlinked on shutdown.
       - If either listener fails, both shut down. `http.Server.ErrorLog` goes to slog at warn.
-      - A non-loopback `listen` logs a warning (no auth yet).
+      - A non-loopback `listen` logs a warning (no auth yet; removed in 16g).
       - Tests (`cmd/ao3mirror/serve_test.go`): both listeners, `--no-reveal` → 403
         `reveal_disabled`, socket/dir modes, live/stale/non-socket/unsafe-dir cases, shutdown
         removes the socket.
@@ -1933,7 +1933,36 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       exemptions, leak-test seeding (a `testutil` helper that creates a user and token), the
       `cf_ray` log field, and the OWASP API1/API2/API5 write-up. `RequireAuth` and the
       `unauthorized` type exist (16f part 3); 16g puts the middleware on the public router
-      before `reveal` and drops the account group's own copy there.
+      before `reveal` and drops the account group's own copy there. Two PRs (agreed with the
+      user 2026-11-22): requiring auth; then `cf_ray` and the OWASP write-up. As built:
+      - Part 1 (require auth): `route.Anonymous(pattern)` lists the routes open without a
+        token (`healthz` and the seven auth entry points; `version` needs one). `runtime.New`
+        takes it as a required argument. `authenticate` (was `RequireAuth`) runs on the public
+        router only, after `crossOrigin` and before `reveal`, so a request without a valid
+        token is always hashed and its `reveal` is never read. It runs before routing, so it
+        resolves the path's pattern itself (`pathPattern`: the request's method first, then
+        any routed method, so `DELETE /api/v1/healthz` stays a 405). A path matching no route
+        needs a token too: 401 without one, 404 with one. The account group keeps only
+        `NoAccount` on the admin socket (always 401).
+      - OpenAPI: global `security: [{bearerAuth: []}]` (`type: http`, `scheme: bearer`,
+        `bearerFormat: JWT`); `security: []` on the anonymous and `x-admin-only` operations,
+        checked against `route.Anonymous` by `TestOpenAPISecurity`. `unauthorized` moved to
+        the Problem response's common `x-problems`. The info description gains an auth
+        section.
+      - CLI: the regenerated `apiclient.NewClient` takes a `SecuritySource`. The generated
+        client won't send an operation that needs `bearerAuth` without one, so the CLI's
+        `adminSocketToken` gives a fixed placeholder (`admin-socket`), which the socket never
+        reads (chosen by the user over marking the token optional in the spec).
+      - `serve` no longer warns that a non-loopback public listener has no auth.
+      - Tests: the leak-test seeding is an integration helper (`signedin_test.go`), not
+        `testutil`, since it needs the integration seed: `newAPI` records each API's Auth
+        controller, `tokenFor` mints one access token of `seedSession` per API through the
+        controller (no request, so no access log line or rate budget), and `signedIn` wraps
+        the public handler to send it. `TestAllRoutesLeak` sends it to every non-anonymous
+        public route (the sample flag `bearer` became `account`: always 401 on the socket);
+        `TestPublicRoutesNeedToken` checks every non-anonymous public route is 401 without a
+        token, also with the reveal param; `runtime.TestAuthenticate` covers anonymous
+        patterns, 405s, unrouted paths and the socket.
     - [ ] **16h. Automatic signing-key rotation** (asked for by the user 2026-11-22). `serve`
       rotates the access-token signing key once it is `auth.signing_key_rotation` old
       (default 30d, allowed 1d..365d), so a leaked key that nobody noticed stops working without

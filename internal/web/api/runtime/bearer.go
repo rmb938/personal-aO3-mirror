@@ -14,7 +14,8 @@ import (
 // MaxAuthorizationBytes bounds the Authorization header (an access token is about 300 bytes).
 const MaxAuthorizationBytes = 2048
 
-// authResult is RequireAuth's outcome, logged as the access log's auth (a closed set).
+// authResult is authenticate's (or NoAccount's) outcome, logged as the access log's auth (a
+// closed set).
 type authResult string
 
 const (
@@ -83,21 +84,23 @@ func validToken68(s string) bool {
 	return true
 }
 
-// RequireAuth refuses a request without a valid access token and gives the handler its
-// Principal. No bearer credentials is 401 unauthorized; a malformed Authorization 400
-// bad-request with error="invalid_request"; a refused token (bad JWT, revoked or expired
-// session, disabled or deleted account) 401 unauthorized with error="invalid_token" (RFC 6750
-// §3.1). The admin socket never reads Authorization (its file permissions are the boundary
-// and it has no signed-in user), so there every request is 401.
-func (a *API) RequireAuth(admin bool) func(http.Handler) http.Handler {
+// authenticate is the public listener's access-token check (stage 16g). It runs before
+// routing, after crossOrigin and before reveal, so a request without a valid token is always
+// hashed. A path whose route pattern (for any method, so a 405 stays a 405) is anonymous
+// passes untouched; every other path, including one that matches no route, needs a token.
+//
+// It refuses a request without a valid access token and gives the handler its Principal. No
+// bearer credentials is 401 unauthorized; a malformed Authorization 400 bad-request with
+// error="invalid_request"; a refused token (bad JWT, revoked or expired session, disabled or
+// deleted account) 401 unauthorized with error="invalid_token" (RFC 6750 §3.1).
+func (a *API) authenticate(anonymous func(pattern string) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			st := state(r.Context())
-			if admin {
-				st.auth = authAdmin
-				respondError(w, r, a.log, problem.WithDetail(dto.TypeUnauthorized, DetailAdminNoAccount))
+			if anonymous(pathPattern(r)) {
+				next.ServeHTTP(w, r)
 				return
 			}
+			st := state(r.Context())
 			token, res := bearerToken(r)
 			switch res {
 			case authMissing:
@@ -130,9 +133,18 @@ func (a *API) RequireAuth(admin bool) func(http.Handler) http.Handler {
 	}
 }
 
-// Principal is the signed-in user RequireAuth admitted. Outside it (a route without
-// RequireAuth, a handler unit test) it is the 401 unauthorized error, so a handler that
-// needs a user can never run without one.
+// NoAccount is the admin socket's answer on the signed-in user's routes: always 401. The
+// socket never reads Authorization (its file permissions are the boundary) and has no user.
+func (a *API) NoAccount(http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state(r.Context()).auth = authAdmin
+		respondError(w, r, a.log, problem.WithDetail(dto.TypeUnauthorized, DetailAdminNoAccount))
+	})
+}
+
+// Principal is the signed-in user authenticate admitted. Outside it (an anonymous route, the
+// admin socket, a handler unit test) it is the 401 unauthorized error, so a handler that needs
+// a user can never run without one.
 func Principal(r *http.Request) (controllers.Principal, error) {
 	st := state(r.Context())
 	if st.auth != authOK {

@@ -18,7 +18,7 @@ import (
 // TestGetCreator reads seedCreator, the byline of seedWork and seedFetchedWork.
 func TestGetCreator(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	work := getJSON[dto.Work](t, h, route.Path(route.Work, seedFetchedWork))
 	path := route.Path(route.Creator, seedCreator)
 
@@ -43,7 +43,7 @@ func TestGetCreator(t *testing.T) {
 
 func TestCreatorWorks(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.SearchPerMin = 2 })
-	h := a.Public()
+	h := signedIn(t, a)
 	path := route.Path(route.CreatorWorks, seedCreator)
 
 	g := testutil.Get(t, h, path)
@@ -88,7 +88,7 @@ func queryCreators(t *testing.T, h http.Handler, target, body string) dto.List[d
 
 func TestQueryCreators(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 	view := getJSON[dto.Creator](t, h, route.Path(route.Creator, seedCreator))
 
 	all := queryCreators(t, h, route.Creators, `{}`)

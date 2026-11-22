@@ -29,7 +29,7 @@ func TestListWorks(t *testing.T) {
 	require.LessOrEqual(t, runtime.MaxPerPage, store.MaxWorkBatch)
 
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	h := a.Public()
+	h := signedIn(t, a)
 
 	l := getJSON[dto.List[dto.WorkBlurb]](t, h, "/api/v1/works")
 	assert.Equal(t, 2, l.Total)

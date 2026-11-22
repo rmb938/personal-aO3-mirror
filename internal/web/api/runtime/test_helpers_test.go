@@ -37,7 +37,12 @@ func testOptions(t *testing.T) Options {
 
 func testNew(t *testing.T, opts Options, log *slog.Logger) (*API, error) {
 	t.Helper()
+	return testNewAnonymous(t, opts, log, allAnonymous)
+}
 
+// testNewAnonymous is testNew with anonymous as the routes needing no access token.
+func testNewAnonymous(t *testing.T, opts Options, log *slog.Logger, anonymous func(string) bool) (*API, error) {
+	t.Helper()
 	cfg := config.Default()
 	st, err := store.Open(t.Context(), t.TempDir(), store.Options{Logger: log})
 	require.NoError(t, err)
@@ -56,5 +61,9 @@ func testNew(t *testing.T, opts Options, log *slog.Logger) (*API, error) {
 			}
 			return dto.Health{Status: dto.HealthOK}, nil
 		}))
-	})
+	}, anonymous)
 }
+
+// allAnonymous lets every route through without an access token: these tests have no Auth
+// controller and test the rest of the chain. TestAuthenticate covers the token check.
+func allAnonymous(string) bool { return true }

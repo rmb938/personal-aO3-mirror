@@ -134,13 +134,16 @@ passed (`openapi.yaml` lists the limits).
 
 ## unauthorized
 
-**401 Unauthorized.** The route needs an access token (`Authorization: Bearer <access_token>`
-from `/api/v1/auth/login/totp` or `/api/v1/auth/refresh`) and the request had none, or the
+**401 Unauthorized.** On the public listener every route but `/api/v1/healthz` and the auth
+entry points (signup, reset, login, refresh) needs an access token (`Authorization: Bearer
+<access_token>` from `/api/v1/auth/login/totp` or `/api/v1/auth/refresh`), and so does a path
+that matches no route (so it is 401, not 404, without one). The request had none, or the
 token was refused: malformed, badly signed, expired, or its session revoked or expired, or its
 account disabled or deleted. A refused token's 401 carries `WWW-Authenticate: Bearer
 realm="ao3mirror", error="invalid_token"` (RFC 6750 §3.1): refresh the token pair, or log in
 again if the refresh is refused too. Without a token it is just `Bearer realm="ao3mirror"`.
-On the admin socket these routes are always 401: it never reads `Authorization` and has no
+The admin socket needs no token, except that the signed-in user's own routes
+(`/api/v1/account...`, logout) are always 401 there: it never reads `Authorization` and has no
 signed-in account.
 
 ## invalid-credentials

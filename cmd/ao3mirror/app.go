@@ -43,11 +43,21 @@ func openApp(cfg config.Config) (*app, error) {
 			MaxIdleConnsPerHost: 1,
 		},
 	}
-	c, err := apiclient.NewClient("http://admin.sock", apiclient.WithClient(hc))
+	c, err := apiclient.NewClient("http://admin.sock", adminSocketToken{}, apiclient.WithClient(hc))
 	if err != nil {
 		return nil, err
 	}
 	return &app{cfg: cfg, client: c}, nil
+}
+
+// adminSocketToken is the CLI's apiclient.SecuritySource: a fixed placeholder bearer token.
+// The spec requires bearerAuth on the operations the public listener protects, so the
+// generated client won't send them without one; the admin socket never reads Authorization
+// (its file permissions are the boundary), so the value is never checked and is no real token.
+type adminSocketToken struct{}
+
+func (adminSocketToken) BearerAuth(context.Context, apiclient.OperationName) (apiclient.BearerAuth, error) {
+	return apiclient.BearerAuth{Token: "admin-socket"}, nil
 }
 
 // newControllers builds the business layer. client is nil for offline commands (reparse, serve):

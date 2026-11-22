@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
@@ -28,7 +29,8 @@ const openAPIPath = "../../../../docs/api/openapi.yaml"
 
 // openAPISpec is the part of docs/api/openapi.yaml the tests read.
 type openAPISpec struct {
-	Paths map[string]map[string]yaml.Node `yaml:"paths"`
+	Paths    map[string]map[string]yaml.Node `yaml:"paths"`
+	Security []map[string][]string           `yaml:"security"`
 	// CommonHeaders (x-common-headers) are the headers any response can carry; responses
 	// declare only their own.
 	CommonHeaders map[string]specHeader `yaml:"x-common-headers"`
@@ -41,7 +43,9 @@ type openAPISpec struct {
 // specOp is one operation. Problems (x-problems) are the problem types it returns besides the
 // ones every operation can (the Problem response's x-problems).
 type specOp struct {
-	AdminOnly bool                    `yaml:"x-admin-only"`
+	AdminOnly bool `yaml:"x-admin-only"`
+	// Security is the operation's own security, nil when it inherits the global one.
+	Security  *[]map[string][]string  `yaml:"security"`
 	Problems  []string                `yaml:"x-problems"`
 	Responses map[string]specResponse `yaml:"responses"`
 }
@@ -139,6 +143,26 @@ func TestRoutesMatchOpenAPI(t *testing.T) {
 	assert.Equal(t, all, walkRoutes(t, a.Router(true)), "admin routes vs openapi.yaml")
 }
 
+// TestOpenAPISecurity: the spec requires bearerAuth globally, and exactly the operations the
+// public listener serves without a token (route.Anonymous) or doesn't serve (x-admin-only)
+// opt out with `security: []`. TestPublicRoutesNeedToken checks the server side.
+func TestOpenAPISecurity(t *testing.T) {
+	spec, err := loadOpenAPI()
+	require.NoError(t, err)
+	assert.Equal(t, []map[string][]string{{"bearerAuth": {}}}, spec.Security, "global security")
+	ops, err := spec.ops()
+	require.NoError(t, err)
+	for rt, op := range ops {
+		_, pattern, _ := strings.Cut(rt, " ")
+		if route.Anonymous(pattern) || op.AdminOnly {
+			require.NotNil(t, op.Security, "%s: needs no token, so security: []", rt)
+			assert.Empty(t, *op.Security, "%s: needs no token, so security: []", rt)
+		} else {
+			assert.Nil(t, op.Security, "%s: needs a token, so inherits the global security", rt)
+		}
+	}
+}
+
 // TestOpenAPIProblemTypes: every x-problems entry is a problem type, and the Problem response
 // (the default of every operation) lists the types any operation can return.
 func TestOpenAPIProblemTypes(t *testing.T) {
@@ -177,7 +201,7 @@ func TestOpenAPIProblemTypes(t *testing.T) {
 // admin socket refuses it with 401 before reading the body).
 func TestRequestProblems(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
-	token := accessToken(t, a.Public())
+	token := tokenFor(t, a)
 	refused := func(t *testing.T, req *http.Request, status int, typ dto.ProblemType, msg string) *httptest.ResponseRecorder {
 		t.Helper()
 		h := a.Admin()
@@ -202,7 +226,7 @@ func TestRequestProblems(t *testing.T) {
 				return
 			}
 			authed := func(req *http.Request) *http.Request {
-				if s.bearer {
+				if s.account {
 					req.Header.Set("Authorization", "Bearer "+token)
 				}
 				return req
