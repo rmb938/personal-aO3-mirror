@@ -2097,7 +2097,64 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       match, else 500 (the existing redact fuzz uses a test type; this one uses the real
       patterns).
     - The stage 16 request bodies are seeds for `FuzzDecodeJSON` and `FuzzRoutes`.
-  - [ ] **17b. Load-test the auth limits.** Concurrent in-process requests, as in 15b:
+  - [x] **17b. Load-test the auth limits.** Concurrent in-process requests, as in 15b. As
+    built:
+    - `controllers/auth_load_test.go`: bursts of 8 attempts at one instant of the fake clock
+      (the users store runs one write transaction at a time, so every count is exact).
+      `TestAuthLoginBackoffParallel`: a burst of wrong passwords is 1 × invalid and 7 ×
+      rate-limited, counts one failure, and an unknown name answers identically.
+      `TestAuthDisabledAfterMaxFailuresParallel`: 100 bursts, one failure each, disable the
+      account on the 100th (logged once); then a burst of the right password gets nothing.
+      `TestAuthSecondFactorBackoffParallel`: the same for wrong codes on one challenge, which
+      loses one attempt per burst, not eight. `TestAuthChallengeSingleUseParallel` (10
+      distinct recovery codes, then one TOTP code 8 times), `TestAuthEnrollmentSingleUseParallel`
+      (8 signups on one invite, then their 8 confirms; one enrollment token confirmed 8 times;
+      8 resets on one invite, then their confirms): exactly one succeeds, the rest are
+      `ErrInvalidToken`. `TestAuthRefreshParallel` (2 and 8 at once): one pair; each loser
+      is logged as `refresh_reuse` and the session, the winner's included, is revoked.
+    - `auth.TestHasherFlood`: 8 verifies at once at the real 64 MiB cost fill both slots and
+      never more; the heap grows by 192 MiB (2 running, one awaiting collection; 512 with the
+      cap at 8, so the 256 MiB bound catches a broken cap); a waiter with a 20 ms deadline
+      leaves with `DeadlineExceeded`, not at `MaxWait`.
+    - `integration.TestRateLimitAuthForwardedFor`: behind the trusted proxy each forwarded
+      client has its own bucket on the signup, login, login TOTP and refresh limits (the
+      per-IP limit of each was already in `TestRateLimitBurst`; the forwarded-bucket check
+      is now a helper shared with `TestRateLimitForwardedFor`).
+    - Found and fixed: an unknown username's backoff (the in-memory `nameBackoff`) was read
+      before the dummy verify and counted after it, so a parallel burst often had 2 or more
+      attempts checked and counted, where an account's in-transaction re-check lets exactly
+      one through. Besides the extra guesses, that told an unknown name from a real one.
+      `nameBackoff.fail` now re-checks under its lock and refuses (rate-limited, uncounted)
+      when a concurrent attempt already failed, as `Login` does for an account.
+    - Manual check against `./ao3mirror --config ao3mirror.local.yaml serve --no-reveal`
+      (defaults: signup 5/hour across the four signup and reset routes, login 10/min per step,
+      refresh 30/min). Every body is `{}`, so each request that passes the limiter is a 422
+      and no account, invite or token is touched. Run by the user 2026-11-22; every count
+      matched. Restart the server before each group:
+
+      ```sh
+      api=http://127.0.0.1:8080/api/v1
+      codes() { sort | uniq -c; }
+      post='curl -s -o /dev/null -w %{http_code}\n -X POST -H Content-Type:application/json -d {}'
+      # signup and reset together, 5/hour: expect 5 × 422, 7 × 429, then Retry-After: 3600
+      for p in signup signup/confirm reset reset/confirm signup signup/confirm \
+               reset reset/confirm signup signup/confirm reset reset/confirm; do
+        ${=post} $api/auth/$p; done | codes
+      curl -si -X POST -H 'Content-Type: application/json' -d '{}' $api/auth/signup | grep -i '^retry-after'
+      # each login step, 10/min: expect 10 × 422, 5 × 429 for each step
+      seq 15 | xargs -P 8 -I@ ${=post} $api/auth/login | codes
+      seq 15 | xargs -P 8 -I@ ${=post} $api/auth/login/totp | codes
+      # refresh, 30/min: expect 30 × 422, 10 × 429
+      seq 40 | xargs -P 8 -I@ ${=post} $api/auth/refresh | codes
+      # trusted proxy (restart first): a forwarded client has its own login bucket. Expect
+      # 10 × 422, 5 × 429, then 422 from the untouched local bucket
+      seq 15 | xargs -P 8 -I@ ${=post} -H 'X-Forwarded-For: 203.0.113.9' $api/auth/login | codes
+      ${=post} $api/auth/login
+      ```
+
+      (`${=post}` is zsh word splitting; in bash write `$post`.)
+
+    The plan for 17b:
     - the per-IP limit of each auth entry point, and that a forwarded client has its own
       bucket;
     - per-account backoff and the disable after 100 failures under parallel wrong attempts
