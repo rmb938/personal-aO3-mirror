@@ -1,5 +1,6 @@
 // Package store owns meta.db (metadata, sources, jobs, request log, FTS) and content.db (raw
-// pages and parsed bodies). Pure Go SQLite (modernc.org/sqlite), WAL mode, embedded migrations.
+// pages and parsed bodies), and separately users.db (the API's accounts, users.go). Pure Go
+// SQLite (modernc.org/sqlite), WAL mode, embedded migrations.
 //
 // Logging here is content-free: only IDs, counts, versions and timings.
 package store
@@ -186,12 +187,12 @@ var migrationSteps = map[string]func(ctx context.Context, tx querier) error{
 }
 
 // migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.
-func (s *Store) migrate(ctx context.Context, db *sql.DB, name string) error {
-	return s.migrateTo(ctx, db, name, math.MaxInt)
+func (c *core) migrate(ctx context.Context, db *sql.DB, name string) error {
+	return c.migrateTo(ctx, db, name, math.MaxInt)
 }
 
 // migrateTo is migrate stopping after version upTo (tests build older schemas with it).
-func (s *Store) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int) error {
+func (c *core) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("store: %s migrations table: %w", name, err)
@@ -239,16 +240,16 @@ func (s *Store) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES (?,?,?)`,
-			ver, e.Name(), s.unix()); err != nil {
+			ver, e.Name(), c.unix()); err != nil {
 			return errors.Join(fmt.Errorf("store: %s record migration %s: %w", name, e.Name(), err), tx.Rollback())
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
 		applied++
-		s.log.Info("migration applied", "db", name, "version", ver, "file", e.Name(), "ms", time.Since(start).Milliseconds())
+		c.log.Info("migration applied", "db", name, "version", ver, "file", e.Name(), "ms", time.Since(start).Milliseconds())
 	}
-	s.log.Debug("schema current", "db", name, "from", current, "applied", applied)
+	c.log.Debug("schema current", "db", name, "from", current, "applied", applied)
 	return nil
 }
 

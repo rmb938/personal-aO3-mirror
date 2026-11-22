@@ -49,7 +49,7 @@ func (s *Store) InTx(ctx context.Context, fn func(ctx context.Context, tx *Tx) e
 }
 
 // guarded refuses a nested transaction and hands fn a ctx marked "in a transaction", which
-// NotInTx (called before every AO3 fetch) and a nested InTx check.
+// NotInTx (called before every AO3 fetch and password hash) and a nested InTx check.
 func (s *Store) guarded(ctx context.Context, write bool, fn func(ctx context.Context, tx *Tx) error) error {
 	if inTx(ctx) {
 		return misuse("nested transaction (call the tx-taking helper, not the exported controller)")

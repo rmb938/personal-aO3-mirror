@@ -106,7 +106,7 @@ func (c *Controllers) logger(ctx context.Context) *slog.Logger { return logx.Fro
 // ao3Get fetches one AO3 path through the paced client. It refuses to run inside a transaction
 // (that would hold the SQLite write lock across a request that can wait for minutes).
 func (c *Controllers) ao3Get(ctx context.Context, kind httpx.Kind, path string) (*httpx.Response, error) {
-	if err := store.NotInTx(ctx); err != nil {
+	if err := store.NotInTx(ctx, "AO3 fetch"); err != nil {
 		return nil, err
 	}
 	if c.options.Client == nil {

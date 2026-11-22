@@ -23,17 +23,17 @@ func TestGuardNestedTransaction(t *testing.T) {
 func TestGuardFetchInsideTransaction(t *testing.T) {
 	s, _, _ := openTest(t)
 	err := s.st.InTx(context.Background(), func(ctx context.Context, _ *Tx) error {
-		return NotInTx(ctx)
+		return NotInTx(ctx, "AO3 fetch")
 	})
 	require.ErrorIs(t, err, ErrTxMisuse)
-	require.ErrorContains(t, err, "fetch inside")
+	require.ErrorContains(t, err, "AO3 fetch inside a transaction")
 }
 
 func TestGuardAllowsSequentialTransactions(t *testing.T) {
 	s, _, _ := openTest(t)
 	ctx := context.Background()
 	require.NoError(t, s.st.InReadTx(ctx, noopRead))
-	require.NoError(t, NotInTx(ctx), "the caller's ctx is never marked: only the callback's is")
+	require.NoError(t, NotInTx(ctx, "AO3 fetch"), "the caller's ctx is never marked: only the callback's is")
 	require.NoError(t, s.st.InTx(ctx, noop))
 	require.NoError(t, s.st.InTx(ctx, noop))
 }
