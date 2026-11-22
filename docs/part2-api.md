@@ -2051,6 +2051,56 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - Manual (the user runs it): `ao3mirror invite create`, signup and login with curl against
       `serve --no-reveal`, a bearer call to `/api/v1/sources`, then one request through the
       tunnel on the custom domain.
+- [ ] **17. Post-auth hardening pass** (asked for by the user 2026-11-22). Stage 15 hardened the
+  API before auth existed. Stage 16 then added JWTs, refresh/enrollment/challenge tokens, TOTP,
+  Argon2id, invites, recovery codes, the enforcer's pattern types and the `/auth`, `/account`
+  and `/admin/users` routes, and 16g wrote up only API1, API2 and API5. This stage repeats
+  stage 15's four passes over that surface. Small gaps are fixed in the PR that finds them;
+  anything costly is written up and decided with the user. In five PRs (this plan, then 17a–d):
+  - [ ] **17a. Fuzz the auth parsers.** As in 15a, each target checks against an oracle
+    written from the documented rules, not by calling the parser; `make test` replays the
+    seeds and `make fuzz` finds the targets.
+    - `runtime.bearerToken`: the `Authorization` header (scheme case, spaces, repeats, empty
+      or oversized values) gives a token only for exactly one well-formed `Bearer` value.
+    - `auth.Verifier`: arbitrary token strings and mutations of a valid token are never
+      accepted unless byte-identical to an issued one; refusals are a `TokenError` with a
+      listed `TokenReason`, never a panic.
+    - `auth.decodePHC`: a value round-trips through `encodePHC` only when it is canonical;
+      parameters outside the `maxArgon2*` bounds are always refused (a corrupt row can't make
+      a verify allocate gigabytes).
+    - `auth.TokenSum` and `auth.NormalizeRecoveryCode`: accepted only with the kind's prefix
+      and body alphabet and length; `auth.VerifyTOTP` accepts only 6 ASCII digits.
+    - `auth.CheckPassword`: the 8..128 rune bound is counted after NFKC, so no input passes
+      the check and then normalizes outside it.
+    - Enforcer pattern types: every `dto` type with `VerbatimPattern()` passes only on a full
+      match, else 500 (the existing redact fuzz uses a test type; this one uses the real
+      patterns).
+    - The stage 16 request bodies are seeds for `FuzzDecodeJSON` and `FuzzRoutes`.
+  - [ ] **17b. Load-test the auth limits.** Concurrent in-process requests, as in 15b:
+    - the per-IP limit of each auth entry point, and that a forwarded client has its own
+      bucket;
+    - per-account backoff and the disable after 100 failures under parallel wrong attempts
+      (no attempt slips past the backoff, the counter loses no failures);
+    - single-use login challenges and enrollment/invite tokens: of N parallel uses exactly
+      one succeeds;
+    - refresh rotation: two parallel refreshes with the same token give one new pair, and the
+      loser counts as reuse and revokes the session;
+    - the Argon2id `Hasher`'s concurrency cap of 2 under a login flood (waiters honor the
+      request deadline; memory stays near 2 × 64 MiB).
+    - A curl script the user runs against `serve --no-reveal`, as in 15b (entry-point limits
+      only; no live auth flows are run by Claude).
+  - [ ] **17c. OpenAPI audit of stage 16's routes**: statuses, `x-problems`, `security`,
+    `Cache-Control: no-store`, `Retry-After` and body limits on every auth, account and
+    admin-user operation; fix drift; `make generate`.
+  - [ ] **17d. Security review**, as in 15d, now including auth:
+    - `/security-review` over the whole API, `internal/auth` and the auth controllers (not
+      just a branch diff).
+    - `make deadcode` triage and govulncheck.
+    - The OWASP API Security Top 10 (2023) re-walked for all ten items with auth in place
+      (API3, API4, API6 and API8 in particular gained auth routes and data since 15d).
+    - JWT handling checked against RFC 8725 (JSON Web Token Best Current Practices), and the
+      password, TOTP, recovery and session rules against NIST SP 800-63B-4; each section
+      written up as covered, fixed or accepted.
 
 ## Verification (per stage, and overall)
 - `make check` passes (lint, vulncheck, `go test -race ./...`, guard tests). Tests use temp stores
