@@ -1577,7 +1577,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         treats AO3 as untrusted: `httpx` classifies responses (429/5xx/Cloudflare), the parser
         reports selector hits, images are size-capped and stored by hash with a validated
         `image/*` type, and stored text only leaves through the enforcer.
-- [ ] **16. Auth** (designed with the user 2026-11-21). It must merge before the Cloudflare
+- [x] **16. Auth** (designed with the user 2026-11-21). It must merge before the Cloudflare
   Tunnel is enabled; until 16g the public listener stays loopback-only.
   - **Model.** The admin socket stays credential-free: its 0700 directory and 0600 socket admit
     only the same Linux user or root, and it ignores `Authorization`. On the public listener
@@ -2002,7 +2002,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         - API6 follow-up: source adds now need a signed-in, invited user, so 15d's accepted gap
           (a public add may set `priority` and `poll_interval`) is limited to users the admin
           invited.
-    - [ ] **16h. Automatic signing-key rotation** (asked for by the user 2026-11-22). `serve`
+    - [x] **16h. Automatic signing-key rotation** (asked for by the user 2026-11-22). `serve`
       rotates the access-token signing key once it is `auth.signing_key_rotation` old
       (default 30d, allowed 1d..365d), so a leaked key that nobody noticed stops working without
       an admin having to act. `POST /admin/signing-keys/rotate` stays for rotating at once.
@@ -2026,6 +2026,18 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         check logs at warn and is retried on the next tick. The kid isn't logged.
       - Config: `auth.signing_key_rotation` (a duration, validated 24h..8760h), in
         `ao3mirror.example.yaml`, the `auth:` block above and the startup log.
+      - As built: `AuthOptions.SigningKeyRotation` (default 720h). The key ring keeps the
+        active key's `created_at` (from users.db, so a restart keeps the age), and
+        `RotateSigningKeyIfDue` checks it without the lock or a transaction, then
+        `rotateSigningKey` re-checks users.db's newest unretired key inside the write
+        transaction (a stale ring doesn't rotate twice). `RotateSigningKey` (the admin route)
+        shares that path; the event's `reason` is `admin` or `scheduled`. `serve` runs
+        `rotateSigningKeys` in its errgroup: a check at once, then every
+        `signingKeyCheckInterval` (1h) until shutdown; a failed check is a warn
+        (`signing key rotation check failed`). Tests: `TestAuthScheduledKeyRotation` (fake
+        clock: not due, a restart, due, due twice, a stale ring, a manual rotation resetting
+        the age, old keys deleted) and `TestRotateSigningKeys` (startup rotation, a later
+        tick, stopping with the context).
   - Verification beyond `make check`:
     - Unit: RFC 6238 Appendix B and RFC 4226 Appendix D vectors; Argon2 PHC round trip and
       rehash; JWT rejects `alg:none`, HS256 keyed with the public key, an unknown `kid`, a wrong

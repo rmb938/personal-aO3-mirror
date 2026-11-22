@@ -60,11 +60,12 @@ auth:
   max_session_age: 2160h   # a session ends this long after login (refresh_ttl-8760h)
   invite_ttl: 24h          # default lifetime of invite and reset links (1m-168h)
   totp_issuer: ao3mirror   # name authenticator apps show (1-32 of A-Z a-z 0-9 space . _ -)
+  signing_key_rotation: 720h  # serve replaces the access-token signing key this often (24h-8760h)
 
 # `ao3mirror serve`: the JSON API (docs/part2-api.md). Every fanwork string is hashed unless a
 # request asks to reveal it; `serve --no-reveal` refuses even that.
 api:
-  listen: 127.0.0.1:8080        # public listener; the Cloudflare Tunnel points here. No auth yet (stage 16).
+  listen: 127.0.0.1:8080        # public listener; the Cloudflare Tunnel points here. Needs a bearer token (stage 16).
   admin_socket: api/admin.sock  # relative to data_dir; its directory must be mode 700
   trusted_proxies: ["127.0.0.1/32", "::1/128"]  # X-Forwarded-For is trusted only from these peers
   allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # Host names the public listener answers (no port); add the tunnel's domain

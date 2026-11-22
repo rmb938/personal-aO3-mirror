@@ -140,6 +140,8 @@ type Auth struct {
 	MaxSessionAge time.Duration `yaml:"max_session_age"`
 	InviteTTL     time.Duration `yaml:"invite_ttl"`  // default lifetime of a new invite or reset link
 	TOTPIssuer    string        `yaml:"totp_issuer"` // the issuer authenticator apps show
+	// SigningKeyRotation is how old the access-token signing key gets before serve replaces it.
+	SigningKeyRotation time.Duration `yaml:"signing_key_rotation"`
 }
 
 // Auth bounds (docs/part2-api.md stage 16 "Config"). MinInviteTTL and MaxInviteTTL match
@@ -152,6 +154,10 @@ const (
 	MaxMaxSessionAge = 8760 * time.Hour
 	MinInviteTTL     = time.Minute
 	MaxInviteTTL     = 168 * time.Hour
+	// NIST SP 800-57 Part 1 Rev. 5 caps a signature key's use at about 1-3 years; rotating is
+	// cheap here, so the default is far shorter (docs/part2-api.md stage 16h).
+	MinSigningKeyRotation = 24 * time.Hour
+	MaxSigningKeyRotation = 8760 * time.Hour
 )
 
 // totpIssuer is auth.totp_issuer: 1-32 of letters, digits, space, '.', '_' and '-', not
@@ -180,6 +186,8 @@ func Default() Config {
 			MaxSessionAge: 2160 * time.Hour,
 			InviteTTL:     24 * time.Hour,
 			TOTPIssuer:    "ao3mirror",
+
+			SigningKeyRotation: 720 * time.Hour,
 		},
 		API: API{
 			Listen:          "127.0.0.1:8080",
@@ -302,6 +310,9 @@ func (a Auth) validate() []error {
 	}
 	if a.InviteTTL < MinInviteTTL || a.InviteTTL > MaxInviteTTL {
 		add("auth.invite_ttl %s must be between %s and %s", a.InviteTTL, MinInviteTTL, MaxInviteTTL)
+	}
+	if a.SigningKeyRotation < MinSigningKeyRotation || a.SigningKeyRotation > MaxSigningKeyRotation {
+		add("auth.signing_key_rotation %s must be between %s and %s", a.SigningKeyRotation, MinSigningKeyRotation, MaxSigningKeyRotation)
 	}
 	if !totpIssuer.MatchString(a.TOTPIssuer) {
 		add("auth.totp_issuer %q must be 1-32 of letters, digits, space, '.', '_' or '-', not starting or ending with a space", a.TOTPIssuer)
