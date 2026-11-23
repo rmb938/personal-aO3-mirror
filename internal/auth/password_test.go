@@ -19,7 +19,7 @@ var cheap = Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 3
 
 func newCheapHasher(t *testing.T) *Hasher {
 	t.Helper()
-	h, err := NewHasher(newTestKeyring(t), HasherOptions{Params: cheap})
+	h, err := NewHasher(live(t, newTestKeyring(t)), HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	return h
 }
@@ -95,7 +95,7 @@ func TestCommonPasswordList(t *testing.T) {
 var phcRE = regexp.MustCompile(`^\$argon2id\$v=19\$m=65536,t=3,p=4,k=1\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$`)
 
 func TestHasherDefaultParams(t *testing.T) {
-	h, err := NewHasher(newTestKeyring(t), HasherOptions{})
+	h, err := NewHasher(live(t, newTestKeyring(t)), HasherOptions{})
 	require.NoError(t, err)
 	ctx := t.Context()
 	phc, err := h.Hash(ctx, "fixture horse staple")
@@ -146,7 +146,7 @@ func TestHasherRoundTrip(t *testing.T) {
 func TestHasherPepper(t *testing.T) {
 	ctx := t.Context()
 	keyring := newTestKeyring(t)
-	h, err := NewHasher(keyring, HasherOptions{Params: cheap})
+	h, err := NewHasher(live(t, keyring), HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	phc, err := h.Hash(ctx, cafeDecomposed)
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestHasherPepper(t *testing.T) {
 	require.NotEqual(t, argon2.IDKey([]byte(cafeComposed), ph.salt, cheap.Time, cheap.Memory, cheap.Threads, cheap.KeyLen), ph.key)
 
 	// Another keys.db: the same users.db row no longer verifies.
-	other, err := NewHasher(newTestKeyring(t), HasherOptions{Params: cheap})
+	other, err := NewHasher(live(t, newTestKeyring(t)), HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	ok, err := other.Verify(ctx, phc, cafeDecomposed)
 	require.NoError(t, err)
@@ -190,9 +190,9 @@ func TestHasherOlderMasterKey(t *testing.T) {
 	require.NoError(t, err)
 	newRing, err := NewKeyring(2, []MasterKey{{ID: 1, Key: k1}, {ID: 2, Key: NewMasterKey()}})
 	require.NoError(t, err)
-	oldH, err := NewHasher(oldRing, HasherOptions{Params: cheap})
+	oldH, err := NewHasher(live(t, oldRing), HasherOptions{Params: cheap})
 	require.NoError(t, err)
-	newH, err := NewHasher(newRing, HasherOptions{Params: cheap})
+	newH, err := NewHasher(live(t, newRing), HasherOptions{Params: cheap})
 	require.NoError(t, err)
 
 	phc, err := oldH.Hash(ctx, "fixture password")
@@ -209,7 +209,7 @@ func TestHasherOlderMasterKey(t *testing.T) {
 }
 
 func TestNeedsRehash(t *testing.T) {
-	secrets := newTestKeyring(t)
+	secrets := live(t, newTestKeyring(t))
 	h, err := NewHasher(secrets, HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	phc, err := h.Hash(t.Context(), "fixture password")
@@ -281,7 +281,7 @@ func TestDecodePHC(t *testing.T) {
 }
 
 func TestNewHasherRejectsParams(t *testing.T) {
-	secrets := newTestKeyring(t)
+	secrets := live(t, newTestKeyring(t))
 	for _, p := range []Argon2Params{
 		{Memory: 64, Time: 0, Threads: 1, SaltLen: 16, KeyLen: 32},
 		{Memory: 4, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32},
@@ -294,7 +294,7 @@ func TestNewHasherRejectsParams(t *testing.T) {
 }
 
 func TestHasherBusy(t *testing.T) {
-	h, err := NewHasher(newTestKeyring(t), HasherOptions{Params: cheap, Concurrency: 1, MaxWait: 20 * time.Millisecond})
+	h, err := NewHasher(live(t, newTestKeyring(t)), HasherOptions{Params: cheap, Concurrency: 1, MaxWait: 20 * time.Millisecond})
 	require.NoError(t, err)
 	h.sem <- struct{}{} // the only slot is taken
 

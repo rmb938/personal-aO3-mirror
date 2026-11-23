@@ -140,16 +140,16 @@ type HasherOptions struct {
 // exhaust memory; a caller that waits longer than MaxWait gets ErrHasherBusy (the API answers
 // 503).
 type Hasher struct {
-	keyring *Keyring
+	keyring *LiveKeyring // read with Load at each use; the pepper goes in Part 3 stage 4
 	params  Argon2Params
 	sem     chan struct{}
 	maxWait time.Duration
 	dummy   string // a hash of a random password, verified for unknown users
 }
 
-// NewHasher returns a Hasher peppering with keyring's active master key. It builds the dummy
-// hash without running Argon2id.
-func NewHasher(keyring *Keyring, opts HasherOptions) (*Hasher, error) {
+// NewHasher returns a Hasher peppering with the active master key of keyring's current
+// Keyring. It builds the dummy hash without running Argon2id.
+func NewHasher(keyring *LiveKeyring, opts HasherOptions) (*Hasher, error) {
 	if keyring == nil {
 		return nil, errors.New("auth: NewHasher needs the Keyring (for the password pepper)")
 	}
@@ -167,7 +167,7 @@ func NewHasher(keyring *Keyring, opts HasherOptions) (*Hasher, error) {
 	}
 	h := &Hasher{keyring: keyring, params: opts.Params, sem: make(chan struct{}, opts.Concurrency), maxWait: opts.MaxWait}
 	h.dummy = encodePHC(phcHash{
-		params: h.params, pepper: keyring.active,
+		params: h.params, pepper: keyring.Load().active,
 		salt: randomBytes(int(h.params.SaltLen)), key: randomBytes(int(h.params.KeyLen)),
 	})
 	return h, nil
@@ -175,8 +175,9 @@ func NewHasher(keyring *Keyring, opts HasherOptions) (*Hasher, error) {
 
 // Hash returns the PHC string of password (after NFC, peppered) with a new random salt.
 func (h *Hasher) Hash(ctx context.Context, password string) (string, error) {
-	ph := phcHash{params: h.params, pepper: h.keyring.active, salt: randomBytes(int(h.params.SaltLen))}
-	key, err := h.derive(ctx, ph, password)
+	ring := h.keyring.Load() // once: the pepper's key ID and the pepper come from one Keyring
+	ph := phcHash{params: h.params, pepper: ring.active, salt: randomBytes(int(h.params.SaltLen))}
+	key, err := h.derive(ctx, ring, ph, password)
 	if err != nil {
 		return "", err
 	}
@@ -192,7 +193,7 @@ func (h *Hasher) Verify(ctx context.Context, phc, password string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	got, err := h.derive(ctx, ph, password)
+	got, err := h.derive(ctx, h.keyring.Load(), ph, password)
 	if err != nil {
 		return false, err
 	}
@@ -210,13 +211,13 @@ func (h *Hasher) VerifyDummy(ctx context.Context, password string) error {
 // Hasher's (or is malformed), so a successful login should store a new hash.
 func (h *Hasher) NeedsRehash(phc string) bool {
 	ph, err := decodePHC(phc)
-	return err != nil || ph.params != h.params || ph.pepper != h.keyring.active
+	return err != nil || ph.params != h.params || ph.pepper != h.keyring.Load().active
 }
 
-// derive peppers the NFC password with ph's master key's pepper, then runs Argon2id with ph's
-// parameters and salt once a slot is free.
-func (h *Hasher) derive(ctx context.Context, ph phcHash, password string) ([]byte, error) {
-	pepper, ok := h.keyring.pepperKey(ph.pepper)
+// derive peppers the NFC password with the pepper of ph's master key (from ring), then runs
+// Argon2id with ph's parameters and salt once a slot is free.
+func (h *Hasher) derive(ctx context.Context, ring *Keyring, ph phcHash, password string) ([]byte, error) {
+	pepper, ok := ring.pepperKey(ph.pepper)
 	if !ok {
 		return nil, ErrMalformedHash
 	}
