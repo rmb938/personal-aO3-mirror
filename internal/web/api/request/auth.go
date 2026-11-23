@@ -33,10 +33,10 @@ const (
 	prefixRefresh    = "rt_"
 )
 
-// Recovery code shape (internal/auth's NormalizeRecoveryCode): 16 base32 characters in either
+// Recovery code shape (internal/auth's NormalizeRecoveryCode): 24 base32 characters in either
 // case, with any dashes and spaces, at most maxRecoveryCodeBytes as typed.
 const (
-	recoveryCodeChars    = 16
+	recoveryCodeChars    = 24
 	maxRecoveryCodeBytes = 4 * recoveryCodeChars
 )
 

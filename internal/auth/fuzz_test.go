@@ -178,21 +178,23 @@ func FuzzTokenSum(f *testing.F) {
 	})
 }
 
-// FuzzNormalizeRecoveryCode: a typed code of at most 64 bytes is accepted only when, with ASCII
-// dashes and spaces removed and ASCII letters lower-cased, it is exactly 16 characters of
+// FuzzNormalizeRecoveryCode: a typed code of at most 96 bytes is accepted only when, with ASCII
+// dashes and spaces removed and ASCII letters lower-cased, it is exactly 24 characters of
 // [a-z2-7]; the result is that form.
 func FuzzNormalizeRecoveryCode(f *testing.F) {
 	for _, s := range append(NewRecoveryCodes(),
-		"abcd-efgh-ijkl-mn23", " ABCD EFGH-IJKL-MN23 ", "abcdefghijklmn23", "abcd-efgh-ijkl-mn2", "abcd-efgh-ijkl-mn231",
-		"abcd-efgh-ijkl-mn01", "abcd\tefgh-ijkl-mn23", "abcd\nefgh-ijkl-mn23", "abcdefghijklmn2K", "",
-		strings.Repeat("-", 48)+"abcdefghijklmn23", strings.Repeat("-", 49)+"abcdefghijklmn23",
+		"abcd-efgh-ijkl-mnop-qrst-uv23", " ABCD EFGH-IJKL-MNOP QRST-UV23 ", "abcdefghijklmnopqrstuv23",
+		"abcd-efgh-ijkl-mnop-qrst-uv2", "abcd-efgh-ijkl-mnop-qrst-uv231", "abcd-efgh-ijkl-mn23",
+		"abcd-efgh-ijkl-mnop-qrst-uv01", "abcd\tefgh-ijkl-mnop-qrst-uv23", "abcd\nefgh-ijkl-mnop-qrst-uv23",
+		"abcdefghijklmnopqrstuv2K", "",
+		strings.Repeat("-", 72)+"abcdefghijklmnopqrstuv23", strings.Repeat("-", 73)+"abcdefghijklmnopqrstuv23",
 	) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, code string) {
 		got, ok := NormalizeRecoveryCode(code)
 		var want []byte
-		valid := len(code) <= 64
+		valid := len(code) <= 96
 		for i := 0; i < len(code) && valid; i++ {
 			switch c := code[i]; {
 			case c == '-' || c == ' ':
@@ -204,7 +206,7 @@ func FuzzNormalizeRecoveryCode(f *testing.F) {
 				valid = false
 			}
 		}
-		valid = valid && len(want) == 16
+		valid = valid && len(want) == 24
 		require.Equal(t, valid, ok, "%q", code)
 		if ok {
 			require.Equal(t, string(want), got)

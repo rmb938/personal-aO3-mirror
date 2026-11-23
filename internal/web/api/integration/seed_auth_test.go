@@ -51,7 +51,7 @@ var (
 )
 
 // seedRecoveryCode is seedUser's only recovery code.
-const seedRecoveryCode = "fixt-urec-ovry-code"
+const seedRecoveryCode = "fixt-urec-ovry-code-seed-user"
 
 // tokenSum is a seeded token's stored hash.
 func tokenSum(tb testing.TB, kind auth.TokenKind, token string) [32]byte {

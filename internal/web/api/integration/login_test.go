@@ -85,7 +85,7 @@ func TestLogin(t *testing.T) {
 	requireProblem(t, w, dto.TypeInvalidCredentials, runtime.DetailInvalidToken.Message())
 
 	// The seeded challenge with the recovery code, typed loosely; it works once.
-	recovered := requirePair(t, postJSON(t, h, route.AuthLoginTOTP, recoveryBody(seedChallengeToken, "FIXT UREC-OVRY CODE")))
+	recovered := requirePair(t, postJSON(t, h, route.AuthLoginTOTP, recoveryBody(seedChallengeToken, "FIXT UREC-OVRY CODE-SEED USER")))
 	u, _ := findUser(t, a.Admin(), seedUser)
 	assert.Equal(t, 0, u.RecoveryCodesLeft)
 	w = postJSON(t, h, route.AuthLoginTOTP, recoveryBody(login(t, h, seedUserName), seedRecoveryCode))
@@ -148,8 +148,9 @@ func TestLoginSecondFactorRefused(t *testing.T) {
 	for body, want := range map[string][]string{
 		`{}`: {"/challenge_token", "/code"},
 		`{"challenge_token":"` + seedChallengeToken + `","code":"123456","recovery_code":"` + seedRecoveryCode + `"}`: {"/recovery_code"},
-		totpBody(seedChallengeToken, "12345"):         {"/code"},
-		recoveryBody(seedChallengeToken, "fixt-urec"): {"/recovery_code"},
+		totpBody(seedChallengeToken, "12345"):                   {"/code"},
+		recoveryBody(seedChallengeToken, "fixt-urec"):           {"/recovery_code"},
+		recoveryBody(seedChallengeToken, "fixt-urec-ovry-code"): {"/recovery_code"}, // the old 16-character form
 	} {
 		assert.Equal(t, want, keys(problemPointers(t, postJSON(t, h, route.AuthLoginTOTP, body), body)), body)
 	}

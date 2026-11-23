@@ -55,7 +55,7 @@ func TestTokenSumNonCanonical(t *testing.T) {
 	require.False(t, ok)
 }
 
-var recoveryRE = regexp.MustCompile(`^[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}$`)
+var recoveryRE = regexp.MustCompile(`^[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}-[a-z2-7]{4}$`)
 
 func TestRecoveryCodes(t *testing.T) {
 	codes := NewRecoveryCodes()
@@ -77,10 +77,13 @@ func TestRecoveryCodes(t *testing.T) {
 	}
 
 	for _, bad := range []string{
-		"", "abcd-efgh-ijkl-mno", "abcd-efgh-ijkl-mnopq", "abcd-efgh-ijkl-mn01", "abcd-efgh-ijkl-mn8p",
-		"abcd_efgh_ijkl_mnop", strings.Repeat("-", 100) + "abcdefghijklmnop", "abcd-efgh-ijkl-mnoé",
-		"abcd-efgh-ijKl-mnop", // the Kelvin sign, which strings.ToLower folds to 'k'
-		"abcd-efgh-ijkl-mno\n",
+		"", "abcd-efgh-ijkl-mnop", // the old 16-character form
+		"abcd-efgh-ijkl-mnop-qrst-uvw", "abcd-efgh-ijkl-mnop-qrst-uvwxy",
+		"abcd-efgh-ijkl-mnop-qrst-uv01", "abcd-efgh-ijkl-mnop-qrst-uv8x",
+		"abcd_efgh_ijkl_mnop_qrst_uvwx", strings.Repeat("-", 100) + "abcdefghijklmnopqrstuvwx",
+		"abcd-efgh-ijkl-mnop-qrst-uvwé",
+		"abcd-efgh-ijKl-mnop-qrst-uvwx", // the Kelvin sign, which strings.ToLower folds to 'k'
+		"abcd-efgh-ijkl-mnop-qrst-uvw\n",
 	} {
 		_, ok := NormalizeRecoveryCode(bad)
 		require.False(t, ok, "%q", bad)

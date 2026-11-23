@@ -15,7 +15,10 @@ import (
 // TestHasherFlood is a login flood on the default Hasher (docs/part2-api.md, stage 17b): more
 // verifies at once than its concurrency cap, at the real 64 MiB memory cost. At most 2 hashes
 // run, so the heap grows by about 3 × 64 MiB (the 2 running and one finished, not yet
-// collected), not floodN × 64 MiB (measured: 192 vs 512 with the cap at floodN); and a waiter
+// collected), not floodN × 64 MiB (measured: 192 vs 512 with the cap at floodN). A slow CI
+// runner's GC can lag one more finished hash behind (256 seen), so the bound is 6 × 64: well
+// clear of that, and of the 512 an uncapped flood holds live. peakSlots checks the cap itself.
+// And a waiter
 // whose request deadline passes leaves at once rather than at MaxWait.
 func TestHasherFlood(t *testing.T) {
 	const (
@@ -89,5 +92,5 @@ func TestHasherFlood(t *testing.T) {
 	require.Greater(t, peakHeap, base.HeapAlloc, "sampled during the flood")
 	grown := (peakHeap - base.HeapAlloc) / mib
 	t.Logf("heap grew by %d MiB at peak (%d verifies of %d MiB each)", grown, floodN, p.Memory/1024)
-	assert.Less(t, grown, uint64(4*p.Memory/1024), "about 2 hashes' memory, not %d", floodN)
+	assert.Less(t, grown, uint64(6*p.Memory/1024), "about 2 hashes' memory, not %d", floodN)
 }

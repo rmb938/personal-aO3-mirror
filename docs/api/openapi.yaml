@@ -3497,7 +3497,7 @@ components:
           type: array
           description: Single-use codes for logging in without the authenticator app, shown only here (verbatim); empty when a password-only reset keeps the current ones.
           maxItems: 10
-          items: { type: string, pattern: "^[a-z2-7]{4}(?:-[a-z2-7]{4}){3}$" }
+          items: { type: string, pattern: "^[a-z2-7]{4}(?:-[a-z2-7]{4}){5}$" }
     LoginRequest:
       type: object
       required: [username, password]
@@ -3526,7 +3526,7 @@ components:
         recovery_code:
           type: string
           description: An unused recovery code; case, dashes and spaces don't matter.
-          pattern: "^[A-Za-z2-7 -]{16,64}$"
+          pattern: "^[A-Za-z2-7 -]{24,96}$"
     RefreshRequest:
       type: object
       required: [refresh_token]

@@ -224,7 +224,7 @@ func TestRegenerateRecoveryCodes(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	codes := decodeJSON[dto.RecoveryCodes](t, w).RecoveryCodes
 	assert.Len(t, codes, 10)
-	assert.Regexp(t, `^[a-z2-7]{4}(-[a-z2-7]{4}){3}$`, string(codes[0]), "verbatim, not hashed")
+	assert.Regexp(t, `^[a-z2-7]{4}(-[a-z2-7]{4}){5}$`, string(codes[0]), "verbatim, not hashed")
 	assert.Equal(t, 10, authedJSON[dto.Account](t, h, route.Account, token).RecoveryCodesLeft)
 
 	// The same TOTP step again is a replay: 403.

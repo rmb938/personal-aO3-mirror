@@ -69,12 +69,12 @@ func (OTPAuthURI) VerbatimPattern() string {
 		`&algorithm=SHA1&digits=6&period=30`
 }
 
-// RecoveryCode is a single-use recovery code in display form: four dash-separated groups of
+// RecoveryCode is a single-use recovery code in display form: six dash-separated groups of
 // four lower-case base32 characters.
 type RecoveryCode string
 
 // VerbatimPattern implements redact.Verbatim.
-func (RecoveryCode) VerbatimPattern() string { return `[a-z2-7]{4}(?:-[a-z2-7]{4}){3}` }
+func (RecoveryCode) VerbatimPattern() string { return `[a-z2-7]{4}(?:-[a-z2-7]{4}){5}` }
 
 // InviteURL is a signup or reset link: api.public_url (scheme, lower-case host or bracketed
 // IPv6, optional port; no path), the page, and the invite token in the fragment.
