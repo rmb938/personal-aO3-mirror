@@ -147,7 +147,7 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (users *
 	if err != nil {
 		return nil, nil, err
 	}
-	hasher, err := auth.NewHasher(auth.HasherOptions{})
+	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{})
 	if err != nil {
 		return nil, nil, err
 	}

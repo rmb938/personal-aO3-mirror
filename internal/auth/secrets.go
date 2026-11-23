@@ -29,12 +29,27 @@ const totpCipherVersion = 1
 var ErrTOTPDecrypt = errors.New("auth: TOTP secret does not decrypt")
 
 // Secrets are the keys derived from auth.key with HKDF-SHA256. auth.key never goes into
-// users.db, so a copy of the database alone can't decrypt TOTP secrets or check recovery codes.
-// Losing the file means every user needs a 2FA reset: back it up with users.db.
+// users.db, so a copy of the database alone can't decrypt TOTP secrets, check recovery codes or
+// guess passwords. Losing the file loses every password and every TOTP secret (each user then
+// needs an admin reset link): back it up with users.db.
 type Secrets struct {
 	totp         cipher.AEAD
 	recoveryHMAC []byte
 	nameHMAC     []byte
+	pepper       []byte // the password pepper, ID currentPepper
+}
+
+// currentPepper is the ID of the password pepper key in new hashes (the PHC "k" parameter).
+// auth.key has one pepper; a key change would add an ID here and keep the old key until every
+// hash is rehashed.
+const currentPepper = 1
+
+// pepperKey returns the password pepper key with the given ID, if this server holds it.
+func (s *Secrets) pepperKey(id uint32) ([]byte, bool) {
+	if id != currentPepper {
+		return nil, false
+	}
+	return s.pepper, true
 }
 
 // LoadOrCreateSecrets reads the master key at path, creating it (32 random bytes, 0600) when
@@ -111,6 +126,10 @@ func newSecrets(master []byte) (*Secrets, error) {
 	if err != nil {
 		return nil, err
 	}
+	pepper, err := derive("ao3mirror password-pepper")
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(encKey)
 	if err != nil {
 		return nil, err
@@ -119,7 +138,7 @@ func newSecrets(master []byte) (*Secrets, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Secrets{totp: gcm, recoveryHMAC: rec, nameHMAC: name}, nil
+	return &Secrets{totp: gcm, recoveryHMAC: rec, nameHMAC: name, pepper: pepper}, nil
 }
 
 // TOTPContext binds an encrypted TOTP secret to the row it belongs to (the GCM additional

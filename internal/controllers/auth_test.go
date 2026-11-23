@@ -45,7 +45,7 @@ func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
 	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, "api", auth.KeyFileName))
 	require.NoError(t, err)
-	hasher, err := auth.NewHasher(auth.HasherOptions{Params: cheapArgon2})
+	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(t, err)
 	logs := &bytes.Buffer{}
 	opts := AuthOptions{Users: users, Secrets: secrets, Hasher: hasher, Now: clk.Now,

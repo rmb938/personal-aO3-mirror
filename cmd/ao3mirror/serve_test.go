@@ -192,7 +192,7 @@ func TestRotateSigningKeys(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
 	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
 	require.NoError(t, err)
-	hasher, err := auth.NewHasher(auth.HasherOptions{})
+	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{})
 	require.NoError(t, err)
 	logs := &lockedBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
