@@ -14,6 +14,12 @@ open-source code ([otwcode/otwarchive](https://github.com/otwcode/otwarchive)) a
 hand-written test fixtures. See [`CLAUDE.md`](CLAUDE.md) and
 [`.claude/hooks/guard.py`](.claude/hooks/guard.py) for the rules and their enforcement.
 
+## Data at rest
+
+The mirrored works in `data/` are stored unencrypted (search needs them in the clear). If you
+mirror works that aren't public any more (restricted to logged-in users, or since deleted by
+their authors), keep `data/` and its backups on an encrypted disk (LUKS, FileVault, BitLocker).
+
 ## Parser skeletons
 
 `testdata/skeletons/*.skel.html` are structure-only copies of real AO3 pages, used to check the

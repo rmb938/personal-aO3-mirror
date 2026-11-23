@@ -43,7 +43,7 @@ func (e *bearerError) Error() string { return e.err.Error() }
 func (e *bearerError) Unwrap() error { return e.err }
 
 // bearerToken is the one place a request's access token is read (a cookie transport for the
-// Part 3 UI is added here). It returns the token, or authMissing when the request carries no
+// Part 4 UI is added here). It returns the token, or authMissing when the request carries no
 // bearer credentials (no Authorization, or another scheme) or authMalformed when Authorization
 // is sent more than once, is over MaxAuthorizationBytes or holds no single token68 (RFC 9110
 // §11.4; RFC 6750 §2.1's b64token).

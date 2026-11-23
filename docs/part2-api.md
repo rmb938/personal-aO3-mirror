@@ -1585,7 +1585,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     invited by an admin, sign up with a username, password and mandatory TOTP, and log in in two
     steps. A logged-in user can do everything the public listener offers, reveal included
     (`--no-reveal` still wins). Everyone is equal: there are no roles, and admin work stays on
-    the socket. A cookie transport for the Part 3 UI comes later; `bearerToken(r)` is the single
+    the socket. A cookie transport for the Part 4 UI comes later; `bearerToken(r)` is the single
     extraction point so it can be added there.
   - **Decisions made with the user:**
 
@@ -2051,7 +2051,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - Manual (the user runs it): `ao3mirror invite create`, signup and login with curl against
       `serve --no-reveal`, a bearer call to `/api/v1/sources`, then one request through the
       tunnel on the custom domain.
-- [ ] **17. Post-auth hardening pass** (asked for by the user 2026-11-22). Stage 15 hardened the
+- [x] **17. Post-auth hardening pass** (asked for by the user 2026-11-22). Stage 15 hardened the
   API before auth existed. Stage 16 then added JWTs, refresh/enrollment/challenge tokens, TOTP,
   Argon2id, invites, recovery codes, the enforcer's pattern types and the `/auth`, `/account`
   and `/admin/users` routes, and 16g wrote up only API1, API2 and API5. This stage repeats
@@ -2310,7 +2310,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         blocklist with the username, salted (16 bytes ≥ 32 bits) Argon2id (RFC 9106 §4) with
         the cost in the PHC string, per-account rate limit: covered. Admin reset links are the
         forced change on compromise. Guidance, password managers, paste and a show-password
-        option are UI requirements (Part 3).
+        option are UI requirements (Part 4).
         Deviations, decided with the user: normalization is NFKC, but §3.1.1.2 says SHOULD use
         NFC (63B-3 allowed NFKC); and there is no pepper, but §3.1.1.2 says SHOULD add a keyed
         hashing step with a key kept apart from the hashes. Both are fixed in 17f (NFC, and an
