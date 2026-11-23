@@ -95,7 +95,7 @@ func FuzzVerifier(f *testing.F) {
 
 // FuzzPHC checks decodePHC both ways. Any string decodes only when it is canonical (encodePHC
 // gives it back), its parameters are within the maxArgon2* bounds (so a corrupt row can't make
-// Verify allocate more than 1 GiB) and it names a pepper key ID (k ≥ 1). Values encoded by
+// Verify allocate more than 1 GiB) and it names a master key ID (k ≥ 1). Values encoded by
 // encodePHC decode exactly when they are within those bounds.
 func FuzzPHC(f *testing.F) {
 	salt16, key32 := make([]byte, 16), make([]byte, 32)

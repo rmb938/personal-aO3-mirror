@@ -53,7 +53,7 @@ func OpenUsers(ctx context.Context, dir string, o Options) (*Users, error) {
 			return nil, err
 		}
 	}
-	db, err := openDB(ctx, path, 0)
+	db, err := openDB(ctx, path, dbOptions{})
 	if err != nil {
 		return nil, err
 	}

@@ -15,7 +15,7 @@ import (
 func openAt(t *testing.T, dir string, upTo int) *Store {
 	t.Helper()
 	ctx := context.Background()
-	db, err := openDB(ctx, filepath.Join(dir, MetaFile), 0)
+	db, err := openDB(ctx, filepath.Join(dir, MetaFile), dbOptions{})
 	require.NoError(t, err)
 	s := &Store{core: &core{log: slog.Default(), now: time.Now}, meta: db}
 	require.NoError(t, s.migrateTo(ctx, db, "meta", upTo))

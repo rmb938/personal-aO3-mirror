@@ -1,8 +1,8 @@
 -- users.db v1: the API's accounts (docs/part2-api.md stage 16). A separate database from
 -- meta.db and content.db: only `serve` opens it. Times are unix seconds, 0 = never.
 -- Secrets are never stored in the clear: passwords as Argon2id PHC strings, TOTP secrets
--- sealed with a key from auth.key (not in this file), opaque tokens as SHA-256, recovery codes
--- as HMAC-SHA256.
+-- sealed under a master key from keys.db (not in this file; docs/part3-key-rotation.md),
+-- opaque tokens as SHA-256, recovery codes as HMAC-SHA256.
 
 CREATE TABLE users (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT, -- never reused: it is the JWT sub

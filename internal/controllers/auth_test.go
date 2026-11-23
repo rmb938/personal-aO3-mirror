@@ -43,12 +43,15 @@ func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	users, err := store.OpenUsers(context.Background(), filepath.Join(dir, "api"), store.Options{Now: clk.Now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
-	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, "api", auth.KeyFileName))
+	keys, err := store.OpenKeys(context.Background(), filepath.Join(dir, "api"), store.Options{Now: clk.Now})
 	require.NoError(t, err)
-	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
+	t.Cleanup(func() { require.NoError(t, keys.Close()) })
+	keyring, err := LoadKeyring(context.Background(), keys, clk.Now(), slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(t, err)
 	logs := &bytes.Buffer{}
-	opts := AuthOptions{Users: users, Secrets: secrets, Hasher: hasher, Now: clk.Now,
+	opts := AuthOptions{Users: users, Keyring: keyring, Hasher: hasher, Now: clk.Now,
 		Logger:    slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		PublicURL: "https://mirror.example.com"}
 	for _, f := range tweaks {

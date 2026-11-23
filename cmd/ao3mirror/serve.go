@@ -65,20 +65,29 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger, args []s
 	return 0
 }
 
-// server is the API bound to its two listeners, not yet serving. It owns the store and users.db:
-// serve closes them when it returns.
+// server is the API bound to its two listeners, not yet serving. It owns the store, users.db
+// and keys.db: serve closes them when it returns.
 type server struct {
 	log           *slog.Logger
 	cfg           config.Config
 	noReveal      bool
 	store         *store.Store
-	users         *store.Users
-	auth          *controllers.Auth
+	accounts      accounts
 	tcp, sock     net.Listener
 	public, admin *http.Server
 }
 
-// newServer opens the store and the accounts (users.db and auth.key, in the admin socket's
+// accounts are users.db, keys.db and the Auth controller over them.
+type accounts struct {
+	users *store.Users
+	keys  *store.Keys
+	auth  *controllers.Auth
+}
+
+// Close closes users.db and keys.db.
+func (a accounts) Close() error { return errors.Join(a.users.Close(), a.keys.Close()) }
+
+// newServer opens the store and the accounts (users.db and keys.db, in the admin socket's
 // private directory), builds the API over offline controllers (no AO3 client) and binds both
 // listeners. ctx is every request's base context, so a signal cancels in-flight requests while
 // shutdown waits for them. On an error, everything opened so far is closed.
@@ -92,17 +101,17 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 			err = errors.Join(err, st.Close())
 		}
 	}()
-	users, authCtl, err := openAuth(ctx, cfg, log)
+	acc, err := openAuth(ctx, cfg, log)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, users.Close())
+			err = errors.Join(err, acc.Close())
 		}
 	}()
 	ctlOpts := controllerOptions(cfg, log, st, nil)
-	ctlOpts.Auth = authCtl
+	ctlOpts.Auth = acc.auth
 	a, err := api.New(runtime.Options{
 		Version:          version,
 		NoReveal:         noReveal,
@@ -130,33 +139,43 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		return nil, errors.Join(fmt.Errorf("admin socket: %w", err), tcp.Close())
 	}
 	return &server{
-		log: log, cfg: cfg, noReveal: noReveal, store: st, users: users, auth: authCtl, tcp: tcp, sock: sock,
+		log: log, cfg: cfg, noReveal: noReveal, store: st, accounts: acc, tcp: tcp, sock: sock,
 		public: newHTTPServer(ctx, a.Public(), log),
 		admin:  newHTTPServer(ctx, a.Admin(), log),
 	}, nil
 }
 
-// openAuth opens users.db and auth.key in the admin socket's directory (private to this user,
-// like the socket) and builds the Auth controller over them. On an error, users.db is closed.
-func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (users *store.Users, ctl *controllers.Auth, err error) {
+// openAuth opens users.db and keys.db in the admin socket's directory (private to this user,
+// like the socket) and builds the Auth controller over them. keys.db gets its first master key
+// on first start. On an error, both databases are closed.
+func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc accounts, err error) {
 	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
 	if err := privateDir(dir); err != nil {
-		return nil, nil, err
+		return accounts{}, err
 	}
-	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
+	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
 	if err != nil {
-		return nil, nil, err
+		return accounts{}, err
 	}
-	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{})
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, keys.Close())
+		}
+	}()
+	keyring, err := controllers.LoadKeyring(ctx, keys, time.Now(), log)
 	if err != nil {
-		return nil, nil, err
+		return accounts{}, err
 	}
-	users, err = store.OpenUsers(ctx, dir, store.Options{Logger: log})
+	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{})
 	if err != nil {
-		return nil, nil, err
+		return accounts{}, err
 	}
-	ctl, err = controllers.NewAuth(ctx, controllers.AuthOptions{
-		Users: users, Secrets: secrets, Hasher: hasher, Logger: log, Now: time.Now,
+	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
+	if err != nil {
+		return accounts{}, err
+	}
+	ctl, err := controllers.NewAuth(ctx, controllers.AuthOptions{
+		Users: users, Keyring: keyring, Hasher: hasher, Logger: log, Now: time.Now,
 		PublicURL:     cfg.API.PublicURL,
 		AccessTTL:     cfg.Auth.AccessTTL,
 		RefreshTTL:    cfg.Auth.RefreshTTL,
@@ -167,13 +186,13 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (users *
 		SigningKeyRotation: cfg.Auth.SigningKeyRotation,
 	})
 	if err != nil {
-		return nil, nil, errors.Join(err, users.Close())
+		return accounts{}, errors.Join(err, users.Close())
 	}
-	return users, ctl, nil
+	return accounts{users: users, keys: keys, auth: ctl}, nil
 }
 
 // privateDir creates dir (0700) if needed and refuses it when group or others can reach it:
-// it holds the admin socket, users.db and auth.key.
+// it holds the admin socket, users.db and keys.db.
 func privateDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -250,7 +269,7 @@ func removeStaleSocket(ctx context.Context, path string) error {
 // serve runs both listeners until ctx ends or one fails, then shuts both down gracefully and
 // closes the store.
 func (s *server) serve(ctx context.Context) (err error) {
-	defer func() { err = errors.Join(err, s.store.Close(), s.users.Close()) }()
+	defer func() { err = errors.Join(err, s.store.Close(), s.accounts.Close()) }()
 	ac, au := s.cfg.API, s.cfg.Auth
 	attrs := []any{
 		"listen", s.tcp.Addr().String(), "admin_socket", s.sock.Addr().String(),
@@ -282,7 +301,7 @@ func (s *server) serve(ctx context.Context) (err error) {
 		})
 	}
 	g.Go(func() error {
-		rotateSigningKeys(gctx, s.auth, s.log, signingKeyCheckInterval)
+		rotateSigningKeys(gctx, s.accounts.auth, s.log, signingKeyCheckInterval)
 		return nil
 	})
 	g.Go(func() error {

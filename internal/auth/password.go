@@ -121,7 +121,6 @@ const (
 	maxArgon2Threads = 16
 	minArgon2Bytes   = 8
 	maxArgon2Bytes   = 64
-	maxPepperID      = 1<<32 - 1
 )
 
 // HasherOptions configure NewHasher. Zero values take the defaults.
@@ -132,27 +131,27 @@ type HasherOptions struct {
 }
 
 // Hasher hashes and verifies passwords with Argon2id in PHC string format. Before Argon2id the
-// NFC password is peppered: HMAC-SHA256 under a key from Secrets (NIST SP 800-63B-4 §3.1.1.2's
-// keyed hashing step, with the key kept apart from the hashes), so a copy of users.db alone
-// allows no offline guessing. The PHC string names the pepper key ("k=<id>"), so a later key
-// change can tell old hashes apart and rehash them on login.
+// NFC password is peppered: HMAC-SHA256 under a key from the Keyring's active master key (NIST
+// SP 800-63B-4 §3.1.1.2's keyed hashing step, with the key kept apart from the hashes), so a
+// copy of users.db alone allows no offline guessing. The PHC string names that master key
+// ("k=<id>"), so a hash under another key can be told apart and rehashed on login.
 //
 // At most Concurrency hashes run at once (each holds Params.Memory), so a flood of logins can't
 // exhaust memory; a caller that waits longer than MaxWait gets ErrHasherBusy (the API answers
 // 503).
 type Hasher struct {
-	secrets *Secrets
+	keyring *Keyring
 	params  Argon2Params
 	sem     chan struct{}
 	maxWait time.Duration
 	dummy   string // a hash of a random password, verified for unknown users
 }
 
-// NewHasher returns a Hasher peppering with secrets' key. It computes the dummy hash, so it
-// costs one hash.
-func NewHasher(secrets *Secrets, opts HasherOptions) (*Hasher, error) {
-	if secrets == nil {
-		return nil, errors.New("auth: NewHasher needs the Secrets (for the password pepper)")
+// NewHasher returns a Hasher peppering with keyring's active master key. It builds the dummy
+// hash without running Argon2id.
+func NewHasher(keyring *Keyring, opts HasherOptions) (*Hasher, error) {
+	if keyring == nil {
+		return nil, errors.New("auth: NewHasher needs the Keyring (for the password pepper)")
 	}
 	if opts.Params == (Argon2Params{}) {
 		opts.Params = DefaultArgon2
@@ -166,9 +165,9 @@ func NewHasher(secrets *Secrets, opts HasherOptions) (*Hasher, error) {
 	if opts.MaxWait <= 0 {
 		opts.MaxWait = 5 * time.Second
 	}
-	h := &Hasher{secrets: secrets, params: opts.Params, sem: make(chan struct{}, opts.Concurrency), maxWait: opts.MaxWait}
+	h := &Hasher{keyring: keyring, params: opts.Params, sem: make(chan struct{}, opts.Concurrency), maxWait: opts.MaxWait}
 	h.dummy = encodePHC(phcHash{
-		params: h.params, pepper: currentPepper,
+		params: h.params, pepper: keyring.active,
 		salt: randomBytes(int(h.params.SaltLen)), key: randomBytes(int(h.params.KeyLen)),
 	})
 	return h, nil
@@ -176,7 +175,7 @@ func NewHasher(secrets *Secrets, opts HasherOptions) (*Hasher, error) {
 
 // Hash returns the PHC string of password (after NFC, peppered) with a new random salt.
 func (h *Hasher) Hash(ctx context.Context, password string) (string, error) {
-	ph := phcHash{params: h.params, pepper: currentPepper, salt: randomBytes(int(h.params.SaltLen))}
+	ph := phcHash{params: h.params, pepper: h.keyring.active, salt: randomBytes(int(h.params.SaltLen))}
 	key, err := h.derive(ctx, ph, password)
 	if err != nil {
 		return "", err
@@ -186,7 +185,7 @@ func (h *Hasher) Hash(ctx context.Context, password string) (string, error) {
 }
 
 // Verify reports whether password matches the PHC string phc, using the parameters and pepper
-// key stored in it. A malformed phc, or one naming a pepper key this Hasher doesn't hold, is
+// key stored in it. A malformed phc, or one naming a master key the Keyring doesn't hold, is
 // ErrMalformedHash.
 func (h *Hasher) Verify(ctx context.Context, phc, password string) (bool, error) {
 	ph, err := decodePHC(phc)
@@ -207,17 +206,17 @@ func (h *Hasher) VerifyDummy(ctx context.Context, password string) error {
 	return err
 }
 
-// NeedsRehash reports whether phc was made with parameters or a pepper key other than the
+// NeedsRehash reports whether phc was made with parameters or a master key other than the
 // Hasher's (or is malformed), so a successful login should store a new hash.
 func (h *Hasher) NeedsRehash(phc string) bool {
 	ph, err := decodePHC(phc)
-	return err != nil || ph.params != h.params || ph.pepper != currentPepper
+	return err != nil || ph.params != h.params || ph.pepper != h.keyring.active
 }
 
-// derive peppers the NFC password with ph's pepper key, then runs Argon2id with ph's parameters
-// and salt once a slot is free.
+// derive peppers the NFC password with ph's master key's pepper, then runs Argon2id with ph's
+// parameters and salt once a slot is free.
 func (h *Hasher) derive(ctx context.Context, ph phcHash, password string) ([]byte, error) {
-	pepper, ok := h.secrets.pepperKey(ph.pepper)
+	pepper, ok := h.keyring.pepperKey(ph.pepper)
 	if !ok {
 		return nil, ErrMalformedHash
 	}
@@ -250,15 +249,15 @@ func (p Argon2Params) check() error {
 
 var phcB64 = base64.RawStdEncoding
 
-// phcHash is a stored password hash: Argon2id's parameters, the ID of the pepper key
-// (Secrets.pepperKey), the salt and the derived key.
+// phcHash is a stored password hash: Argon2id's parameters, the ID of the master key whose
+// pepper it used (Keyring.pepperKey), the salt and the derived key.
 type phcHash struct {
 	params    Argon2Params
-	pepper    uint32
+	pepper    uint32 // a master key ID
 	salt, key []byte
 }
 
-// encodePHC formats $argon2id$v=19$m=<m>,t=<t>,p=<p>,k=<pepper>$<salt>$<hash> (unpadded
+// encodePHC formats $argon2id$v=19$m=<m>,t=<t>,p=<p>,k=<key id>$<salt>$<hash> (unpadded
 // standard base64). "k" is this server's own parameter: a stock Argon2id verifier refuses the
 // string rather than checking it without the pepper.
 func encodePHC(h phcHash) string {
@@ -269,8 +268,8 @@ func encodePHC(h phcHash) string {
 }
 
 // decodePHC parses what encodePHC writes, strictly: the parameters in that order, decimal
-// without leading zeros, the bounds of Argon2Params.check, and a pepper ID from 1 to
-// maxPepperID.
+// without leading zeros, the bounds of Argon2Params.check, and a master key ID from 1 to
+// MaxMasterKeyID.
 func decodePHC(s string) (phcHash, error) {
 	parts := strings.Split(s, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" ||
@@ -284,7 +283,7 @@ func decodePHC(s string) (phcHash, error) {
 	m, okM := phcParam(kv[0], "m=", maxArgon2Memory)
 	t, okT := phcParam(kv[1], "t=", maxArgon2Time)
 	th, okP := phcParam(kv[2], "p=", maxArgon2Threads)
-	k, okK := phcParam(kv[3], "k=", maxPepperID)
+	k, okK := phcParam(kv[3], "k=", MaxMasterKeyID)
 	salt, okSalt := phcBytes(parts[4])
 	key, okKey := phcBytes(parts[5])
 	if !okM || !okT || !okP || !okK || k == 0 || !okSalt || !okKey {
@@ -297,7 +296,7 @@ func decodePHC(s string) (phcHash, error) {
 	if p.check() != nil {
 		return phcHash{}, ErrMalformedHash
 	}
-	return phcHash{params: p, pepper: uint32(k), salt: salt, key: key}, nil //nolint:gosec // G115: phcParam bounds k by maxPepperID
+	return phcHash{params: p, pepper: uint32(k), salt: salt, key: key}, nil //nolint:gosec // G115: phcParam bounds k by MaxMasterKeyID
 }
 
 // phcParam parses "<name><decimal>" with no leading zeros and a value at most max.

@@ -51,7 +51,7 @@ func (a *Auth) Login(ctx context.Context, username, password string) (LoginChall
 	}
 
 	if !known {
-		mac := a.opts.Secrets.NameMAC(name)
+		mac := a.names.key(name)
 		if wait, ok := waitFor(a.names.next(mac), now); ok {
 			a.event(ctx, slog.LevelInfo, "login_refused", "reason", reasonBackoff)
 			return LoginChallenge{}, RateLimitedError{RetryAfter: wait}

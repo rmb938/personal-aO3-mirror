@@ -71,11 +71,11 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 		return nil, fmt.Errorf("store: create data dir: %w", err)
 	}
 	log := o.Logger.With("component", "store")
-	meta, err := openDB(ctx, filepath.Join(dir, MetaFile), 0)
+	meta, err := openDB(ctx, filepath.Join(dir, MetaFile), dbOptions{})
 	if err != nil {
 		return nil, err
 	}
-	content, err := openDB(ctx, filepath.Join(dir, ContentFile), ContentPageSize)
+	content, err := openDB(ctx, filepath.Join(dir, ContentFile), dbOptions{pageSize: ContentPageSize})
 	if err != nil {
 		return nil, errors.Join(err, meta.Close())
 	}
@@ -102,16 +102,30 @@ func Open(ctx context.Context, dir string, o Options) (*Store, error) {
 // blob_bench_test.go). meta.db keeps SQLite's default: small rows, many index lookups.
 const ContentPageSize = 16384
 
-// openDB opens a database. pageSize > 0 sets the page size when the file is created; an
-// existing file keeps its page size (changing it needs a VACUUM outside WAL mode).
-func openDB(ctx context.Context, path string, pageSize int) (*sql.DB, error) {
-	if pageSize > 0 {
-		if err := initPageSize(ctx, path, pageSize); err != nil {
+// dbOptions configure openDB. The zero value is WAL mode with SQLite's default page size.
+type dbOptions struct {
+	// pageSize > 0 sets the page size when the file is created; an existing file keeps its page
+	// size (changing it needs a VACUUM outside WAL mode).
+	pageSize int
+	// rollback selects journal_mode=DELETE with synchronous=FULL instead of WAL with
+	// synchronous=NORMAL: for a small database with few writes (keys.db).
+	rollback bool
+	pragmas  []string // more per-connection pragmas, e.g. "secure_delete(ON)"
+}
+
+// openDB opens a database with o's journal mode, page size and pragmas.
+func openDB(ctx context.Context, path string, o dbOptions) (*sql.DB, error) {
+	if o.pageSize > 0 {
+		if err := initPageSize(ctx, path, o.pageSize); err != nil {
 			return nil, fmt.Errorf("store: init %s: %w", filepath.Base(path), err)
 		}
 	}
+	journal := []string{"journal_mode(WAL)", "synchronous(NORMAL)"}
+	if o.rollback {
+		journal = []string{"journal_mode(DELETE)", "synchronous(FULL)"}
+	}
 	q := url.Values{}
-	for _, p := range []string{"busy_timeout(10000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(NORMAL)"} {
+	for _, p := range append(append([]string{"busy_timeout(10000)", "foreign_keys(1)"}, journal...), o.pragmas...) {
 		q.Add("_pragma", p)
 	}
 	q.Set("_txlock", "immediate") // take the write lock at BEGIN: avoids SQLITE_BUSY on upgrade

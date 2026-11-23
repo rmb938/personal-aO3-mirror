@@ -67,7 +67,7 @@ const testPublicURL = "https://mirror.example.com"
 // cheapArgon2 keeps the tests fast.
 var cheapArgon2 = auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
-// newTestAuth opens a temp users.db and auth.key, seeds the accounts above and returns the
+// newTestAuth opens a temp users.db and keys.db, seeds the accounts above and returns the
 // Auth controller over them (clocked at seedTime, logging to log).
 func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	tb.Helper()
@@ -76,7 +76,10 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, users.Close()) })
-	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
+	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, keys.Close()) })
+	secrets, err := controllers.LoadKeyring(ctx, keys, seedTime, log)
 	require.NoError(tb, err)
 	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(tb, err)
@@ -125,7 +128,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 			TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.EnrollmentTOTP(seedReset), seedTOTPSecret),
 			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedResetEnrollToken))
 	}))
-	a, err := controllers.NewAuth(ctx, controllers.AuthOptions{Users: users, Secrets: secrets, Hasher: hasher, Logger: log,
+	a, err := controllers.NewAuth(ctx, controllers.AuthOptions{Users: users, Keyring: secrets, Hasher: hasher, Logger: log,
 		Now: func() time.Time { return seedTime }, PublicURL: testPublicURL})
 	require.NoError(tb, err)
 	return a

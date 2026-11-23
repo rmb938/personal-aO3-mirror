@@ -71,10 +71,15 @@ CREATE TABLE master_keys (
 - It lives in the admin socket's directory next to users.db, 0600 in a 0700 directory, created
   and checked like users.db (`createPrivate`, `privateDir`). The guard already covers it (`*.db`
   under `data/`).
-- It opens with `journal_mode=DELETE` (not WAL; it gets a handful of writes) and
-  `secure_delete=ON`, so a deleted key doesn't stay readable in a free page or a WAL frame.
-  `openDB` takes the journal mode and extra pragmas as options rather than hard-coding WAL.
-- `serve` creates it with one active key on first start. Only `serve` opens it.
+- It opens with `journal_mode=DELETE` (not WAL; it gets a handful of writes), `synchronous=FULL`
+  (NORMAL is only safe in WAL mode) and `secure_delete=ON`, so a deleted key doesn't stay
+  readable in a free page or a WAL frame. `openDB` takes a `dbOptions` (page size, rollback
+  journal, extra pragmas) rather than hard-coding WAL. Only keys.db itself is pre-created 0600;
+  SQLite gives the short-lived `-journal` the database's mode.
+- A partial unique index (`WHERE retired_at = 0`) enforces at most one active key, and a CHECK
+  enforces 32-byte keys.
+- `serve` creates it with one active key on first start (`controllers.LoadKeyring`, logging
+  `master_key_created` with the key ID). Only `serve` opens it.
 - Store code: `internal/store/keys.go` (`OpenKeys`, `KeysReadTx`/`KeysTx`, `InTx`/`InReadTx`,
   `ReadKeysValue`/`WriteKeysValue`, its own migrations directory), the same shape as users.db.
 
@@ -145,14 +150,14 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
 
 ## Stages
 
-- [ ] **1. keys.db replaces auth.key.**
+- [x] **1. keys.db replaces auth.key.**
   - `internal/store/keys.go` and its migrations, `openDB` options for journal mode and pragmas,
     and permission checks as for users.db.
   - `auth.Keyring` replaces `Secrets`, loaded from keys.db (one key, the first created on first
     start), with TOTP secrets moved to the keyring envelope (version 2: XChaCha20-Poly1305 with
     the key ID; AES-GCM is gone) and the PHC `k=` meaning the
     master key ID (the pepper-before-Argon2id design stays until stage 3).
-  - `NameMAC` moves to a random per-process key.
+  - `NameMAC` moves to a random per-process key (`nameBackoff.key` in the controller).
   - `serve`'s `openAuth` opens keys.db, and auth.key is no longer read (no import or warning:
     no users yet; the user deletes the old file).
   - Docs: `KeyFileName` and comments that cite auth.key, the backup note in `Secrets`/the

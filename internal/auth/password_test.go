@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,7 +19,7 @@ var cheap = Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 3
 
 func newCheapHasher(t *testing.T) *Hasher {
 	t.Helper()
-	h, err := NewHasher(newTestSecrets(t), HasherOptions{Params: cheap})
+	h, err := NewHasher(newTestKeyring(t), HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	return h
 }
@@ -34,12 +33,12 @@ var (
 	cafeComposed   = "caf" + eComposed + " fixture"
 )
 
-// newTestSecrets returns Secrets from a new auth.key in a temp dir.
-func newTestSecrets(t *testing.T) *Secrets {
+// newTestKeyring returns a Keyring holding one new master key, ID 1.
+func newTestKeyring(t *testing.T) *Keyring {
 	t.Helper()
-	s, err := LoadOrCreateSecrets(filepath.Join(t.TempDir(), KeyFileName))
+	r, err := NewKeyring(1, []MasterKey{{ID: 1, Key: NewMasterKey()}})
 	require.NoError(t, err)
-	return s
+	return r
 }
 
 func TestCheckPassword(t *testing.T) {
@@ -96,7 +95,7 @@ func TestCommonPasswordList(t *testing.T) {
 var phcRE = regexp.MustCompile(`^\$argon2id\$v=19\$m=65536,t=3,p=4,k=1\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$`)
 
 func TestHasherDefaultParams(t *testing.T) {
-	h, err := NewHasher(newTestSecrets(t), HasherOptions{})
+	h, err := NewHasher(newTestKeyring(t), HasherOptions{})
 	require.NoError(t, err)
 	ctx := t.Context()
 	phc, err := h.Hash(ctx, "fixture horse staple")
@@ -142,36 +141,36 @@ func TestHasherRoundTrip(t *testing.T) {
 	require.NoError(t, h.VerifyDummy(ctx, "fixture password"))
 }
 
-// TestHasherPepper: the stored key is Argon2id of the HMAC of the NFC password under auth.key's
-// pepper, not of the password itself, so a hash only verifies with the same auth.key.
+// TestHasherPepper: the stored key is Argon2id of the HMAC of the NFC password under the active
+// master key's pepper, not of the password itself, so a hash only verifies with the same keys.db.
 func TestHasherPepper(t *testing.T) {
 	ctx := t.Context()
-	secrets := newTestSecrets(t)
-	h, err := NewHasher(secrets, HasherOptions{Params: cheap})
+	keyring := newTestKeyring(t)
+	h, err := NewHasher(keyring, HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	phc, err := h.Hash(ctx, cafeDecomposed)
 	require.NoError(t, err)
 
 	ph, err := decodePHC(phc)
 	require.NoError(t, err)
-	require.Equal(t, uint32(currentPepper), ph.pepper)
-	peppered := mac32(secrets.pepper, cafeComposed)
+	require.Equal(t, keyring.active, ph.pepper)
+	pepper := keyring.activeSet().pepper
+	peppered := mac32(pepper, cafeComposed)
 	require.Equal(t, argon2.IDKey(peppered[:], ph.salt, cheap.Time, cheap.Memory, cheap.Threads, cheap.KeyLen), ph.key)
 	require.NotEqual(t, argon2.IDKey([]byte(cafeComposed), ph.salt, cheap.Time, cheap.Memory, cheap.Threads, cheap.KeyLen), ph.key)
 
-	// Another auth.key: the same users.db row no longer verifies.
-	other, err := NewHasher(newTestSecrets(t), HasherOptions{Params: cheap})
+	// Another keys.db: the same users.db row no longer verifies.
+	other, err := NewHasher(newTestKeyring(t), HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	ok, err := other.Verify(ctx, phc, cafeDecomposed)
 	require.NoError(t, err)
 	require.False(t, ok)
 
 	// The pepper is its own HKDF subkey.
-	require.NotEqual(t, secrets.pepper, secrets.recoveryHMAC)
-	require.NotEqual(t, secrets.pepper, secrets.nameHMAC)
-	require.Len(t, secrets.pepper, 32)
+	require.NotEqual(t, pepper, keyring.activeSet().recoveryHMAC)
+	require.Len(t, pepper, 32)
 
-	// A hash naming a pepper key this server doesn't hold can't be checked, and needs a rehash.
+	// A hash naming a master key this server doesn't hold can't be checked, and needs a rehash.
 	ph.pepper = 2
 	unknown := encodePHC(ph)
 	_, err = h.Verify(ctx, unknown, cafeDecomposed)
@@ -182,8 +181,35 @@ func TestHasherPepper(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A hash under a master key that is still held but no longer active verifies, and needs a
+// rehash under the active one.
+func TestHasherOlderMasterKey(t *testing.T) {
+	ctx := t.Context()
+	k1 := NewMasterKey()
+	oldRing, err := NewKeyring(1, []MasterKey{{ID: 1, Key: k1}})
+	require.NoError(t, err)
+	newRing, err := NewKeyring(2, []MasterKey{{ID: 1, Key: k1}, {ID: 2, Key: NewMasterKey()}})
+	require.NoError(t, err)
+	oldH, err := NewHasher(oldRing, HasherOptions{Params: cheap})
+	require.NoError(t, err)
+	newH, err := NewHasher(newRing, HasherOptions{Params: cheap})
+	require.NoError(t, err)
+
+	phc, err := oldH.Hash(ctx, "fixture password")
+	require.NoError(t, err)
+	ok, err := newH.Verify(ctx, phc, "fixture password")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, newH.NeedsRehash(phc))
+
+	rehashed, err := newH.Hash(ctx, "fixture password")
+	require.NoError(t, err)
+	require.Contains(t, rehashed, ",k=2$")
+	require.False(t, newH.NeedsRehash(rehashed))
+}
+
 func TestNeedsRehash(t *testing.T) {
-	secrets := newTestSecrets(t)
+	secrets := newTestKeyring(t)
 	h, err := NewHasher(secrets, HasherOptions{Params: cheap})
 	require.NoError(t, err)
 	phc, err := h.Hash(t.Context(), "fixture password")
@@ -255,7 +281,7 @@ func TestDecodePHC(t *testing.T) {
 }
 
 func TestNewHasherRejectsParams(t *testing.T) {
-	secrets := newTestSecrets(t)
+	secrets := newTestKeyring(t)
 	for _, p := range []Argon2Params{
 		{Memory: 64, Time: 0, Threads: 1, SaltLen: 16, KeyLen: 32},
 		{Memory: 4, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32},
@@ -268,7 +294,7 @@ func TestNewHasherRejectsParams(t *testing.T) {
 }
 
 func TestHasherBusy(t *testing.T) {
-	h, err := NewHasher(newTestSecrets(t), HasherOptions{Params: cheap, Concurrency: 1, MaxWait: 20 * time.Millisecond})
+	h, err := NewHasher(newTestKeyring(t), HasherOptions{Params: cheap, Concurrency: 1, MaxWait: 20 * time.Millisecond})
 	require.NoError(t, err)
 	h.sem <- struct{}{} // the only slot is taken
 
