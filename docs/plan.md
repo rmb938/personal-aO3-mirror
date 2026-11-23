@@ -2,7 +2,7 @@
 
 ## Context
 
-Goal: a personal, offline-capable mirror of selected AO3 (archiveofourown.org) works, so they can be read when AO3 is down (e.g. the Oct 29 2026 security incident, still degraded on 2026-11-15). Three parts: (1) scraper, (2) API with AO3-like search and browse, (3) AO3 look-alike UI. Only Part 1 is built now, but its data model must already support Part 2 search and browse.
+Goal: a personal, offline-capable mirror of selected AO3 (archiveofourown.org) works, so they can be read when AO3 is down (e.g. the Oct 29 2026 security incident, still degraded on 2026-11-15). Four parts: (1) scraper, (2) API with AO3-like search and browse, (3) master key rotation for the API's accounts, (4) AO3 look-alike UI. Only Part 1 is built now, but its data model must already support Part 2 search and browse.
 
 Hard constraints from the user:
 - Go, single binary, no external services (SQLite, local files).
@@ -34,9 +34,10 @@ Repo today: only `README.md` and `LICENSE`. Go 1.27 is installed. Greenfield pro
 |---|---|---|
 | 1 | `ao3mirror run` daemon + source CLI | This plan. Writes `meta.db`, `content.db`, `images/`. |
 | 2 | `ao3mirror serve` JSON API | **Detailed staged plan: `docs/part2-api.md`.** chi router, separate process from `run`, public TCP listener + admin unix socket. Fanwork strings are hashed by default; `reveal_fanwork` per request reveals them. Browse/read works, tags, series, creators, collections; QUERY-method search; source add/view and job/status views; admin ops on the socket. Calls the same `internal/controllers` package as the CLI. |
-| 3 | AO3-style UI | A JavaScript UI that calls the Part 2 API (requests will need auth, so no plain HTML form posts). Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs point at the API's reveal-only image route. "Mirror this URL" box for on-demand scraping. Design details are decided when Part 3 starts. |
+| 3 | Master key rotation (`keys.db`) | **Detailed staged plan: `docs/part3-key-rotation.md`.** Replaces `auth.key` with versioned master keys in `data/api/keys.db`. Every secret in users.db (password hashes, TOTP secrets, recovery codes, JWT signing seeds) is encrypted under one and records its key ID. `serve` rotates the master key on a schedule, re-encrypting everything without users present. `ao3mirror backup` snapshots both databases together. |
+| 4 | AO3-style UI | A JavaScript UI that calls the Part 2 API (requests will need auth, so no plain HTML form posts). Reuses otwarchive's open-source CSS (GPL-2.0, fine for personal use). Applies work skins. Image URLs point at the API's reveal-only image route. "Mirror this URL" box for on-demand scraping. Design details are decided when Part 4 starts. |
 
-### Requirement (Part 3): serve mirrored images safely
+### Requirement (Part 4): serve mirrored images safely
 
 Images are stored exactly as the host served them, including SVG, which can carry scripts.
 The UI must only show them through `<img src>` (never inline the markup, `<object>` or
@@ -44,7 +45,7 @@ The UI must only show them through `<img src>` (never inline the markup, `<objec
 and a restrictive CSP (`default-src 'none'; style-src 'unsafe-inline'`). Fanwork HTML and work
 skins are untrusted input too, so they get the same sanitizing and CSP treatment.
 
-### Requirement (Parts 2 and 3): flag partial series
+### Requirement (Parts 2 and 4): flag partial series
 
 A series is partial when it is not a source and we mirror fewer works than AO3 lists. This happens
 when a work from one source also belongs to another series. Readers must never hit a missing part
