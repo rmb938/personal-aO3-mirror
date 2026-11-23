@@ -94,45 +94,53 @@ func FuzzVerifier(f *testing.F) {
 }
 
 // FuzzPHC checks decodePHC both ways. Any string decodes only when it is canonical (encodePHC
-// gives it back) and its parameters are within the maxArgon2* bounds, so a corrupt row can't
-// make Verify allocate more than 1 GiB. Parameters encoded by encodePHC decode exactly when they
-// are within those bounds.
+// gives it back), its parameters are within the maxArgon2* bounds (so a corrupt row can't make
+// Verify allocate more than 1 GiB) and it names a pepper key ID (k ≥ 1). Values encoded by
+// encodePHC decode exactly when they are within those bounds.
 func FuzzPHC(f *testing.F) {
 	salt16, key32 := make([]byte, 16), make([]byte, 32)
-	good := encodePHC(DefaultArgon2, salt16, key32)
+	good := encodePHC(phcHash{params: DefaultArgon2, pepper: 1, salt: salt16, key: key32})
 	for _, s := range []string{
-		good, "", "$", "$argon2id$v=19$m=65536,t=3,p=4$$", strings.Replace(good, "m=65536", "m=065536", 1),
+		good, "", "$", "$argon2id$v=19$m=65536,t=3,p=4,k=1$$", strings.Replace(good, "m=65536", "m=065536", 1),
 		strings.Replace(good, "m=65536", "m=1048577", 1), strings.Replace(good, "m=65536", "m=+65536", 1),
 		strings.Replace(good, "t=3", "t=0", 1), strings.Replace(good, "p=4", "p=17", 1),
+		strings.Replace(good, ",k=1", "", 1), strings.Replace(good, "k=1", "k=0", 1),
+		strings.Replace(good, "k=1", "k=4294967296", 1), strings.Replace(good, "k=1", "k=01", 1),
 		strings.Replace(good, "$argon2id", "$argon2i", 1), strings.Replace(good, "v=19", "v=16", 1),
 		strings.Replace(good, "m=65536,t=3,p=4", "t=3,m=65536,p=4", 1), good + "=", good + "\n",
 		good[:len(good)-10] + "\n" + good[len(good)-10:], good[:len(good)-1] + "B", good + "$",
 	} {
-		f.Add(s, uint32(65536), uint32(3), uint8(4), salt16, key32)
+		f.Add(s, uint32(65536), uint32(3), uint8(4), uint32(1), salt16, key32)
 	}
-	f.Add("", uint32(7), uint32(1), uint8(1), salt16[:8], key32[:8])
-	f.Add("", uint32(1<<20+1), uint32(17), uint8(0), salt16[:7], slices.Concat(key32, key32))
-	f.Add("", uint32(64), uint32(16), uint8(8), slices.Concat(salt16, salt16), key32)
-	f.Fuzz(func(t *testing.T, s string, m, tm uint32, th uint8, salt, key []byte) {
-		if p, sa, k, err := decodePHC(s); err == nil {
-			require.Equal(t, s, encodePHC(p, sa, k), "only a canonical PHC string decodes")
-			require.True(t, inArgon2Bounds(p.Memory, p.Time, uint32(p.Threads), len(sa), len(k)), "%+v", p)
-			require.Equal(t, len(sa), int(p.SaltLen))
-			require.Equal(t, len(k), int(p.KeyLen))
+	f.Add("", uint32(7), uint32(1), uint8(1), uint32(0), salt16[:8], key32[:8])
+	f.Add("", uint32(1<<20+1), uint32(17), uint8(0), uint32(1), salt16[:7], slices.Concat(key32, key32))
+	f.Add("", uint32(64), uint32(16), uint8(8), uint32(1<<32-1), slices.Concat(salt16, salt16), key32)
+	f.Fuzz(func(t *testing.T, s string, m, tm uint32, th uint8, pepper uint32, salt, key []byte) {
+		if ph, err := decodePHC(s); err == nil {
+			p := ph.params
+			require.Equal(t, s, encodePHC(ph), "only a canonical PHC string decodes")
+			require.True(t, inArgon2Bounds(p.Memory, p.Time, uint32(p.Threads), len(ph.salt), len(ph.key)), "%+v", p)
+			require.NotZero(t, ph.pepper)
+			require.Equal(t, len(ph.salt), int(p.SaltLen))
+			require.Equal(t, len(ph.key), int(p.KeyLen))
 		} else {
 			require.ErrorIs(t, err, ErrMalformedHash)
 		}
 
-		in := Argon2Params{Memory: m, Time: tm, Threads: th, SaltLen: uint32(len(salt)), KeyLen: uint32(len(key))} //nolint:gosec // G115: fuzz input lengths are small
-		p, sa, k, err := decodePHC(encodePHC(in, salt, key))
-		if !inArgon2Bounds(m, tm, uint32(th), len(salt), len(key)) {
+		in := phcHash{
+			params: Argon2Params{Memory: m, Time: tm, Threads: th, SaltLen: uint32(len(salt)), KeyLen: uint32(len(key))}, //nolint:gosec // G115: fuzz input lengths are small
+			pepper: pepper, salt: salt, key: key,
+		}
+		got, err := decodePHC(encodePHC(in))
+		if !inArgon2Bounds(m, tm, uint32(th), len(salt), len(key)) || pepper == 0 {
 			require.ErrorIs(t, err, ErrMalformedHash)
 			return
 		}
 		require.NoError(t, err)
-		require.Equal(t, in, p)
-		require.Equal(t, salt, sa)
-		require.Equal(t, key, k)
+		require.Equal(t, in.params, got.params)
+		require.Equal(t, pepper, got.pepper)
+		require.Equal(t, salt, got.salt)
+		require.Equal(t, key, got.key)
 	})
 }
 
@@ -255,9 +263,9 @@ func FuzzVerifyTOTP(f *testing.F) {
 }
 
 // FuzzCheckPassword: the first broken rule in order (invalid UTF-8 or a control character; too
-// short or too long counted in runes after NFKC; the username; the common list). A password
-// that passes the length rule is within it after NFKC, and NFKC is stable on it, so the
-// hashed form is the checked form.
+// short or too long counted in runes after NFC; the username; the common list, both compared
+// after NFKC and lower case). A password that passes the length rule is within it after NFC,
+// and NFC is stable on it, so the hashed form is the checked form.
 func FuzzCheckPassword(f *testing.F) {
 	for _, s := range []string{
 		"", "short", "fixture pass", "PASSWORD", "password", strings.Repeat("a", 128), strings.Repeat("a", 129),
@@ -272,7 +280,7 @@ func FuzzCheckPassword(f *testing.F) {
 			require.ErrorIs(t, err, ErrPasswordInvalid)
 			return
 		}
-		n := norm.NFKC.String(pw)
+		n := norm.NFC.String(pw)
 		switch runes := utf8.RuneCountInString(n); {
 		case runes < 8:
 			require.ErrorIs(t, err, ErrPasswordTooShort)
@@ -281,10 +289,11 @@ func FuzzCheckPassword(f *testing.F) {
 			require.ErrorIs(t, err, ErrPasswordTooLong)
 			return
 		}
-		require.Equal(t, n, NormalizePassword(n), "NFKC is stable on a checked password")
-		require.False(t, strings.ContainsFunc(n, unicode.IsControl), "NFKC adds no control character")
+		require.Equal(t, n, NormalizePassword(pw), "the hashed form is NFC")
+		require.Equal(t, n, NormalizePassword(n), "NFC is stable on a checked password")
+		require.False(t, strings.ContainsFunc(n, unicode.IsControl), "NFC adds no control character")
 		// Case is ignored by lower-casing (as the common list is stored), not by Unicode folding.
-		lower := strings.ToLower(n)
+		lower := strings.ToLower(norm.NFKC.String(pw))
 		if user != "" && lower == strings.ToLower(norm.NFKC.String(user)) {
 			require.ErrorIs(t, err, ErrPasswordIsUsername)
 			return

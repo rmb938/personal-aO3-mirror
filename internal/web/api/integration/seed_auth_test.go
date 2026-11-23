@@ -78,7 +78,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	tb.Cleanup(func() { require.NoError(tb, users.Close()) })
 	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
 	require.NoError(tb, err)
-	hasher, err := auth.NewHasher(auth.HasherOptions{Params: cheapArgon2})
+	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(tb, err)
 	phc, err := hasher.Hash(ctx, fixturePassword) // outside the transaction (txguard)
 	require.NoError(tb, err)

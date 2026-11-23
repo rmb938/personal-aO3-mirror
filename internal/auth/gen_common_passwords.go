@@ -2,7 +2,7 @@
 
 // gen_common_passwords builds common-passwords.txt.gz from a downloaded password list (see
 // common-passwords.md for the source and the exact command). Each line is normalized the way
-// CheckPassword compares (NFKC, lower case); entries outside the policy's length range can never
+// CheckPassword compares (foldPassword: NFKC, lower case); entries outside the policy's length range can never
 // be chosen, so they are dropped. The output is sorted, de-duplicated and gzipped
 // deterministically (no name or time in the header), so a rerun gives the same bytes.
 package main

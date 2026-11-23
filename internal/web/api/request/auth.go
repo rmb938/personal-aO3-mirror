@@ -17,7 +17,7 @@ const (
 	MinUsernameLen = 3
 	MaxUsernameLen = 32
 	// MaxPasswordBytes bounds a password before the controller's policy check (8..128 runes
-	// after NFKC, which can merge several input runes into one).
+	// after NFC, which can merge several input runes into one).
 	MaxPasswordBytes = 2048
 	// TOTPDigits is a TOTP code's length.
 	TOTPDigits = 6

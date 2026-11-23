@@ -1594,9 +1594,9 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     | Tokens | Access JWT, 15m, whose `sid` is checked against users.db on every request (revocation is immediate). Opaque refresh token, 30d, stored as SHA-256, rotated on each use; presenting the previous one revokes the session (reuse detection). |
     | Signing | Ed25519 (`EdDSA`) via `github.com/golang-jwt/jwt/v5` (v5.3.1 when planned; run `go list -m …@latest` again). The key is stored in users.db with a `kid`. Rotation keeps the old public key for verification until `rotated_at + access_ttl`. `serve` also rotates automatically every `auth.signing_key_rotation` (default 30d; NIST SP 800-57 caps a signature key at about 1–3 years) (16h). |
     | Enforcer | New verbatim **pattern types** in `dto` (`Token`, `Username`, `TOTPSecret`, `OTPAuthURI`, `RecoveryCode`, `InviteURL`): named string types with a `VerbatimPattern() string` method, found by reflection like `EnumValues`. The enforcer passes a value only on a full regex match, else 500 (fail closed). Plain `string` fields are still always hashed. Approved by the user as a change to the enforcer. |
-    | Password | 8..128 runes after NFKC (NIST SP 800-63B-4's minimum with MFA), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL). Argon2id with RFC 9106 §4's second recommended option (m=64 MiB, t=3, p=4; changed from OWASP's m=19 MiB, t=2, p=1 in 16b), in PHC string format; rehashed on login when the parameters change. |
+    | Password | 8..128 runes after NFC (NIST SP 800-63B-4's minimum with MFA; NFKC until 17f), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL; both compared after NFKC, ignoring case). Peppered with HMAC-SHA256 under an auth.key subkey (17f), then Argon2id with RFC 9106 §4's second recommended option (m=64 MiB, t=3, p=4; changed from OWASP's m=19 MiB, t=2, p=1 in 16b), in PHC string format with the pepper key's ID (`k=1`); rehashed on login when the parameters or the pepper key change. |
     | TOTP | Mandatory. Hand-rolled RFC 4226/6238 on `crypto/hmac` (SHA1, 6 digits, 30s, ±1 step, 20-byte secret), tested with the RFC appendix vectors. It returns the matched step and `last_totp_step` blocks replay (pquerna/otp v1.5.0's `totp.ValidateCustom` returns only a bool). |
-    | TOTP at rest | AES-256-GCM, AAD = user ID, key derived from `data/api/auth.key` (32 random bytes, 0600, in the 0700 socket dir), never stored in users.db. Losing the file means every user needs a 2FA reset: back it up with users.db. |
+    | TOTP at rest | AES-256-GCM, AAD = user ID, key derived from `data/api/auth.key` (32 random bytes, 0600, in the 0700 socket dir), never stored in users.db. Losing the file loses every TOTP secret and, since 17f, every password (the pepper), so every user needs a reset link: back it up with users.db. |
     | Recovery | 10 single-use recovery codes (24 base32 chars, `xxxx-xxxx-xxxx-xxxx-xxxx-xxxx`; 16 until 17e), shown once, stored as HMAC values; an admin can also issue a reset link. |
     | Invites | `{api.public_url}/signup#token=…`. The token is in the fragment, so it never reaches Cloudflare or server logs. Single use, TTL 24h by default (max 7d), stored as SHA-256. |
     | Lockout | Per-account exponential backoff after failed password or TOTP attempts (1s doubling, capped at 15m), reset on success; 100 consecutive failures disable the account until an admin enables it. A login challenge allows at most 5 TOTP tries. Unknown usernames get identical behaviour through an in-memory LRU keyed by HMAC(username), so responses and timing never reveal whether an account exists. Per-IP limits on the auth routes on top. |
@@ -2313,7 +2313,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         option are UI requirements (Part 3).
         Deviations, decided with the user: normalization is NFKC, but §3.1.1.2 says SHOULD use
         NFC (63B-3 allowed NFKC); and there is no pepper, but §3.1.1.2 says SHOULD add a keyed
-        hashing step with a key kept apart from the hashes. Both are fixed in 17f.
+        hashing step with a key kept apart from the hashes. Both are fixed in 17f (NFC, and an
+        HMAC pepper from auth.key).
       - Look-up secrets (§3.1.2): ≥ 6 digits, single use, rate-limited (counted against the
         account): covered. Deviation: codes have 80 bits, and §3.1.2.2 says secrets under 112
         bits SHALL be stored with a salted password hashing scheme. HMAC-SHA256 isn't one.
@@ -2365,7 +2366,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       use 24-character codes; the integration fixture code is now 24 characters. The old
       16-character form is a seed or case that must be refused in the unit, request and
       login tests.
-  - [ ] **17f. Password hashing per NIST SP 800-63B-4 §3.1.1.2** (decided with the user in
+  - [x] **17f. Password hashing per NIST SP 800-63B-4 §3.1.1.2** (decided with the user in
     17d; no users yet, so no migration):
     - Normalize with NFC instead of NFKC (`NormalizePassword`, `CheckPassword`'s username
       compare, the docs and comments that cite 63B-4).
@@ -2376,6 +2377,32 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       `$argon2id$v=19$m=…,t=…,p=…,k=1$…`, or another unambiguous marker), so a later key
       change can rehash on login. The `Hasher` takes the key from `Secrets`. The dummy
       hash and the timing tests are kept.
+
+    As built:
+    - `NormalizePassword` is NFC; the length bound is counted after it. The username and
+      common-list checks compare a separate fold, `foldPassword` (NFKC, lower case), so a
+      fullwidth or ligature spelling of a listed password or the username is still refused.
+      That fold is only compared, never hashed, and it is the form the embedded list is
+      already stored in, so the list is unchanged. (The plan said NFC for the username compare
+      too; NFKC there is strictly more refusals, and NIST's NFC SHOULD is about the hashed
+      form.) Problem details and the spec's `Password` description say NFC.
+    - Pepper: `Secrets` derives `"ao3mirror password-pepper"` with HKDF like its other
+      subkeys. `NewHasher(secrets, opts)` (nil is an error); `derive` hashes
+      HMAC-SHA256(pepper, NFC password), 32 bytes, with Argon2id. x/crypto's argon2 has no
+      way to pass Argon2's own secret input (`deriveKey`'s `secret` is unexported), hence the
+      HMAC step.
+    - PHC string: `$argon2id$v=19$m=…,t=…,p=…,k=<id>$<salt>$<hash>`. `k` is this server's own
+      parameter (the PHC spec's `keyid` would claim Argon2's secret input), so a stock
+      Argon2id verifier refuses the string rather than checking it without the pepper.
+      `decodePHC` requires `k` (1..2³²−1, no leading zeros) and returns a `phcHash` struct;
+      a hash without `k` is malformed (no users yet, no migration). `Secrets.pepperKey(id)`
+      holds only ID 1 (`currentPepper`); `Verify` of a hash naming another ID is
+      `ErrMalformedHash`, and `NeedsRehash` also compares the ID, so a later key change only
+      has to keep the old key under its ID.
+    - Tests: `TestHasherPepper` (the stored key is Argon2id of the HMAC, not of the password;
+      another auth.key doesn't verify; an unknown `k`), NFC round trips with decomposed and
+      composed spellings, `TestDecodePHC`'s `k` cases, and `FuzzPHC` (fuzzes the pepper ID)
+      and `FuzzCheckPassword` (NFC length, NFKC fold) oracles updated.
 
 ## Verification (per stage, and overall)
 - `make check` passes (lint, vulncheck, `go test -race ./...`, guard tests). Tests use temp stores

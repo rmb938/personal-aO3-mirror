@@ -3436,10 +3436,10 @@ components:
     Password:
       type: string
       description: |
-        8 to 128 characters after Unicode NFKC normalization (at most 2048 bytes of UTF-8 as
+        8 to 128 characters after Unicode NFC normalization (at most 2048 bytes of UTF-8 as
         sent; `maxLength` can only count characters, so the server's byte bound is tighter), no
-        control characters, not the username and not a common password. There are no
-        composition rules.
+        control characters, not the username and not a common password (both compared after
+        NFKC and ignoring case). There are no composition rules.
       minLength: 1
       maxLength: 2048
     SignupRequest:

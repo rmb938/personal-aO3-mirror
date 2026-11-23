@@ -27,7 +27,7 @@ func TestHasherFlood(t *testing.T) {
 	)
 	// DefaultArgon2's memory; one pass and one lane keep it quick under -race.
 	p := Argon2Params{Memory: DefaultArgon2.Memory, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
-	h, err := NewHasher(HasherOptions{Params: p, MaxWait: time.Minute})
+	h, err := NewHasher(newTestSecrets(t), HasherOptions{Params: p, MaxWait: time.Minute})
 	require.NoError(t, err)
 	require.Equal(t, 2, cap(h.sem), "the default cap")
 	ctx := t.Context()
