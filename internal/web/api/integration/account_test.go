@@ -22,7 +22,7 @@ import (
 // per API: the refresh rotates the token, so a second call is reuse and revokes the session.
 func accessToken(t *testing.T, h http.Handler) string {
 	t.Helper()
-	return string(requirePair(t, postJSON(t, h, route.AuthRefresh, refreshBody(seedRefreshToken))).AccessToken)
+	return string(requireRefreshed(t, postJSON(t, h, route.AuthRefresh, refreshBody(seedRefreshToken))).AccessToken)
 }
 
 // authed sends method target with an access token and, when body is not "", a JSON body.

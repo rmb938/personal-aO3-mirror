@@ -315,7 +315,9 @@ type resetTarget struct {
 }
 
 // ConfirmReset is a reset's second step: the enrollment token and a TOTP code (from the new
-// secret when the scope replaces it, else from the current one). In one transaction it applies
+// secret when the scope replaces it, else from the current one, which is checked like a
+// re-authentication: during the account's backoff it is RateLimitedError, and a wrong code
+// counts against the account). In one transaction it applies
 // the new password and/or secret, clears the backoff, revokes every session of the user and
 // consumes the invite. Only a scope that replaces the TOTP secret replaces the recovery codes
 // (returned once); a password-only reset leaves them and returns none.
@@ -341,29 +343,38 @@ func (a *Auth) ConfirmReset(ctx context.Context, enrollmentToken, code string) (
 			return err
 		}
 		newSecret := e.TOTPSecretEnc != nil
-		var secret []byte
-		lastStep := u.LastTOTPStep
 		if newSecret {
-			secret, err = a.opts.Secrets.DecryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), e.TOTPSecretEnc)
-			lastStep = 0
+			secret, err := a.opts.Secrets.DecryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), e.TOTPSecretEnc)
+			if err != nil {
+				return err
+			}
+			step, ok := auth.VerifyTOTP(secret, code, now, 0)
+			if !ok {
+				reason, fail = reasonBadCode, ErrInvalidCredentials
+				return nil
+			}
+			if err := tx.SetUserTOTP(ctx, u.ID, a.opts.Secrets.EncryptTOTPSecret(auth.UserTOTP(u.ID), secret), step); err != nil {
+				return err
+			}
 		} else {
-			secret, err = a.opts.Secrets.DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
-		}
-		if err != nil {
-			return err
-		}
-		step, ok := auth.VerifyTOTP(secret, code, now, lastStep)
-		if !ok {
-			reason, fail = reasonBadCode, ErrInvalidCredentials
-			return nil
-		}
-		if newSecret {
-			err = tx.SetUserTOTP(ctx, u.ID, a.opts.Secrets.EncryptTOTPSecret(auth.UserTOTP(u.ID), secret), step)
-		} else {
-			err = tx.SetUserTOTPStep(ctx, u.ID, step)
-		}
-		if err != nil {
-			return err
+			// The code is the account's own second factor, so it is guessed against the account:
+			// the backoff applies and a wrong code counts like a failed login (NIST SP 800-63B-4
+			// §3.2.2). Otherwise a leaked password-only reset link would allow TOTP guesses
+			// limited only per client.
+			step, f, err := a.reauth(ctx, tx, u, code, now)
+			if err != nil {
+				return err
+			}
+			if f != nil {
+				reason, fail = reasonBadCode, f
+				if errors.As(f, new(RateLimitedError)) {
+					reason = reasonBackoff
+				}
+				return nil
+			}
+			if err := tx.SetUserTOTPStep(ctx, u.ID, step); err != nil {
+				return err
+			}
 		}
 		if e.PasswordPHC != "" {
 			if err := tx.SetUserPassword(ctx, u.ID, e.PasswordPHC, now); err != nil {

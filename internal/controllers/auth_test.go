@@ -35,7 +35,8 @@ type authEnv struct {
 	logs  *bytes.Buffer
 }
 
-func newAuthEnv(t *testing.T) *authEnv {
+// newAuthEnv builds an Auth over temp stores; each tweak adjusts its options first.
+func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	t.Helper()
 	dir := t.TempDir()
 	clk := &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)} // on a TOTP step boundary
@@ -50,6 +51,9 @@ func newAuthEnv(t *testing.T) *authEnv {
 	opts := AuthOptions{Users: users, Secrets: secrets, Hasher: hasher, Now: clk.Now,
 		Logger:    slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		PublicURL: "https://mirror.example.com"}
+	for _, f := range tweaks {
+		f(&opts)
+	}
 	a, err := NewAuth(context.Background(), opts)
 	require.NoError(t, err)
 	return &authEnv{a: a, opts: opts, clk: clk, users: users, logs: logs}
@@ -116,7 +120,8 @@ func (e *authEnv) login(t *testing.T, u testUser) TokenPair {
 }
 
 func TestAuthLoginRefreshLogout(t *testing.T) {
-	e := newAuthEnv(t)
+	// A cap above the idle limit, so the sliding expiry shows (TestAuthSessionMaxAge has the cap).
+	e := newAuthEnv(t, func(o *AuthOptions) { o.MaxSessionAge = 2160 * time.Hour })
 	ctx := context.Background()
 	u := e.signup(t, "Fixture_User")
 	assert.Len(t, u.codes, auth.RecoveryCodeCount)
@@ -186,7 +191,8 @@ func TestAuthRefreshExpires(t *testing.T) {
 }
 
 func TestAuthSessionMaxAge(t *testing.T) {
-	e := newAuthEnv(t)
+	// A cap above the 30d idle limit (the default sets both to 30d), so refreshes extend.
+	e := newAuthEnv(t, func(o *AuthOptions) { o.MaxSessionAge = 2160 * time.Hour })
 	ctx := context.Background()
 	p := e.login(t, e.signup(t, "fixture_user"))
 	loggedIn := e.clk.Now()

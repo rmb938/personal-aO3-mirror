@@ -1701,7 +1701,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     auth:   # replaces plan.md's placeholder `auth: { enabled: false }`; auth cannot be turned off
       access_ttl: 15m          # 5m..1h
       refresh_ttl: 720h        # 1h..2160h; the idle limit: each refresh extends the session by it
-      max_session_age: 2160h   # refresh_ttl..8760h; a session ends this long after login (16d)
+      max_session_age: 720h    # refresh_ttl..8760h; a session ends this long after login (16d; 2160h until 17d)
       invite_ttl: 24h          # default; max 168h
       totp_issuer: ao3mirror   # [A-Za-z0-9 ._-]{1,32}
       signing_key_rotation: 720h  # 24h..8760h; serve rotates the JWT signing key this often (16h)
@@ -2056,7 +2056,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
   Argon2id, invites, recovery codes, the enforcer's pattern types and the `/auth`, `/account`
   and `/admin/users` routes, and 16g wrote up only API1, API2 and API5. This stage repeats
   stage 15's four passes over that surface. Small gaps are fixed in the PR that finds them;
-  anything costly is written up and decided with the user. In five PRs (this plan, then 17a–d):
+  anything costly is written up and decided with the user. In seven PRs (this plan, then 17a–d,
+  then the two follow-ups 17e and 17f that 17d's NIST review decided on):
   - [x] **17a. Fuzz the auth parsers.** As in 15a, each target checks against an oracle
     written from the documented rules, not by calling the parser; `make test` replays the
     seeds and `make fuzz` finds the targets. As built:
@@ -2204,7 +2205,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       without `Location`. RFC 9110 §15.3.2 makes it optional, and no route serves one invite or
       the new account to a caller who isn't logged in. The spec's header comment now says
       only a source add's 201/202/409 carry it.
-  - [ ] **17d. Security review**, as in 15d, now including auth:
+  - [x] **17d. Security review**, as in 15d, now including auth:
     - `/security-review` over the whole API, `internal/auth` and the auth controllers (not
       just a branch diff).
     - `make deadcode` triage and govulncheck.
@@ -2213,6 +2214,153 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - JWT handling checked against RFC 8725 (JSON Web Token Best Current Practices), and the
       password, TOTP, recovery and session rules against NIST SP 800-63B-4; each section
       written up as covered, fixed or accepted.
+
+    As built:
+    - govulncheck: no vulnerabilities. `make deadcode`: nothing unreachable from tests. In the
+      production-only list, `model.Invite.Usable` was a second copy of `inviteRefusal`'s rule,
+      used only by a store test. It is gone. `auth.TOTPCode` is a test helper; the rest is as
+      15d triaged it.
+    - `/security-review` over the whole API (`internal/web/api/**`, `internal/auth`, the
+      controllers the handlers call, the users store, `serve.go`) plus this branch's diff: no
+      finding at confidence ≥ 0.7, so none reached the ≥ 8 filter. Its coverage list matches the
+      manual review below and adds: the enforcer (types recorded per body, unknown keys and
+      shape mismatches 500, maps/`any`/`[]byte` refused at schema build, anchored verbatim
+      patterns), the anonymous-route check (chi `Routes.Find` on the router's own path; other
+      methods only reach 405/404), concurrent TOTP acceptance (`_txlock=immediate`), SQL in the
+      list queries (columns and directions from fixed maps, quoted FTS, escaped LIKE), image
+      paths and `serve.go` (0700 directory, 0600 socket, stale-socket check, XFF from the
+      configured proxies only). Below its bar: signup and secret-replacing resets check a
+      secret the caller already holds (nothing to guess), and a leaked password-only reset link
+      can drive the account to its 100-failure disable (DoS, accepted above).
+    - Manual security review of `internal/auth`, the auth controllers, `runtime/bearer.go`, the
+      auth and account handlers and the users store (read in full, not a diff):
+      - **Fixed:** a password-only reset confirmed with the account's *current* TOTP secret,
+        but a wrong code there counted nothing. A leaked reset link therefore allowed TOTP
+        guesses limited only by `signup_per_hour` per client, and a new `StartReset` gave a
+        fresh enrollment token, so this ran for the link's whole life (up to 7 days). Now
+        `ConfirmReset` checks that code through `reauth`, like a password change: during the
+        account's backoff the confirm is 429 `rate-limited` with `Retry-After`, and a wrong
+        code counts towards the backoff and the 100-failure disable. A reset that replaces the
+        TOTP secret still checks only the new secret, which the link holder has just been
+        given, so there is nothing to guess. Test: `TestAuthResetCodeBackoff`. The spec's
+        reset-confirm description says so.
+      - Checked and sound: SQL for owned objects (`WHERE id=? AND user_id=?`; the
+        account routes take IDs only from the token); token storage (opaque tokens are
+        SHA-256, 256 bits, kind prefixes checked before any read; TOTP AES-256-GCM with the
+        row in the AAD; recovery codes HMAC'd with a key outside users.db); constant-time
+        compares; replay (`last_totp_step`, single-use challenges, invites, enrollments and
+        recovery codes); concurrency (each step re-reads in its write transaction; the backoff is
+        re-checked there); no hashing inside a transaction; logs (`user_id`/`session_id`, enum
+        reasons, no usernames, codes or tokens).
+      - Accepted (known, by design): a known username's failed login does one write
+        transaction that an unknown one doesn't (a small SQLite write, against an Argon2id
+        verify of ~27 ms on the dev machine, both paths), and anyone who knows a username can make the account wait
+        out its backoff and, after 100 failures (about a day of attempts), disable it. That is
+        NIST's own cap (63B-4 §3.2.2); an admin re-enables the account.
+    - OWASP API Security Top 10 (2023), all ten with auth in place:
+      - **API1**: unchanged since 16g (covered). The one ID-taking user route,
+        `DELETE /account/sessions/{id}`, is scoped by the token's user.
+      - **API2**: covered (16g's write-up), plus the reset-confirm fix above: every check of a
+        user's existing second factor now counts against the account.
+      - **API3**: covered. The auth DTOs are filled field by field. Secrets (password hashes,
+        TOTP ciphertext, token sums, recovery MACs) are not on any DTO. Every verbatim value
+        must fully match its type's pattern, else 500 (`TestOpenAPIVerbatimPatterns` ties
+        them to the spec). Request types reject unknown members, so a body can't set
+        `disabled_at` or a scope. `/account` shows only the caller's own counters.
+      - **API4**: covered. On top of 15d's bounds: the Argon2id hasher allows 2 hashes at
+        once (128 MiB) and answers 503 after 5 s of waiting; a password is at most 2048 bytes
+        before NFKC; a token at most 2048 bytes; login, signup/reset and refresh have their
+        own per-client limits (load-tested in 17b); the unknown-name LRU is capped at 10000;
+        expired challenges, enrollments and sessions are deleted on write.
+      - **API5**: unchanged since 16g (covered).
+      - **API6**: covered. The sensitive flows are signup (invite-gated, single use, 7 days at
+        most), login (per-account backoff and per-client limits), reset (an admin-issued
+        link; a password-only reset also needs the current TOTP, now with backoff) and source
+        adds (signed-in users only, 15d's limits).
+      - **API7**: unchanged (covered). Auth makes no outbound requests; the invite link base
+        is the configured `public_url`, never a request's `Host`.
+      - **API8**: covered. `Cache-Control: no-store` on every response (declared in 17c),
+        `WWW-Authenticate` on every 401, no CORS, `Host` checked, and the admin socket
+        ignores `Authorization`. `auth.key` must be a 0600 regular file or `serve` refuses to
+        start. `public_url` must be a bare http(s) origin.
+      - **API9**: covered. One spec; 17c checked every auth operation against it.
+      - **API10**: unchanged (covered). No third-party identity provider or API.
+    - RFC 8725 (JWT BCP):
+      - §2.1/§3.1 algorithm verification: covered. `WithValidMethods(EdDSA)` only, so `none`,
+        HS256-with-the-public-key and any other alg are refused (tested).
+      - §3.2 appropriate algorithms: Ed25519. §3.3/§3.4: signature always verified; no
+        ECDH-ES, so the input validation clause does not apply. §3.5 key entropy:
+        `crypto/rand` keys, rotated every 30 days (16h).
+      - §3.6 compression and §3.7 UTF-8: no JWE, no compression; `encoding/json` with
+        `WithStrictDecoding` (canonical base64url; a CR/LF inside a token is refused before
+        parsing).
+      - §3.8 issuer and subject: `iss` must equal `public_url`; `sub` and `sid` must be
+        canonical positive decimals and are re-checked against users.db on every request.
+      - §3.9 audience: `aud` must be `ao3mirror-api`.
+      - §3.10 don't trust received claims: `kid` is only a map lookup among this server's own
+        keys; `jku`, `x5u` and embedded `jwk` headers are never read.
+      - §3.11 explicit typing and §3.12 mutually exclusive validation: accepted without a
+        `typ`. This server issues one kind of JWT, and its signing key signs nothing else, so no
+        other JWT could be substituted. `at+jwt` would claim RFC 9068's profile
+        (`client_id` and so on), which these tokens don't follow.
+    - NIST SP 800-63B-4 (July 2025):
+      - Passwords (§3.1.1): min 8 with MFA, max 128 (SHOULD ≥ 64), code points counted, no
+        composition rules, no forced periodic change, no hints or KBA, no truncation,
+        blocklist with the username, salted (16 bytes ≥ 32 bits) Argon2id (RFC 9106 §4) with
+        the cost in the PHC string, per-account rate limit: covered. Admin reset links are the
+        forced change on compromise. Guidance, password managers, paste and a show-password
+        option are UI requirements (Part 3).
+        Deviations, decided with the user: normalization is NFKC, but §3.1.1.2 says SHOULD use
+        NFC (63B-3 allowed NFKC); and there is no pepper, but §3.1.1.2 says SHOULD add a keyed
+        hashing step with a key kept apart from the hashes. Both are fixed in 17f.
+      - Look-up secrets (§3.1.2): ≥ 6 digits, single use, rate-limited (counted against the
+        account): covered. Deviation: codes have 80 bits, and §3.1.2.2 says secrets under 112
+        bits SHALL be stored with a salted password hashing scheme. HMAC-SHA256 isn't one.
+        Fixed in 17e by lengthening the codes to 120 bits. Then the KDF clause doesn't apply,
+        and "hashed form using an approved hashing function" is met by the keyed HMAC. §4.2.1's
+        saved recovery codes are for account recovery. This mirror uses admin reset links for
+        that, so those rules don't apply.
+      - OTP (§3.1.4): 160-bit secret (≥ 112), protected at rest (AES-GCM, key outside
+        users.db), clock nonce changes every 30 s (≤ 2 min), each OTP accepted once
+        (`last_totp_step`), lifetime set by the ±1-step drift window, rate limit (SHALL for
+        output under 64 bits): covered. HMAC-SHA-1: 63B-4 asks only for an "approved block
+        cipher or hash function". SP 800-131A Rev. 2 still allows HMAC-SHA-1, and it is what
+        authenticator apps support. Accepted, to revisit when 800-131A retires SHA-1.
+      - Rate limiting (§3.2.2): at most 100 consecutive failures, then the account is
+        disabled; doubling delays (MAY); reset on success: covered. Now it also covers the
+        reset confirm (fixed above).
+      - Sessions (§2, §5): session secrets of 256 bits from `crypto/rand`, created at
+        authentication, invalidated on logout, revocable by the user: covered. Reauthentication
+        timeouts: the authenticators are AAL2, but 63B-4's AAL2 timeouts (overall SHOULD
+        ≤ 24 h, inactivity ≤ 1 h) are more friction than a personal mirror needs. With the
+        user, the session rules follow AAL1: `auth.max_session_age` now defaults to 720h
+        (AAL1's overall SHOULD of ≤ 30 days, §2.1.3; it was 2160h), and the idle limit stays
+        720h (AAL1 needs none). Both remain configurable; with the defaults equal, a refresh
+        no longer extends a session, and raising `refresh_ttl` now means raising
+        `max_session_age` too (config validation says so). Changing a password or a reset
+        revokes the other sessions (63B-4 doesn't require it).
+      - Notifications (§4.6: account recovery SHALL notify the subscriber): accepted. The
+        mirror holds no contact channel for users. The admin issues every reset link
+        personally, so the user hears about it from them.
+  - [ ] **17e. 120-bit recovery codes** (decided with the user in 17d; NIST SP 800-63B-4
+    §3.1.2.2). Codes become 24 base32 characters (15 random bytes, 120 bits), shown as six
+    groups of four (`xxxx-xxxx-xxxx-xxxx-xxxx-xxxx`). The stored form stays HMAC-SHA256
+    under the auth.key-derived key, which 63B-4 allows for look-up secrets of 112 bits or
+    more. There are no users yet, so the 16-character form is simply dropped (no migration).
+    Touches `auth/tokens.go` (`NormalizeRecoveryCode`'s length and input bound), the `dto`
+    `RecoveryCode` pattern and the spec (`TestOpenAPIVerbatimPatterns` keeps them equal), the
+    login and request bounds, the fuzz seeds and the tests; `make generate`.
+  - [ ] **17f. Password hashing per NIST SP 800-63B-4 §3.1.1.2** (decided with the user in
+    17d; no users yet, so no migration):
+    - Normalize with NFC instead of NFKC (`NormalizePassword`, `CheckPassword`'s username
+      compare, the docs and comments that cite 63B-4).
+    - Pepper: before Argon2id, HMAC-SHA256 the normalized password with a new HKDF key from
+      auth.key (`"ao3mirror password-pepper"`), so a copy of users.db alone allows no
+      offline guessing. Then losing auth.key loses every password as well as every TOTP
+      secret, and the backup note says so. The PHC string records it (for example
+      `$argon2id$v=19$m=…,t=…,p=…,k=1$…`, or another unambiguous marker), so a later key
+      change can rehash on login. The `Hasher` takes the key from `Secrets`. The dummy
+      hash and the timing tests are kept.
 
 ## Verification (per stage, and overall)
 - `make check` passes (lint, vulncheck, `go test -race ./...`, guard tests). Tests use temp stores

@@ -183,7 +183,7 @@ func Default() Config {
 		Auth: Auth{
 			AccessTTL:     15 * time.Minute,
 			RefreshTTL:    720 * time.Hour,
-			MaxSessionAge: 2160 * time.Hour,
+			MaxSessionAge: 720 * time.Hour, // NIST SP 800-63B-4 §2.1.3: AAL1's SHOULD of ≤ 30 days
 			InviteTTL:     24 * time.Hour,
 			TOTPIssuer:    "ao3mirror",
 
