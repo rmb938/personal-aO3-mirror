@@ -3,6 +3,9 @@ package controllers
 import (
 	"container/list"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"log/slog"
 	"sync"
 	"time"
@@ -72,12 +75,14 @@ func (a *Auth) recordFailure(ctx context.Context, tx *store.UsersTx, u model.Use
 	return nil
 }
 
-// nameBackoff is the backoff of unknown usernames, by NameMAC, least recently used evicted.
+// nameBackoff is the backoff of unknown usernames, by their HMAC (nameBackoff.key), least
+// recently used evicted.
 type nameBackoff struct {
-	mu  sync.Mutex
-	max int
-	ll  *list.List // front = most recent; values are *nameEntry
-	m   map[[32]byte]*list.Element
+	macKey []byte // random per process: nothing here outlives it
+	mu     sync.Mutex
+	max    int
+	ll     *list.List // front = most recent; values are *nameEntry
+	m      map[[32]byte]*list.Element
 }
 
 type nameEntry struct {
@@ -87,7 +92,17 @@ type nameEntry struct {
 }
 
 func newNameBackoff(max int) *nameBackoff {
-	return &nameBackoff{max: max, ll: list.New(), m: map[[32]byte]*list.Element{}}
+	macKey := make([]byte, 32)
+	_, _ = rand.Read(macKey) // never fails; it crashes the program instead
+	return &nameBackoff{macKey: macKey, max: max, ll: list.New(), m: map[[32]byte]*list.Element{}}
+}
+
+// key is the map key for a (case-folded) username: HMAC-SHA256 under the process's random
+// key, so the map never holds the username itself.
+func (b *nameBackoff) key(username string) [32]byte {
+	m := hmac.New(sha256.New, b.macKey)
+	m.Write([]byte(username))
+	return [32]byte(m.Sum(nil))
 }
 
 // next returns when the next attempt for key may come (zero when none is remembered).

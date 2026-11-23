@@ -64,44 +64,15 @@ Claude must NOT:
   Every route needs a sample request in the all-routes leak test.
 - Run live auth flows (invite, signup, login, token calls) against the real server, or create
   accounts in the real users DB. Auth is tested in Go tests with temp stores; manual checks are
-  commands the user runs. `data/api/auth.key` and the users DB are under `data/`, so the guard
+  commands the user runs. `data/api/keys.db` and the users DB are under `data/`, so the guard
   already covers them.
 
-Design rules for API code:
-- Handlers call controllers (see Layering) and return values; only `runtime.Respond` writes JSON.
-- `internal/web/api/dto` imports only the standard library. It never uses, imports or embeds
-  `controllers`, `store` or `model` types; `internal/web/api/convert` maps controller results into
-  DTOs field by field.
-- Conversion lives in `internal/web/api/convert`, not handlers: one exported function per model or
-  controller result, named after it (`convert.Source`), every helper unexported and tested
-  beside it. Each model gets its own file (`source.go`, `source_add.go`, with matching
-  `_test.go`); `convert.go` holds only helpers shared across models. Handlers parse input, call a controller and return `convert.X(result)`.
-- A string field with a closed value set is a named string type in `dto` with an
-  `EnumValues() []string` method; the enforcer registry finds it by reflection. A plain
-  `string` field is free text and always hashed.
-- Server-generated or strictly-shaped non-fanwork values (tokens, TOTP secrets and URIs,
-  recovery codes, usernames, invite URLs; stage 16) are named string types in `dto` with a
-  `VerbatimPattern() string` method. The enforcer passes them only on a full regex match, else
-  500. Never give a pattern type to anything that could hold fanwork or free text, and keep each
-  pattern as tight as the value allows.
+Design rules for API code (handlers, dto, convert, enum/verbatim types, problems, validation,
+input bounds) live in `internal/web/api/CLAUDE.md`. One applies beyond that directory:
 - Auth (stage 16): the public listener requires a bearer JWT except on `healthz` and the auth
   entry points; the admin socket needs none. Responses and logs never carry passwords, codes or
   tokens (logs also never carry usernames, only `user_id`). Objects a user owns (sessions) are
   always queried with the user's ID (`WHERE id=? AND user_id=?`, else 404).
-- Errors are RFC 9457 problems (`docs/api/problems.md`). A problem `detail` is only ever a
-  catalogue message from `problem.NewDetail` (`internal/web/api/problem`; package-level vars only,
-  e.g. `internal/web/api/details.go`), never built from input or content; a new problem type gets
-  a `## <slug>` section there.
-- Validation reports every invalid part at once: handlers read all params through
-  `runtime.ParseParams` and return `q.Err()`. Request bodies are types in `internal/web/api/request`
-  (same import rule as `dto`), each with a `Validate(*problem.Validation)` method recording
-  every invalid member and listed in `request.Types()`; `runtime.DecodeJSON` takes a `request.Request`
-  and validates it. Route patterns are constants in `internal/web/api/route` (stdlib
-  only, shared with `internal/apiclient`); `Location` and client paths come from
-  `route.Path(pattern, ids...)`.
-- Untrusted input is always bounded: body size, string runes, array lengths, integer ranges,
-  query param allowlists. Logs carry route patterns and param names, never query values or
-  bodies.
 
 ## Politeness rules for scraper code
 
@@ -154,10 +125,9 @@ Design rules for API code:
 - Config: `ao3mirror.example.yaml` is committed; copy to `ao3mirror.local.yaml` (gitignored) and
   set `contact.discord`. Run with `--config ao3mirror.local.yaml`.
 - Tests: `go test ./...` run against `internal/fakeao3` with synthetic fixtures; no network.
-- Pure Go only (no cgo): `modernc.org/sqlite`, goquery, klauspost zstd, yaml.v3.
-- **Always run `make check` before committing, and only commit when it passes.** It runs
-  `make lint` (gofmt/goimports check, `go vet`, `go mod tidy` check, golangci-lint with `.golangci.yml`),
-  `make vulncheck` (govulncheck), `go test -race ./...` and the guard hook tests. Fix findings rather than silencing them; a
+- Pure Go only (no cgo).
+- **Always run `make check` before committing, and only commit when it passes** (targets in the
+  `Makefile`). Fix findings rather than silencing them; a
   `//nolint:<linter> // reason` is only for intentional cases and needs the reason.
 - Run `make deadcode` now and then (after refactors, before a part ships), not on every commit. It is
   advisory: delete what is unreachable even from tests; the production-only list also holds test

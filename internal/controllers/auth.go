@@ -41,7 +41,7 @@ type Auth struct {
 // AuthOptions configure NewAuth. Zero durations take the defaults.
 type AuthOptions struct {
 	Users   *store.Users
-	Secrets *auth.Secrets
+	Keyring *auth.Keyring // from LoadKeyring
 	Hasher  *auth.Hasher
 	Logger  *slog.Logger
 	Now     func() time.Time
@@ -109,8 +109,8 @@ type Principal struct {
 // NewAuth returns the Auth controller. It loads the signing keys from users.db, creating the
 // first one, and drops keys whose tokens have all expired.
 func NewAuth(ctx context.Context, opts AuthOptions) (*Auth, error) {
-	if opts.Users == nil || opts.Secrets == nil || opts.Hasher == nil {
-		return nil, errors.New("controllers: auth needs users, secrets and a hasher")
+	if opts.Users == nil || opts.Keyring == nil || opts.Hasher == nil {
+		return nil, errors.New("controllers: auth needs users, a keyring and a hasher")
 	}
 	if err := checkPublicURL(opts.PublicURL); err != nil {
 		return nil, err
@@ -242,7 +242,7 @@ type SecondFactor struct {
 func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model.User, f SecondFactor, now time.Time) (step int64, ok bool, err error) {
 	switch {
 	case f.Code != "" && f.RecoveryCode == "":
-		secret, err := a.opts.Secrets.DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
+		secret, err := a.opts.Keyring.DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
 		if err != nil {
 			return 0, false, err
 		}
@@ -253,7 +253,7 @@ func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model
 		if !ok {
 			return 0, false, nil
 		}
-		used, err := tx.UseRecoveryCode(ctx, u.ID, a.opts.Secrets.RecoveryCodeMAC(norm), now)
+		used, err := tx.UseRecoveryCode(ctx, u.ID, a.opts.Keyring.RecoveryCodeMAC(norm), now)
 		return 0, used, err
 	}
 	return 0, false, nil
@@ -265,7 +265,7 @@ func (a *Auth) newRecoveryCodes(ctx context.Context, tx *store.UsersTx, userID i
 	macs := make([][32]byte, len(codes))
 	for i, c := range codes {
 		norm, _ := auth.NormalizeRecoveryCode(c)
-		macs[i] = a.opts.Secrets.RecoveryCodeMAC(norm)
+		macs[i] = a.opts.Keyring.RecoveryCodeMAC(norm)
 	}
 	return codes, tx.ReplaceRecoveryCodes(ctx, userID, macs)
 }

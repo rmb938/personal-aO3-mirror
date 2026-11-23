@@ -98,7 +98,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	st, err = os.Stat(filepath.Dir(sockPath))
 	require.NoError(t, err)
 	assert.Equal(t, fs.FileMode(0o700), st.Mode().Perm(), "socket dir mode")
-	for _, name := range []string{store.UsersFile, auth.KeyFileName} {
+	for _, name := range []string{store.UsersFile, store.KeysFile} {
 		st, err := os.Stat(filepath.Join(filepath.Dir(sockPath), name))
 		require.NoError(t, err, name)
 		assert.Equal(t, fs.FileMode(0o600), st.Mode().Perm(), name)
@@ -130,35 +130,43 @@ func TestServeListenerFailureStopsBoth(t *testing.T) {
 }
 
 // TestOpenAuth checks the accounts are opened from config: invite links start with
-// api.public_url, auth.key and users.db survive a restart, and a non-private directory is refused.
+// api.public_url, keys.db and users.db survive a restart (keys.db's first master key is made
+// once), and a non-private directory is refused.
 func TestOpenAuth(t *testing.T) {
 	cfg := serveConfig(t)
 	cfg.API.AllowedHosts = append(cfg.API.AllowedHosts, "mirror.example.com")
 	cfg.API.PublicURL = "https://mirror.example.com"
 	cfg.Auth.InviteTTL = 2 * time.Hour
-	log := slog.New(slog.DiscardHandler)
+	logs := &lockedBuffer{}
+	log := slog.New(slog.NewJSONHandler(logs, nil))
+	const created = `"event":"master_key_created","key_id":1`
 
-	users, ctl, err := openAuth(t.Context(), cfg, log)
+	acc, err := openAuth(t.Context(), cfg, log)
 	require.NoError(t, err)
+	assert.Equal(t, 1, logs.count(created), "first start creates the master key")
 	before := time.Now()
-	link, err := ctl.CreateInvite(t.Context(), 0)
+	link, err := acc.auth.CreateInvite(t.Context(), 0)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(link.URL, "https://mirror.example.com/signup#token="), "public_url is the link base")
 	assert.WithinDuration(t, before.Add(2*time.Hour), link.ExpiresAt, time.Minute, "auth.invite_ttl is the default")
-	require.NoError(t, users.Close())
+	require.NoError(t, acc.Close())
 
-	// A restart reads the same users.db (and auth.key, or NewAuth could not load its keys).
-	users, ctl, err = openAuth(t.Context(), cfg, log)
+	// A restart reads the same users.db and keys.db.
+	acc, err = openAuth(t.Context(), cfg, log)
 	require.NoError(t, err)
-	invites, err := ctl.ListInvites(t.Context())
+	assert.Equal(t, 1, logs.count(created), "a restart reuses the master key")
+	invites, err := acc.auth.ListInvites(t.Context())
 	require.NoError(t, err)
 	require.Len(t, invites, 1)
 	assert.Equal(t, link.ID, invites[0].ID)
-	require.NoError(t, users.Close())
+	require.NoError(t, acc.Close())
 
 	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
+	_, err = os.Stat(filepath.Join(dir, "auth.key"))
+	require.ErrorIs(t, err, fs.ErrNotExist, "auth.key is gone")
+
 	require.NoError(t, os.Chmod(dir, 0o750)) //nolint:gosec // deliberately unsafe mode under test
-	_, _, err = openAuth(t.Context(), cfg, log)
+	_, err = openAuth(t.Context(), cfg, log)
 	require.ErrorContains(t, err, "chmod 700")
 }
 
@@ -190,13 +198,16 @@ func TestRotateSigningKeys(t *testing.T) {
 	users, err := store.OpenUsers(t.Context(), dir, store.Options{Now: now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
-	secrets, err := auth.LoadOrCreateSecrets(filepath.Join(dir, auth.KeyFileName))
+	keys, err := store.OpenKeys(t.Context(), dir, store.Options{Now: now})
 	require.NoError(t, err)
-	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{})
-	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, keys.Close()) })
 	logs := &lockedBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
-	ctl, err := controllers.NewAuth(t.Context(), controllers.AuthOptions{Users: users, Secrets: secrets,
+	keyring, err := controllers.LoadKeyring(t.Context(), keys, now(), log)
+	require.NoError(t, err)
+	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{})
+	require.NoError(t, err)
+	ctl, err := controllers.NewAuth(t.Context(), controllers.AuthOptions{Users: users, Keyring: keyring,
 		Hasher: hasher, Logger: log, Now: now, PublicURL: "https://mirror.example.com",
 		SigningKeyRotation: 24 * time.Hour})
 	require.NoError(t, err)

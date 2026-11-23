@@ -20,6 +20,15 @@ type User struct {
 	NextAttemptAt     time.Time // backoff: no attempt is checked before this
 }
 
+// MasterKey is a master key in keys.db (docs/part3-key-rotation.md): every secret in users.db
+// is encrypted under one and records its ID.
+type MasterKey struct {
+	ID        int64
+	Key       []byte // 32 random bytes
+	CreatedAt time.Time
+	RetiredAt time.Time // zero = the active key
+}
+
 // Disabled reports whether the account is disabled.
 func (u User) Disabled() bool { return !u.DisabledAt.IsZero() }
 
