@@ -2115,7 +2115,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       is logged as `refresh_reuse` and the session, the winner's included, is revoked.
     - `auth.TestHasherFlood`: 8 verifies at once at the real 64 MiB cost fill both slots and
       never more; the heap grows by 192 MiB (2 running, one awaiting collection; 512 with the
-      cap at 8, so the 256 MiB bound catches a broken cap); a waiter with a 20 ms deadline
+      cap at 8, so the bound catches a broken cap; it was 256 MiB, raised to 384 in 17e after
+      a slow CI runner peaked at exactly 256); a waiter with a 20 ms deadline
       leaves with `DeadlineExceeded`, not at `MaxWait`.
     - `integration.TestRateLimitAuthForwardedFor`: behind the trusted proxy each forwarded
       client has its own bucket on the signup, login, login TOTP and refresh limits (the
