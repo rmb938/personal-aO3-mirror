@@ -62,11 +62,6 @@ type Invite struct {
 	RevokedAt    time.Time
 }
 
-// Usable reports whether the invite can still be used at now.
-func (i Invite) Usable(now time.Time) bool {
-	return i.UsedAt.IsZero() && i.RevokedAt.IsZero() && now.Before(i.ExpiresAt)
-}
-
 // Enrollment is a signup or reset between its two steps.
 type Enrollment struct {
 	InviteID      int64

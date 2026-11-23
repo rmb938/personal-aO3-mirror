@@ -45,8 +45,23 @@ func login(t *testing.T, h http.Handler, username string) string {
 	return string(c.ChallengeToken)
 }
 
-// requirePair requires a 200 token pair and returns it.
+// requirePair requires a 200 token pair from a login (a new session, ending a refresh TTL from
+// now) and returns it.
 func requirePair(t *testing.T, w *httptest.ResponseRecorder) dto.TokenPair {
+	t.Helper()
+	return requirePairUntil(t, w, seedTime.Add(720*time.Hour))
+}
+
+// requireRefreshed requires a 200 token pair from refreshing seedSession, which was created a
+// minute before seedTime: the default auth.max_session_age (720h, equal to the refresh TTL)
+// caps it at its login plus 720h.
+func requireRefreshed(t *testing.T, w *httptest.ResponseRecorder) dto.TokenPair {
+	t.Helper()
+	return requirePairUntil(t, w, seedTime.Add(-time.Minute).Add(720*time.Hour))
+}
+
+// requirePairUntil requires a 200 token pair whose refresh token expires at refreshExpires.
+func requirePairUntil(t *testing.T, w *httptest.ResponseRecorder, refreshExpires time.Time) dto.TokenPair {
 	t.Helper()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
@@ -55,7 +70,7 @@ func requirePair(t *testing.T, w *httptest.ResponseRecorder) dto.TokenPair {
 	assert.Equal(t, int64(15*60), p.ExpiresIn)
 	assert.True(t, strings.HasPrefix(string(p.AccessToken), "eyJ"), "verbatim, not hashed")
 	assert.True(t, strings.HasPrefix(string(p.RefreshToken), "rt_"), "verbatim, not hashed")
-	assert.Equal(t, seedTime.Add(720*time.Hour), p.RefreshExpiresAt)
+	assert.Equal(t, refreshExpires, p.RefreshExpiresAt)
 	return p
 }
 
@@ -85,9 +100,9 @@ func TestRefresh(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Public()
 
-	next := requirePair(t, postJSON(t, h, route.AuthRefresh, refreshBody(seedRefreshToken)))
+	next := requireRefreshed(t, postJSON(t, h, route.AuthRefresh, refreshBody(seedRefreshToken)))
 	assert.NotEqual(t, seedRefreshToken, string(next.RefreshToken), "rotated")
-	again := requirePair(t, postJSON(t, h, route.AuthRefresh, refreshBody(string(next.RefreshToken))))
+	again := requireRefreshed(t, postJSON(t, h, route.AuthRefresh, refreshBody(string(next.RefreshToken))))
 
 	// The previous token again is reuse: the session is revoked, so the current one fails too.
 	w := postJSON(t, h, route.AuthRefresh, refreshBody(string(next.RefreshToken)))
@@ -162,5 +177,5 @@ func TestLoginStepBudgets(t *testing.T) {
 func TestLoginOnAdminSocket(t *testing.T) {
 	a, _ := testutil.NewAPI(t, testOptions, testNew, nil)
 	requirePair(t, postJSON(t, a.Admin(), route.AuthLoginTOTP, totpBody(login(t, a.Admin(), seedUserName), seedTOTPCode)))
-	requirePair(t, postJSON(t, a.Admin(), route.AuthRefresh, refreshBody(seedRefreshToken)))
+	requireRefreshed(t, postJSON(t, a.Admin(), route.AuthRefresh, refreshBody(seedRefreshToken)))
 }

@@ -156,6 +156,37 @@ func TestAuthResetPassword(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidToken, "used")
 }
 
+// TestAuthResetCodeBackoff: a password-only reset confirms with the account's own TOTP, so a
+// wrong code counts against the account and its backoff refuses the next try, as on a login.
+func TestAuthResetCodeBackoff(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	r, err := e.a.CreateReset(ctx, u.id, model.ResetPassword, time.Hour)
+	require.NoError(t, err)
+	en, err := e.a.StartReset(ctx, inviteToken(t, r), testPassword2)
+	require.NoError(t, err)
+
+	_, err = e.a.ConfirmReset(ctx, en.Token, "000000")
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	acct, err := e.a.Account(ctx, u.id)
+	require.NoError(t, err)
+	assert.Equal(t, 1, acct.FailedAttempts, "a wrong code counts against the account")
+
+	_, err = e.a.ConfirmReset(ctx, en.Token, auth.TOTPCode(u.secret, e.clk.Now()))
+	var rl RateLimitedError
+	require.ErrorAs(t, err, &rl, "the account's backoff applies")
+	assert.Positive(t, rl.RetryAfter)
+
+	e.advance(rl.RetryAfter)
+	e.nextStep()
+	_, err = e.a.ConfirmReset(ctx, en.Token, auth.TOTPCode(u.secret, e.clk.Now()))
+	require.NoError(t, err)
+	acct, err = e.a.Account(ctx, u.id)
+	require.NoError(t, err)
+	assert.Zero(t, acct.FailedAttempts, "a reset clears the failures")
+}
+
 func TestAuthResetTOTP(t *testing.T) {
 	e := newAuthEnv(t)
 	ctx := context.Background()

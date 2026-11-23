@@ -50,7 +50,8 @@ type AuthOptions struct {
 	AccessTTL  time.Duration // auth.access_ttl; 15m
 	RefreshTTL time.Duration // auth.refresh_ttl, the idle limit (each refresh extends by it); 720h
 	// MaxSessionAge is auth.max_session_age: a session ends this long after its login however
-	// often it is refreshed; 2160h.
+	// often it is refreshed; 720h (NIST SP 800-63B-4 §2.1.3: an AAL1 overall timeout SHOULD
+	// be no more than 30 days).
 	MaxSessionAge time.Duration
 	InviteTTL     time.Duration // auth.invite_ttl, the default for new invites; 24h
 	TOTPIssuer    string        // auth.totp_issuer; "ao3mirror"
@@ -122,7 +123,7 @@ func NewAuth(ctx context.Context, opts AuthOptions) (*Auth, error) {
 	}
 	opts.AccessTTL = durationOr(opts.AccessTTL, 15*time.Minute)
 	opts.RefreshTTL = durationOr(opts.RefreshTTL, 720*time.Hour)
-	opts.MaxSessionAge = durationOr(opts.MaxSessionAge, 2160*time.Hour)
+	opts.MaxSessionAge = durationOr(opts.MaxSessionAge, 720*time.Hour)
 	opts.InviteTTL = durationOr(opts.InviteTTL, 24*time.Hour)
 	opts.SigningKeyRotation = durationOr(opts.SigningKeyRotation, 720*time.Hour)
 	if opts.TOTPIssuer == "" {

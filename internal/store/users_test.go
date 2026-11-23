@@ -181,8 +181,8 @@ func TestInvitesAndEnrollments(t *testing.T) {
 	got, err := tx.InviteByToken(ctx, sum("inv1"))
 	require.NoError(t, err)
 	assert.Equal(t, id, got.ID)
-	assert.True(t, got.Usable(usersT0))
-	assert.False(t, got.Usable(usersT0.Add(24*time.Hour)), "expired")
+	assert.True(t, inv.ExpiresAt.Equal(got.ExpiresAt), "expires_at round-trips")
+	assert.True(t, got.UsedAt.IsZero() && got.RevokedAt.IsZero())
 	_, err = tx.InviteByToken(ctx, sum("nope"))
 	require.ErrorIs(t, err, ErrNoInvite)
 

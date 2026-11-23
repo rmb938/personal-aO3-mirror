@@ -173,10 +173,19 @@ func TestReset(t *testing.T) {
 	p := decodeJSON[dto.Enrollment](t, w)
 	w = postJSON(t, h, route.AuthResetConfirm, confirmBody(string(p.EnrollmentToken), totpCode(t, e.TOTPSecret, seedTime)))
 	requireProblem(t, w, dto.TypeInvalidCredentials, runtime.DetailInvalidCredentials.Message())
-	w = postJSON(t, h, route.AuthResetConfirm, confirmBody(string(p.EnrollmentToken), totpCode(t, e.TOTPSecret, seedTime.Add(auth.TOTPPeriod))))
+	// That code is the account's own factor, so the miss counts against the account (stage
+	// 17d): the clock doesn't move, so even the right code is now backed off.
+	next := totpCode(t, e.TOTPSecret, seedTime.Add(auth.TOTPPeriod))
+	w = postJSON(t, h, route.AuthResetConfirm, confirmBody(string(p.EnrollmentToken), next))
+	requireProblem(t, w, dto.TypeRateLimited, runtime.DetailLoginBackoff.Message())
+	assert.Equal(t, "1", w.Header().Get("Retry-After"))
+	u, _ := findUser(t, a.Admin(), seedUser)
+	assert.Equal(t, 1, u.FailedAttempts)
+	require.Equal(t, http.StatusNoContent, postJSON(t, a.Admin(), userPath(seedUser, "/enable"), "").Code, "clears the backoff")
+	w = postJSON(t, h, route.AuthResetConfirm, confirmBody(string(p.EnrollmentToken), next))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.JSONEq(t, `{"recovery_codes":[]}`, w.Body.String())
-	u, _ := findUser(t, a.Admin(), seedUser)
+	u, _ = findUser(t, a.Admin(), seedUser)
 	assert.Equal(t, seedTime, u.PasswordChangedAt)
 	assert.Equal(t, auth.RecoveryCodeCount, u.RecoveryCodesLeft)
 }

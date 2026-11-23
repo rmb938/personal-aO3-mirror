@@ -79,11 +79,11 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 func TestAuthDefaultsAndValidation(t *testing.T) {
 	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\n"))
 	require.NoError(t, err)
-	assert.Equal(t, Auth{AccessTTL: 15 * time.Minute, RefreshTTL: 720 * time.Hour, MaxSessionAge: 2160 * time.Hour,
+	assert.Equal(t, Auth{AccessTTL: 15 * time.Minute, RefreshTTL: 720 * time.Hour, MaxSessionAge: 720 * time.Hour,
 		InviteTTL: 24 * time.Hour, TOTPIssuer: "ao3mirror", SigningKeyRotation: 720 * time.Hour}, cfg.Auth)
 
 	for _, yml := range []string{
-		"access_ttl: 5m", "access_ttl: 1h", "refresh_ttl: 1h", "refresh_ttl: 2160h",
+		"access_ttl: 5m", "access_ttl: 1h", "refresh_ttl: 1h",
 		"refresh_ttl: 2160h, max_session_age: 2160h", "max_session_age: 8760h",
 		"invite_ttl: 1m", "invite_ttl: 168h", "totp_issuer: \"My Mirror 2.0_x-y\"", "totp_issuer: a",
 		"totp_issuer: " + strings.Repeat("a", 32), "signing_key_rotation: 24h", "signing_key_rotation: 8760h",
@@ -97,6 +97,7 @@ func TestAuthDefaultsAndValidation(t *testing.T) {
 		"refresh_ttl: 59m":                        "auth.refresh_ttl",
 		"refresh_ttl: 2161h":                      "auth.refresh_ttl",
 		"max_session_age: 719h":                   "auth.max_session_age",
+		"refresh_ttl: 721h":                       "auth.max_session_age", // above the default 720h cap
 		"max_session_age: 8761h":                  "auth.max_session_age",
 		"invite_ttl: 59s":                         "auth.invite_ttl",
 		"invite_ttl: 169h":                        "auth.invite_ttl",

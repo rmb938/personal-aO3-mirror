@@ -113,7 +113,9 @@ type Invoker interface {
 	// Applies the new password and/or TOTP secret, clears the login backoff, revokes every session of the
 	// account and uses up the link. A reset that replaced the TOTP secret returns 10 new recovery codes
 	// (shown only here); a password-only reset keeps the current ones and returns an empty list. A wrong
-	// code or an unusable enrollment token is 401 `invalid-credentials`.
+	// code or an unusable enrollment token is 401 `invalid-credentials`. A password-only reset checks the
+	// account's current TOTP, so a wrong code there counts towards the account's login backoff, and a try
+	// during it is 429 `rate-limited` with `Retry-After`.
 	//
 	// POST /api/v1/auth/reset/confirm
 	ConfirmReset(ctx context.Context, request *ConfirmEnrollmentRequest, options ...RequestOption) (*RecoveryCodes, error)
@@ -886,7 +888,9 @@ func (c *Client) sendChangePassword(ctx context.Context, request *ChangePassword
 // Applies the new password and/or TOTP secret, clears the login backoff, revokes every session of the
 // account and uses up the link. A reset that replaced the TOTP secret returns 10 new recovery codes
 // (shown only here); a password-only reset keeps the current ones and returns an empty list. A wrong
-// code or an unusable enrollment token is 401 `invalid-credentials`.
+// code or an unusable enrollment token is 401 `invalid-credentials`. A password-only reset checks the
+// account's current TOTP, so a wrong code there counts towards the account's login backoff, and a try
+// during it is 429 `rate-limited` with `Retry-After`.
 //
 // POST /api/v1/auth/reset/confirm
 func (c *Client) ConfirmReset(ctx context.Context, request *ConfirmEnrollmentRequest, options ...RequestOption) (*RecoveryCodes, error) {

@@ -1010,7 +1010,9 @@ paths:
         session of the account and uses up the link. A reset that replaced the TOTP secret
         returns 10 new recovery codes (shown only here); a password-only reset keeps the current
         ones and returns an empty list. A wrong code or an unusable enrollment token is 401
-        `invalid-credentials`.
+        `invalid-credentials`. A password-only reset checks the account's current TOTP, so a
+        wrong code there counts towards the account's login backoff, and a try during it is 429
+        `rate-limited` with `Retry-After`.
       x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
       requestBody:
         required: true
