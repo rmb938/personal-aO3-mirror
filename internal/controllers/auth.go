@@ -41,7 +41,7 @@ type Auth struct {
 // AuthOptions configure NewAuth. Zero durations take the defaults.
 type AuthOptions struct {
 	Users   *store.Users
-	Keyring *auth.Keyring // from LoadKeyring
+	Keyring *auth.LiveKeyring // from LoadKeyring
 	Hasher  *auth.Hasher
 	Logger  *slog.Logger
 	Now     func() time.Time
@@ -242,7 +242,7 @@ type SecondFactor struct {
 func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model.User, f SecondFactor, now time.Time) (step int64, ok bool, err error) {
 	switch {
 	case f.Code != "" && f.RecoveryCode == "":
-		secret, err := a.opts.Keyring.DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
+		secret, err := a.opts.Keyring.Load().DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
 		if err != nil {
 			return 0, false, err
 		}
@@ -253,7 +253,7 @@ func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model
 		if !ok {
 			return 0, false, nil
 		}
-		used, err := tx.UseRecoveryCode(ctx, u.ID, a.opts.Keyring.RecoveryCodeMAC(norm), now)
+		used, err := tx.UseRecoveryCode(ctx, u.ID, a.opts.Keyring.Load().RecoveryCodeMAC(norm), now)
 		return 0, used, err
 	}
 	return 0, false, nil
@@ -263,9 +263,10 @@ func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model
 func (a *Auth) newRecoveryCodes(ctx context.Context, tx *store.UsersTx, userID int64) ([]string, error) {
 	codes := auth.NewRecoveryCodes()
 	macs := make([][32]byte, len(codes))
+	ring := a.opts.Keyring.Load()
 	for i, c := range codes {
 		norm, _ := auth.NormalizeRecoveryCode(c)
-		macs[i] = a.opts.Keyring.RecoveryCodeMAC(norm)
+		macs[i] = ring.RecoveryCodeMAC(norm)
 	}
 	return codes, tx.ReplaceRecoveryCodes(ctx, userID, macs)
 }
@@ -352,7 +353,7 @@ func (a *Auth) loadKeys(ctx context.Context) error {
 	var created time.Time
 	var retired []retiredKey
 	for _, row := range rows { // oldest first: the newest active key signs
-		seed, err := a.opts.Keyring.DecryptSigningSeed(row.ID, row.SeedEnc)
+		seed, err := a.opts.Keyring.Load().DecryptSigningSeed(row.ID, row.SeedEnc)
 		if err != nil {
 			return fmt.Errorf("controllers: signing key: %w", err)
 		}
@@ -434,10 +435,9 @@ func (a *Auth) rotateSigningKey(ctx context.Context, ifDue bool) (kid string, ro
 }
 
 // addSigningKey stores k as the new active signing key in tx, its seed encrypted under the
-// active master key inside the same transaction (docs/part3-key-rotation.md "The keyring").
-// It returns the stored row.
+// active master key. It returns the stored row.
 func (a *Auth) addSigningKey(ctx context.Context, tx *store.UsersTx, k auth.SigningKey, now time.Time) (model.SigningKey, error) {
-	row := model.SigningKey{ID: k.ID, SeedEnc: a.opts.Keyring.EncryptSigningSeed(k.ID, k.Seed()), CreatedAt: now}
+	row := model.SigningKey{ID: k.ID, SeedEnc: a.opts.Keyring.Load().EncryptSigningSeed(k.ID, k.Seed()), CreatedAt: now}
 	return row, tx.AddSigningKey(ctx, row)
 }
 

@@ -12,9 +12,10 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
-// LoadKeyring loads the master keys from keys.db into a Keyring, creating the first (active)
-// key when keys.db holds none (docs/part3-key-rotation.md). now is the new key's created_at.
-func LoadKeyring(ctx context.Context, keys *store.Keys, now time.Time, log *slog.Logger) (*auth.Keyring, error) {
+// LoadKeyring loads the master keys from keys.db into a LiveKeyring, creating the first
+// (active) key when keys.db holds none (docs/part3-key-rotation.md). now is the new key's
+// created_at.
+func LoadKeyring(ctx context.Context, keys *store.Keys, now time.Time, log *slog.Logger) (*auth.LiveKeyring, error) {
 	created := int64(0)
 	mks, err := store.WriteKeysValue(ctx, keys, func(ctx context.Context, tx *store.KeysTx) ([]model.MasterKey, error) {
 		mks, err := tx.MasterKeys(ctx)
@@ -32,7 +33,11 @@ func LoadKeyring(ctx context.Context, keys *store.Keys, now time.Time, log *slog
 	if created != 0 {
 		logx.From(ctx, log).Info("auth event", "component", "auth", "event", "master_key_created", "key_id", created)
 	}
-	return keyringFrom(mks)
+	r, err := keyringFrom(mks)
+	if err != nil {
+		return nil, err
+	}
+	return auth.NewLiveKeyring(r)
 }
 
 // keyringFrom builds a Keyring from keys.db's rows: exactly one must be active.

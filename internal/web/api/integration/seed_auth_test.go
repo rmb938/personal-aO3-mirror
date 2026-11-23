@@ -91,7 +91,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 		for i, name := range []string{seedUserName, seedOtherName} {
 			id := int64(i + 1)
 			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: phc,
-				TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.UserTOTP(id), seedTOTPSecret),
+				TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.UserTOTP(id), seedTOTPSecret),
 				CreatedAt:     seedTime.Add(-time.Hour), PasswordChangedAt: seedTime.Add(-time.Hour)}); err != nil {
 				return err
 			}
@@ -99,7 +99,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 		if err := tx.DisableUser(ctx, seedOtherUser, seedTime.Add(-time.Minute)); err != nil {
 			return err
 		}
-		if err := tx.ReplaceRecoveryCodes(ctx, seedUser, [][32]byte{secrets.RecoveryCodeMAC(recovery)}); err != nil {
+		if err := tx.ReplaceRecoveryCodes(ctx, seedUser, [][32]byte{secrets.Load().RecoveryCodeMAC(recovery)}); err != nil {
 			return err
 		}
 		if _, err := tx.CreateSession(ctx, seedUser, tokenSum(tb, auth.RefreshToken, seedRefreshToken),
@@ -120,12 +120,12 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 			return err
 		}
 		if err := tx.PutEnrollment(ctx, model.Enrollment{InviteID: seedInvite, Username: seedNewName, PasswordPHC: "$fixture",
-			TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.EnrollmentTOTP(seedInvite), seedTOTPSecret),
+			TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(seedInvite), seedTOTPSecret),
 			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedSignupEnrollToken)); err != nil {
 			return err
 		}
 		return tx.PutEnrollment(ctx, model.Enrollment{InviteID: seedReset,
-			TOTPSecretEnc: secrets.EncryptTOTPSecret(auth.EnrollmentTOTP(seedReset), seedTOTPSecret),
+			TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(seedReset), seedTOTPSecret),
 			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedResetEnrollToken))
 	}))
 	a, err := controllers.NewAuth(ctx, controllers.AuthOptions{Users: users, Keyring: secrets, Hasher: hasher, Logger: log,

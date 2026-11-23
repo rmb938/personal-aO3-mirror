@@ -25,8 +25,9 @@ func TestLoadKeyring(t *testing.T) {
 
 	keys, err := store.OpenKeys(ctx, dir, store.Options{})
 	require.NoError(t, err)
-	r1, err := LoadKeyring(ctx, keys, t0, log)
+	l1, err := LoadKeyring(ctx, keys, t0, log)
 	require.NoError(t, err)
+	r1 := l1.Load()
 	require.EqualValues(t, 1, r1.ActiveID())
 	require.Equal(t, 1, strings.Count(logs.String(), `"event":"master_key_created","key_id":1`))
 	stored, err := store.ReadKeysValue(ctx, keys, func(ctx context.Context, tx *store.KeysReadTx) ([]model.MasterKey, error) {
@@ -43,8 +44,9 @@ func TestLoadKeyring(t *testing.T) {
 	keys, err = store.OpenKeys(ctx, dir, store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
-	r2, err := LoadKeyring(ctx, keys, t0.Add(time.Hour), log)
+	l2, err := LoadKeyring(ctx, keys, t0.Add(time.Hour), log)
 	require.NoError(t, err)
+	r2 := l2.Load()
 	require.EqualValues(t, 1, r2.ActiveID())
 	got, err := r2.DecryptTOTPSecret(auth.UserTOTP(1), enc)
 	require.NoError(t, err)

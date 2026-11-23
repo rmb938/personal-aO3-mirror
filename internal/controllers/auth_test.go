@@ -369,20 +369,23 @@ func TestAuthSigningSeedsEncrypted(t *testing.T) {
 	r := e.a.ring.Load()
 	seeds := map[string][]byte{r.active.ID: r.active.Seed()}
 
-	other, err := auth.NewKeyring(e.opts.Keyring.ActiveID(), []auth.MasterKey{{ID: e.opts.Keyring.ActiveID(), Key: auth.NewMasterKey()}})
+	ring := e.opts.Keyring.Load()
+	otherRing, err := auth.NewKeyring(ring.ActiveID(), []auth.MasterKey{{ID: ring.ActiveID(), Key: auth.NewMasterKey()}})
+	require.NoError(t, err)
+	other, err := auth.NewLiveKeyring(otherRing)
 	require.NoError(t, err)
 	rows, err := e.users.AutoCommitForTestOnly().SigningKeys(ctx)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	for _, row := range rows {
-		seed, err := e.opts.Keyring.DecryptSigningSeed(row.ID, row.SeedEnc)
+		seed, err := ring.DecryptSigningSeed(row.ID, row.SeedEnc)
 		require.NoError(t, err)
 		require.Len(t, seed, 32)
 		assert.False(t, bytes.Contains(row.SeedEnc, seed), "no seed bytes in the clear")
 		if want, ok := seeds[row.ID]; ok {
 			assert.Equal(t, want, seed)
 		}
-		_, err = other.DecryptSigningSeed(row.ID, row.SeedEnc)
+		_, err = otherRing.DecryptSigningSeed(row.ID, row.SeedEnc)
 		require.ErrorIs(t, err, auth.ErrDecrypt, "another keyring with the same key ID")
 	}
 

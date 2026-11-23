@@ -38,8 +38,9 @@ the master key on a schedule, re-encrypting everything without any user present.
 | Crypto library | XChaCha20-Poly1305 from `golang.org/x/crypto/chacha20poly1305` (already a dependency), not Google Tink: the rotation logic is ours either way, and Tink would add protobuf and a large API to replace a few lines. The ciphertext layout borrows Tink's (version byte, fixed 4-byte key ID). |
 | Cipher | XChaCha20-Poly1305 rather than AES-256-GCM, chosen by the user: its 192-bit random nonces never realistically collide, where GCM's 96-bit ones are limited to 2³² encryptions per key, and it is constant-time without hardware AES. It is not NIST-approved; no doc claims approved encryption or FIPS (Argon2id isn't approved either), and comments must not claim it. |
 | JWT seeds | Encrypted under the master key. |
-| Old keys | Deleted as soon as no row references them, not after a fixed time. |
-| Backups | **Option (a)**: an `ao3mirror backup` command snapshots users.db and keys.db together under the rotation lock. Not (b) (keep retired keys N days), because it leaves old keys in the live keys.db, where they decrypt older users.db copies. |
+| Old keys | Kept 7 days after retirement, then deleted (checked hourly, re-encrypting any row still under the key first). Revised 2026-11-23: this replaced "deleted as soon as no row references them", which needed request/rotation locking (Sealer/Opener, a reader wait) to be race-free. The cost: for 7 days after a rotation, the live keys.db still decrypts older users.db copies. |
+| Backups | **Option (a)**: an `ao3mirror backup` command snapshots users.db and keys.db together under the rotation lock, so the pair is consistent. Retention isn't for backups: a backup is a matched pair either way. |
+| Emergency rotation | Not offered: a rotation never deletes the old key early. A key thought leaked is already used to encrypt everything under it, so early deletion would add little. |
 | TPM | Rejected for now: it needs `tss` group membership or a systemd-creds setup, which breaks zero setup. Hardware-bound keys should be a deliberate user choice, never auto-detected. |
 | Migration | No users exist yet (as in 17e/17f), so format changes need no data migration. |
 
@@ -49,8 +50,8 @@ the master key on a schedule, re-encrypting everything without any user present.
 
 - **Protects:** any copy of users.db without the matching keys.db (a stray backup, a synced
   folder, a copied file) is useless: no token forging, no offline password guessing, no TOTP
-  secrets, no recovery codes. After a rotation, an *older* users.db copy is useless even
-  together with the *current* keys.db.
+  secrets, no recovery codes. Once a retired key is deleted (7 days after its rotation), an
+  *older* users.db copy under it is useless even together with the *current* keys.db.
 - **Doesn't protect:** an attacker with ongoing access as `serve`'s user, who reads both
   databases. Rotation limits how long what they took stays useful, but they still have the
   underlying Argon2id hashes and TOTP secrets, which rotation re-wraps but never changes.
@@ -106,30 +107,18 @@ new one and swaps it atomically, like the JWT `keyRing`.
   | Password hash | `users.password_phc`, `enrollments.password_phc` | `user:<id>` / `enrollment:<invite id>`, plus the PHC prefix (params and salt) |
   | Recovery code | `recovery_codes.code_enc` | `recovery:<user id>` |
   | JWT signing seed | `signing_keys.private_key_enc` | `signing-key:<kid>` |
-- **Encrypt inside the write transaction that stores the value, with the keyring loaded inside
-  that transaction.** Argon2id (slow) stays outside the transaction, as now. Only the cheap
-  encryption step moves inside. users.db write transactions begin with `BEGIN IMMEDIATE`
-  (`_txlock=immediate`), so a writer holds the write lock from the moment it can load the
-  keyring until it commits. That makes rotation's re-encryption pass a barrier (see "Rotation").
-  A keyring loaded *before* the transaction (or kept past it) could write under a key the
-  rotation has already deleted, and that row would never decrypt again.
-- **The rule is enforced, not just reviewed** (stage 3, before stages 4 and 5 add encrypt calls
-  and stage 6 makes the keyring change):
-  - Encryption moves off `Keyring` onto `auth.Sealer`. `Keyring` keeps only the decrypt methods,
-    which are safe with any loaded keyring: a key is deleted only once no row references it.
-  - The swappable keyring is an `auth.LiveKeyring` (an `atomic.Pointer` inside): `Load()` returns
-    a `*Keyring` for decryption, `Store` is rotation's swap, and `Sealer(lock auth.WriteLock)` is
-    the only way to get a `Sealer`. It loads the active keyring at that call.
-  - `auth.WriteLock` is a live users.db write transaction: `*store.UsersTx` implements it
-    (`HoldsWriteLock() bool`, true until its transaction ends; `guarded` marks it done). auth
-    doesn't import store; the interface keeps it a leaf. A read transaction is a
-    `*store.UsersReadTx` and can't produce one, so loading outside a write transaction doesn't
-    compile.
-  - Every `Sealer` encrypt method checks `lock.HoldsWriteLock()` and panics if the transaction
-    has ended (a programming error, like `store.ErrTxMisuse`; the tests run every write path),
-    so a `Sealer` kept past its transaction fails at once instead of writing a straggler.
-  - What remains is deliberate bypass (another type implementing `WriteLock`), which review
-    catches, as with txguard.
+- The swappable keyring is an `auth.LiveKeyring` (an `atomic.Pointer` inside): `Load()` returns
+  the current `*Keyring` and `Store` is rotation's swap. Code loads once per operation and uses
+  that snapshot throughout. The atomic pointer makes a load consistent (never a half-swapped
+  keyring), not current. A stale snapshot is still safe because of the retention below.
+- **Retired keys are kept for `masterKeyRetention` (7 days, a constant) before deletion.** This
+  is what makes rotation race-free, with no locking between requests and rotation. A request
+  holding a snapshot taken before a rotation still holds the retired key, both to decrypt what
+  it read and to encrypt what it writes (the rotation's re-encrypt pass may have missed that
+  write). Deleting a key needs every snapshot without the new key to be long gone, and every
+  row re-encrypted. No request lives for days, and the delete re-checks the rows in the same
+  step (see "Rotation"). A short-lived rule like "encrypt only inside the storing transaction"
+  is not needed.
 - The unknown-user backoff's `NameMAC` keys in-memory state only, so it moves to a random
   per-process key and leaves the keyring. Nothing about it needs to survive a restart or rotation.
 
@@ -138,29 +127,34 @@ new one and swaps it atomically, like the JWT `keyRing`.
 The two databases can't commit atomically together (SQLite only spans `ATTACH`ed databases
 without WAL), so rotation is ordered so that every crash point leaves every row's key present:
 
-1. **keys.db transaction:** retire the active key, insert a new active key.
-2. **Memory:** swap in the new keyring (both keys held). New writes use the new key.
+**Rotate** (admin request or scheduled):
+
+1. **keys.db transaction:** retire the active key (`retired_at` = now), insert a new active key.
+2. **Memory:** swap in the new keyring (both keys held). New loads encrypt under the new key.
 3. **users.db write transaction:** re-encrypt every value whose key ID is not the active one.
-   Pure decrypt/encrypt work in memory, no Argon2id. This is the barrier: its `BEGIN
-   IMMEDIATE` waits for every writer already in a transaction, which includes every writer that
-   could have loaded the old keyring (it is only loaded inside a write transaction, "The
-   keyring"), and every writer after it loads the keyring after step 2. So once step 3 commits,
-   nothing can write under the old key, and no straggler can appear.
-4. **users.db read, then keys.db transaction:** delete each retired key that no row references.
-   Swap in a keyring without it. A row still referencing it is a bug (the rule was broken), not
-   a race to retry: leave the key, log `master_key_straggler` at error, and let the next run
-   re-encrypt and delete it.
+   Pure decrypt/encrypt work in memory, no Argon2id. A request still holding the old snapshot
+   may write a few rows under the old key after this; the delete step catches them.
 
-| Crash after | State | Next start |
+**Delete retired keys** (`serve` checks at startup, then hourly, so the process needn't stay up
+for the whole retention period): for each key retired at least `masterKeyRetention` ago:
+
+4. **users.db write transaction:** re-encrypt every value under that key (normally none). Any
+   count above zero logs `master_key_straggler` at warn: it means a snapshot outlived a request
+   or a crash hit between steps 1 and 3.
+5. **keys.db transaction:** delete the key. Then swap in a keyring without it.
+
+Every step can run again, so no crash needs special recovery:
+
+| Crash after | State | What finishes it |
 |---|---|---|
-| 1 | Two keys; rows use the old one | Finishes 3 and 4 |
-| 3 | Rows use the new key; the old key is stored | Finishes 4 |
-| 4 | Done | Nothing |
+| 1 or 2 | Two keys; rows use the old one | Startup re-runs step 3 (re-encrypt anything not under the active key) |
+| 3 | Rows use the new key; the old key is stored | The delete check, once the key is old enough |
+| 4 | Rows re-encrypted; the key is stored | The next delete check |
+| 5 | Done | Nothing |
 
-`serve` runs "finish rotation" at startup (re-encrypt anything not under the active key, then
-delete unreferenced retired keys), before it listens. It also refuses to start when users.db
+`serve` runs step 3 at startup, before it listens. It also refuses to start when users.db
 references a key ID that keys.db doesn't hold (for example a mismatched restore). Every
-rotation, backup and finish step holds one in-process rotation mutex. Only `serve` writes either
+rotate, delete and backup step holds one in-process rotation mutex. Only `serve` writes either
 database.
 
 ### Backup (stage 7)
@@ -194,27 +188,28 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
   - `loadKeys` / `rotateSigningKey` encrypt inside their transaction and decrypt at load.
   - Tests: a users.db row holds no seed bytes in the clear (the stored blob differs from the
     seed and doesn't decrypt under another keyring), and load round trips.
-- [ ] **3. Encrypt only through a transaction's Sealer.** Before stages 4 and 5, so their new
-  encrypt calls (passwords, recovery codes) are written against it from the start.
-  - `auth.Sealer` (the encrypt methods, moved off `Keyring`), `auth.LiveKeyring` (`Load`,
-    `Sealer(lock)`; `Store` comes with rotation in stage 6) and `auth.WriteLock`, as in "The
-    keyring". `HoldsWriteLock` on `*store.UsersTx`, false once `guarded` ends its transaction.
-  - `AuthOptions.Keyring` becomes the `*auth.LiveKeyring` (`LoadKeyring` returns one). Every
-    encrypt call (TOTP in `auth_enroll.go`, `addSigningKey`) uses `a.keyring.Sealer(tx)` with
-    the transaction that stores the value; decrypt calls use `a.keyring.Load()`.
-  - Out of scope, removed by stages 4 and 5: the password pepper (the hasher keeps reading it
-    from `Load()`) and `RecoveryCodeMAC`. Neither is encryption, and nothing rotates yet.
-  - Tests: encrypting with a `Sealer` after its transaction ends panics; a `Sealer` encrypts
-    under the active key it saw at `Sealer(tx)`; every write path still passes under
-    `go test -race`.
+- [x] **3. The swappable keyring.** Before stages 4 and 5, so their new code uses it from the
+  start.
+  - `auth.LiveKeyring` (`internal/auth/live.go`: `NewLiveKeyring`, `Load`; `Store` comes with
+    rotation in stage 6), as in "The keyring".
+  - `LoadKeyring` returns one and `AuthOptions.Keyring` holds it. Every encrypt and decrypt call
+    goes through `a.opts.Keyring.Load()`, loaded once per operation (`newRecoveryCodes` loads once
+    for all its codes). `NewHasher` takes the `*auth.LiveKeyring` and loads once per hash or
+    verify.
+  - The first draft enforced "encrypt and decrypt only inside a live users.db transaction"
+    (`auth.Sealer`/`Opener`, lock interfaces on the store transactions, a reader wait before
+    deleting a key). The 7-day retention replaced it (2026-11-23): simpler, and the races it
+    closed last milliseconds.
+  - Tests: `NewLiveKeyring` refuses nil and `Load` returns the keyring; every path still
+    passes under `go test -race`.
 - [ ] **4. Password hashes in the encrypted-hash format.**
   - PHC string: `$argon2id$v=19$m=…,t=…,p=…,k=<key id>$<salt>$<base64(nonce|ct)>`, the
     ciphertext being the keyring envelope (as above) of the raw Argon2id output with the AAD above. The HMAC pepper is
     removed (Argon2id hashes the NFC password directly).
-  - `Hasher.Hash` returns the unwrapped hash. The caller wraps it with the transaction's
-    `Sealer` inside the write transaction (stage 3). `Verify` takes the stored string, unwraps
-    it (a key not held or a decrypt failure is a server error, not "wrong password"), then
-    compares in constant time.
+  - The hasher wraps and unwraps itself, loading the keyring once per call: `Hash` takes the
+    AAD and returns the wrapped PHC string. `Verify` unwraps the stored string (a key not held
+    or a decrypt failure is a server error, not "wrong password"), runs Argon2id and compares
+    in constant time. Both run outside any transaction, as now.
     The dummy hash for unknown users does the same unwrap plus Argon2id, so timing matches.
     `NeedsRehash` compares Argon2 parameters only (the key ID is rotation's job, not login's).
   - Enrollments wrap with the enrollment AAD, and confirming re-wraps for the user, as TOTP does.
@@ -225,32 +220,34 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
 - [ ] **5. Recovery codes as an encrypted hash.**
   - users.db migration: `recovery_codes` becomes `(id INTEGER PRIMARY KEY, user_id, code_enc,
     used_at)`. The value is the keyring envelope of the SHA-256 of the normalized code (AAD
-    `recovery:<user id>`), sealed with the transaction's `Sealer`. The `recovery-hmac` subkey and `RecoveryCodeMAC` go away; update the
+    `recovery:<user id>`). The `recovery-hmac` subkey and `RecoveryCodeMAC` go away; update the
     §3.1.2.2 comment (an approved hash of a 120-bit code, then encrypted).
   - Random nonces make lookup by equality impossible, so `UseRecoveryCode` loads the user's
     unused codes (at most the issued count), decrypts each and compares in constant time,
     checking every code, not stopping at the first match.
   - Tests: use-once, wrong code, another user's code, codes under another keyring.
 - [ ] **6. Rotation.**
-  - `LiveKeyring.Store` (the swap). Test: a `Sealer` from a transaction that began before a
-    swap still encrypts under the old key (the barrier, not the sealer, covers that).
+  - `LiveKeyring.Store` (the swap).
   - Config: `auth.master_key_rotation: 720h` (24h..8760h, like `signing_key_rotation`).
-  - Controller: `RotateMasterKey` (admin) and `RotateMasterKeyIfDue` (scheduled), the startup
-    "finish rotation" and key-ID consistency check, all under one mutex, with the four steps
-    above. The store gets the queries for "rows not under key N" per table and "key IDs in use".
-  - `serve` runs the due check with the signing-key check (startup, then hourly).
+    `masterKeyRetention` (7 days) is a constant, not config.
+  - Controller: `RotateMasterKey` (admin) and `RotateMasterKeyIfDue` (scheduled), steps 1–3;
+    `DeleteRetiredMasterKeys` (steps 4–5); the startup re-encrypt and key-ID consistency check.
+    All under one mutex. The store gets the queries for "rows not under key N" and "rows under
+    key N" per table, and "key IDs in use".
+  - `serve` runs the rotation due check and the retired-key delete check with the signing-key
+    check: at startup, then hourly.
   - Route `POST /api/v1/admin/master-keys/rotate` (204) and CLI `ao3mirror auth
     rotate-master-key`. Per Part 2 conventions: route constant, OpenAPI, `make generate`, an
     all-routes leak test sample.
   - Log events: `master_key_rotated` (reason admin/scheduled, rows re-encrypted per table,
     key IDs), `master_key_deleted`, `master_key_straggler`. No key material.
   - Tests (clock-driven, temp stores): due/not due; a crash injected after each step, then a
-    restart that finishes it; the barrier (a writer that loaded the old keyring inside its
-    transaction and is held open across step 2 commits before step 3 starts, and step 3
-    re-encrypts its row, so step 4 deletes the key); a row planted under the retired key
-    after step 3 (the bug case) keeps the key and logs `master_key_straggler`; two triggers at once
-    rotate once; a users.db referencing a missing key refuses to start; every value type
-    decrypts after rotation and the old key is gone from keys.db.
+    restart (or the next hourly check) that finishes it; a retired key is kept until
+    `masterKeyRetention` has passed and deleted at the first check after; a snapshot taken
+    before a rotation still decrypts and encrypts after it; a row written under the retired key
+    after step 3 is re-encrypted by step 4 (logging `master_key_straggler`) before the key goes;
+    two triggers at once rotate once; a users.db referencing a missing key refuses to start;
+    every value type decrypts after rotation and the deleted key is gone from keys.db.
 - [ ] **7. Backup.**
   - Route `POST /api/v1/admin/backup` with a `request` body `{dir}` (absolute, cleaned, bounded
     length), 201 `{dir}` (or 204), a problem for "target exists", and CLI `ao3mirror backup
