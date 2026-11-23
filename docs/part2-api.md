@@ -1597,7 +1597,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     | Password | 8..128 runes after NFKC (NIST SP 800-63B-4's minimum with MFA), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL). Argon2id with RFC 9106 §4's second recommended option (m=64 MiB, t=3, p=4; changed from OWASP's m=19 MiB, t=2, p=1 in 16b), in PHC string format; rehashed on login when the parameters change. |
     | TOTP | Mandatory. Hand-rolled RFC 4226/6238 on `crypto/hmac` (SHA1, 6 digits, 30s, ±1 step, 20-byte secret), tested with the RFC appendix vectors. It returns the matched step and `last_totp_step` blocks replay (pquerna/otp v1.5.0's `totp.ValidateCustom` returns only a bool). |
     | TOTP at rest | AES-256-GCM, AAD = user ID, key derived from `data/api/auth.key` (32 random bytes, 0600, in the 0700 socket dir), never stored in users.db. Losing the file means every user needs a 2FA reset: back it up with users.db. |
-    | Recovery | 10 single-use recovery codes (16 base32 chars, `xxxx-xxxx-xxxx-xxxx`), shown once, stored as HMAC values; an admin can also issue a reset link. |
+    | Recovery | 10 single-use recovery codes (24 base32 chars, `xxxx-xxxx-xxxx-xxxx-xxxx-xxxx`; 16 until 17e), shown once, stored as HMAC values; an admin can also issue a reset link. |
     | Invites | `{api.public_url}/signup#token=…`. The token is in the fragment, so it never reaches Cloudflare or server logs. Single use, TTL 24h by default (max 7d), stored as SHA-256. |
     | Lockout | Per-account exponential backoff after failed password or TOTP attempts (1s doubling, capped at 15m), reset on success; 100 consecutive failures disable the account until an admin enables it. A login challenge allows at most 5 TOTP tries. Unknown usernames get identical behaviour through an in-memory LRU keyed by HMAC(username), so responses and timing never reveal whether an account exists. Per-IP limits on the auth routes on top. |
     | Client IP | Keep chi's `ClientIPFromXFF` from loopback (see "Client IP"). |
@@ -1884,8 +1884,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       - Part 2 (login and refresh): `POST /api/v1/auth/login`, `/login/totp`, `/refresh` on both
         listeners. Bodies `request.Login {username, password}` (a malformed username is a 422:
         no account can have it), `request.LoginTOTP {challenge_token, code | recovery_code}`
-        (exactly one; a recovery code is 16 base32 characters in either case, dashes and spaces
-        ignored, at most 64 bytes, checked against `auth.NormalizeRecoveryCode` by the fuzz
+        (exactly one; a recovery code is 24 base32 characters in either case, dashes and spaces
+        ignored, at most 96 bytes (16 and 64 until 17e), checked against `auth.NormalizeRecoveryCode` by the fuzz
         test) and `request.Refresh {refresh_token}`. Login is 200 `LoginChallenge
         {challenge_token, expires_at}`; the other two are 200 `TokenPair {access_token,
         token_type: "Bearer", expires_in, refresh_token, refresh_expires_at}` (`dto.TokenType`
@@ -2342,7 +2342,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       - Notifications (§4.6: account recovery SHALL notify the subscriber): accepted. The
         mirror holds no contact channel for users. The admin issues every reset link
         personally, so the user hears about it from them.
-  - [ ] **17e. 120-bit recovery codes** (decided with the user in 17d; NIST SP 800-63B-4
+  - [x] **17e. 120-bit recovery codes** (decided with the user in 17d; NIST SP 800-63B-4
     §3.1.2.2). Codes become 24 base32 characters (15 random bytes, 120 bits), shown as six
     groups of four (`xxxx-xxxx-xxxx-xxxx-xxxx-xxxx`). The stored form stays HMAC-SHA256
     under the auth.key-derived key, which 63B-4 allows for look-up secrets of 112 bits or
@@ -2350,6 +2350,20 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     Touches `auth/tokens.go` (`NormalizeRecoveryCode`'s length and input bound), the `dto`
     `RecoveryCode` pattern and the spec (`TestOpenAPIVerbatimPatterns` keeps them equal), the
     login and request bounds, the fuzz seeds and the tests; `make generate`.
+
+    As built:
+    - `auth`: `recoveryCodeBytes` 15, `recoveryCodeChars` 24 (exactly 120 bits, so still no
+      trailing bits to be non-canonical); `NewRecoveryCodes` groups by four in a loop; the
+      typed-input bound stays `4 * recoveryCodeChars`, now 96 bytes. `RecoveryCodeMAC`'s
+      comment cites §3.1.2.2 instead of the old 80-bit reason.
+    - `dto.RecoveryCode` is `[a-z2-7]{4}(?:-[a-z2-7]{4}){5}`, and the spec's `RecoveryCodes`
+      items match it; `request.LoginTOTP` takes 24 characters, at most 96 bytes, and the spec's
+      `recovery_code` pattern is `^[A-Za-z2-7 -]{24,96}$`. Client regenerated.
+    - Tests: `FuzzNormalizeRecoveryCode`'s oracle and seeds (including the 96/97-byte edges),
+      `TestRecoveryCodes`, `TestLoginTOTPValidation` and the runtime and integration fuzz seeds
+      use 24-character codes; the integration fixture code is now 24 characters. The old
+      16-character form is a seed or case that must be refused in the unit, request and
+      login tests.
   - [ ] **17f. Password hashing per NIST SP 800-63B-4 §3.1.1.2** (decided with the user in
     17d; no users yet, so no migration):
     - Normalize with NFC instead of NFKC (`NormalizePassword`, `CheckPassword`'s username

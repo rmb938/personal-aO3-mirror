@@ -155,7 +155,9 @@ func (s *Secrets) DecryptTOTPSecret(c TOTPContext, enc []byte) ([]byte, error) {
 }
 
 // RecoveryCodeMAC is the stored form of a recovery code: HMAC-SHA256 of its normalized form
-// (NormalizeRecoveryCode). A keyed MAC, not a plain hash, because the codes have only 80 bits.
+// (NormalizeRecoveryCode). The codes have 120 bits, so NIST SP 800-63B-4 §3.1.2.2 allows an
+// approved hash rather than a password hashing scheme; it is keyed (with a key outside users.db)
+// so a copy of users.db alone allows no guessing at all.
 func (s *Secrets) RecoveryCodeMAC(normalized string) [32]byte {
 	return mac32(s.recoveryHMAC, normalized)
 }

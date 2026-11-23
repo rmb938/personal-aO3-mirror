@@ -47,29 +47,34 @@ func TokenSum(k TokenKind, token string) ([32]byte, bool) {
 	return sha256.Sum256([]byte(token)), true
 }
 
-// Recovery codes: RecoveryCodeCount per user, each 16 base32 characters (80 bits) shown as
-// four dash-separated groups of four, lower case.
+// Recovery codes: RecoveryCodeCount per user, each 24 base32 characters (120 bits, at least the
+// 112 that NIST SP 800-63B-4 §3.1.2.2 asks of a look-up secret stored as a keyed hash rather
+// than with a password hashing scheme) shown as six dash-separated groups of four, lower case.
 const (
 	RecoveryCodeCount = 10
-	recoveryCodeBytes = 10
-	recoveryCodeChars = 16
+	recoveryCodeBytes = 15
+	recoveryCodeChars = 24
 )
 
 var recoveryB32 = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
-// NewRecoveryCodes returns RecoveryCodeCount new codes in display form (xxxx-xxxx-xxxx-xxxx).
+// NewRecoveryCodes returns RecoveryCodeCount new codes in display form (xxxx-xxxx-xxxx-xxxx-xxxx-xxxx).
 // Store RecoveryCodeMAC of each NormalizeRecoveryCode.
 func NewRecoveryCodes() []string {
 	codes := make([]string, RecoveryCodeCount)
 	for i := range codes {
 		s := recoveryB32.EncodeToString(randomBytes(recoveryCodeBytes))
-		codes[i] = s[0:4] + "-" + s[4:8] + "-" + s[8:12] + "-" + s[12:16]
+		groups := make([]string, 0, recoveryCodeChars/4)
+		for j := 0; j < len(s); j += 4 {
+			groups = append(groups, s[j:j+4])
+		}
+		codes[i] = strings.Join(groups, "-")
 	}
 	return codes
 }
 
-// NormalizeRecoveryCode returns the 16-character form of a typed code: ASCII letters lower-cased,
-// dashes and spaces removed. It is false when the result isn't 16 base32 characters. Only ASCII
+// NormalizeRecoveryCode returns the 24-character form of a typed code: ASCII letters lower-cased,
+// dashes and spaces removed. It is false when the result isn't 24 base32 characters. Only ASCII
 // is folded (strings.ToLower would take the Kelvin sign U+212A as 'k').
 func NormalizeRecoveryCode(code string) (string, bool) {
 	if len(code) > 4*recoveryCodeChars {
@@ -88,7 +93,7 @@ func NormalizeRecoveryCode(code string) (string, bool) {
 	if len(s) != recoveryCodeChars {
 		return "", false
 	}
-	// 16 characters are exactly 80 bits, so there are no trailing bits to be non-canonical, and
+	// 24 characters are exactly 120 bits, so there are no trailing bits to be non-canonical, and
 	// the length check above already counted any CR or LF the decoder would skip.
 	if b, err := recoveryB32.DecodeString(string(s)); err != nil || len(b) != recoveryCodeBytes {
 		return "", false

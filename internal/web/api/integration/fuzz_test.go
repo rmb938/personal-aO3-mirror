@@ -69,7 +69,7 @@ func fuzzAuthBodies() []string {
 		`{"username":"` + seedUserName + `","password":"` + fixturePassword + `"}`,
 		`{"username":"` + seedOtherName + `","password":"` + sentinel + `"}`,
 		`{"challenge_token":"` + seedChallengeToken + `","code":"` + seedTOTPCode + `"}`,
-		`{"challenge_token":"` + seedChallengeToken + `","recovery_code":" FIXT-UREC-OVRY-CODE"}`,
+		`{"challenge_token":"` + seedChallengeToken + `","recovery_code":" FIXT-UREC-OVRY-CODE-SEED-USER"}`,
 		`{"challenge_token":"chl_` + sentinel + `","code":"123456","recovery_code":"` + sentinel + `"}`,
 		`{"refresh_token":"` + seedRefreshToken + `"}`, `{"refresh_token":"rt_` + sentinel + `"}`,
 		`{"current_password":"` + fixturePassword + `","password":"` + sentinel + `new pass","code":"` + seedTOTPCode + `"}`,

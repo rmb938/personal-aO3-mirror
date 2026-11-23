@@ -94,9 +94,10 @@ func TestLoginValidation(t *testing.T) {
 func TestLoginTOTPValidation(t *testing.T) {
 	for _, s := range []LoginTOTP{
 		{ChallengeToken: fixtureChallengeToken, Code: "123456"},
-		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn23"},
-		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "ABCDEFGHIJKLMN67"},
-		{ChallengeToken: fixtureChallengeToken, RecoveryCode: " abcd efgh-ijkl mn23 "},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mnop-qrst-uv23"},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "ABCDEFGHIJKLMNOPQRSTUV67"},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: " abcd efgh-ijkl mnop-qrst uv23 "},
+		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcdefghijklmnopqrstuv23" + strings.Repeat("-", 72)},
 	} {
 		assert.Empty(t, errorsOf(t, &s), "%+v", s)
 	}
@@ -105,14 +106,16 @@ func TestLoginTOTPValidation(t *testing.T) {
 		want map[string]string
 	}{
 		{LoginTOTP{}, map[string]string{"/challenge_token": detailChallenge.Message(), "/code": detailSecondFactor.Message()}},
-		{LoginTOTP{ChallengeToken: fixtureEnrollmentToken, Code: "123456", RecoveryCode: "abcd-efgh-ijkl-mn23"},
+		{LoginTOTP{ChallengeToken: fixtureEnrollmentToken, Code: "123456", RecoveryCode: "abcd-efgh-ijkl-mnop-qrst-uv23"},
 			map[string]string{"/challenge_token": detailChallenge.Message(), "/recovery_code": detailSecondFactor.Message()}},
 		{LoginTOTP{ChallengeToken: fixtureChallengeToken, Code: "12345"}, map[string]string{"/code": detailTOTPCode.Message()}},
-		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn2"},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mnop-qrst-uv2"},
 			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
-		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn01"}, // 0 and 1 aren't base32
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn23"}, // the old 16-character form
 			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
-		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcdefghijklmn23" + strings.Repeat("-", 49)},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mnop-qrst-uv01"}, // 0 and 1 aren't base32
+			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcdefghijklmnopqrstuv23" + strings.Repeat("-", 73)},
 			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
 	} {
 		assert.Equal(t, c.want, errorsOf(t, &c.s), "%+v", c.s)
