@@ -107,7 +107,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 		if err := tx.DisableUser(ctx, seedOtherUser, seedTime.Add(-time.Minute)); err != nil {
 			return err
 		}
-		if err := tx.ReplaceRecoveryCodes(ctx, seedUser, [][32]byte{secrets.Load().RecoveryCodeMAC(recovery)}); err != nil {
+		if err := tx.ReplaceRecoveryCodes(ctx, seedUser, [][]byte{secrets.Load().EncryptRecoveryCode(seedUser, recovery)}); err != nil {
 			return err
 		}
 		if _, err := tx.CreateSession(ctx, seedUser, tokenSum(tb, auth.RefreshToken, seedRefreshToken),

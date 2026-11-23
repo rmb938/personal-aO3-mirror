@@ -3,8 +3,8 @@ package auth
 import (
 	"crypto/cipher"
 	"crypto/hkdf"
-	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -56,10 +56,10 @@ type Keyring struct {
 
 // keySet is one master key's subkeys.
 type keySet struct {
-	totp         cipher.AEAD // XChaCha20-Poly1305
-	signing      cipher.AEAD // XChaCha20-Poly1305, for the JWT signing seeds
-	password     cipher.AEAD // XChaCha20-Poly1305, over Argon2id outputs; the PHC "k" names its key
-	recoveryHMAC []byte
+	totp     cipher.AEAD // XChaCha20-Poly1305
+	signing  cipher.AEAD // XChaCha20-Poly1305, for the JWT signing seeds
+	password cipher.AEAD // XChaCha20-Poly1305, over Argon2id outputs; the PHC "k" names its key
+	recovery cipher.AEAD // XChaCha20-Poly1305, over recovery code digests
 }
 
 // NewKeyring returns a Keyring over keys, encrypting with the key whose ID is active. IDs must
@@ -100,7 +100,7 @@ func newKeySet(master []byte) (*keySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	rec, err := derive("ao3mirror recovery-hmac")
+	recKey, err := derive("ao3mirror recovery-enc")
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,11 @@ func newKeySet(master []byte) (*keySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &keySet{totp: totp, signing: signing, password: password, recoveryHMAC: rec}, nil
+	recovery, err := chacha20poly1305.NewX(recKey)
+	if err != nil {
+		return nil, err
+	}
+	return &keySet{totp: totp, signing: signing, password: password, recovery: recovery}, nil
 }
 
 // ActiveID is the ID of the master key new values are encrypted under.
@@ -259,16 +263,42 @@ func (r *Keyring) DecryptSigningSeed(kid string, enc []byte) ([]byte, error) {
 	return r.open(signingAEAD, signingAAD(kid), enc)
 }
 
-// RecoveryCodeMAC is the stored form of a recovery code: HMAC-SHA256 of its normalized form
-// (NormalizeRecoveryCode) under the active master key. The codes have 120 bits, so NIST SP
-// 800-63B-4 §3.1.2.2 allows an approved hash rather than a password hashing scheme; it is keyed
-// (with a key outside users.db) so a copy of users.db alone allows no guessing at all.
-func (r *Keyring) RecoveryCodeMAC(normalized string) [32]byte {
-	return mac32(r.activeSet().recoveryHMAC, normalized)
+func recoveryAEAD(ks *keySet) cipher.AEAD { return ks.recovery }
+
+func recoveryAAD(userID int64) string { return "recovery:" + strconv.FormatInt(userID, 10) }
+
+// EncryptRecoveryCode is the stored form of a user's recovery code: the SHA-256 of its
+// normalized form (NormalizeRecoveryCode), encrypted with XChaCha20-Poly1305 under the active
+// master key and bound to the user. NIST SP 800-63B-4 §3.1.2.2 asks that look-up secrets be
+// stored hashed with an approved hash function, and only those under 112 bits with a salted
+// password hashing scheme; the codes have 120 bits. The hash is unkeyed so that rotation can
+// re-encrypt it after the old master key is gone; the encryption, under a key outside
+// users.db, is what makes a copy of users.db alone useless for guessing.
+func (r *Keyring) EncryptRecoveryCode(userID int64, normalized string) []byte {
+	d := sha256.Sum256([]byte(normalized))
+	return r.seal(recoveryAEAD, recoveryAAD(userID), d[:])
 }
 
-func mac32(key []byte, msg string) [32]byte {
-	m := hmac.New(sha256.New, key)
-	m.Write([]byte(msg))
-	return [32]byte(m.Sum(nil))
+// MatchRecoveryCode returns the index in encs (the user's stored codes, from
+// EncryptRecoveryCode) of the code whose normalized form is normalized, or -1. Random nonces
+// rule out lookup by equality, so it decrypts and compares every entry in constant time,
+// without stopping at a match. An entry that doesn't open is an error (ErrKeyNotHeld or
+// ErrDecrypt), not a mismatch: the stored codes are corrupt or under a key not held.
+func (r *Keyring) MatchRecoveryCode(userID int64, normalized string, encs [][]byte) (int, error) {
+	want := sha256.Sum256([]byte(normalized))
+	aad := recoveryAAD(userID)
+	match := -1
+	var errs error
+	for i, enc := range encs {
+		got, err := r.open(recoveryAEAD, aad, enc)
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("recovery code %d: %w", i, err))
+			continue
+		}
+		match = subtle.ConstantTimeSelect(subtle.ConstantTimeCompare(got, want[:]), i, match)
+	}
+	if errs != nil {
+		return -1, errs
+	}
+	return match, nil
 }

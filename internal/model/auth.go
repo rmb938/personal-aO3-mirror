@@ -20,6 +20,12 @@ type User struct {
 	NextAttemptAt     time.Time // backoff: no attempt is checked before this
 }
 
+// RecoveryCode is a stored recovery code.
+type RecoveryCode struct {
+	ID      int64
+	CodeEnc []byte // the code's digest, sealed for the user (auth.Keyring.EncryptRecoveryCode)
+}
+
 // MasterKey is a master key in keys.db (docs/part3-key-rotation.md): every secret in users.db
 // is encrypted under one and records its ID.
 type MasterKey struct {

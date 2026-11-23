@@ -1597,7 +1597,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     | Password | 8..128 runes after NFC (NIST SP 800-63B-4's minimum with MFA; NFKC until 17f), no composition rules, not equal to the username, not in an embedded common-password list (NIST SHALL; both compared after NFKC, ignoring case). Argon2id with RFC 9106 §4's second recommended option (m=64 MiB, t=3, p=4; changed from OWASP's m=19 MiB, t=2, p=1 in 16b), in PHC string format; rehashed on login when the parameters change. The keyed step was an HMAC-SHA256 pepper before Argon2id (17f); since Part 3 stage 4 it is XChaCha20-Poly1305 over the Argon2id output under a keys.db master key (`k=<key id>`, bound to the row), so rotation re-wraps it without the password (`docs/part3-key-rotation.md`). |
     | TOTP | Mandatory. Hand-rolled RFC 4226/6238 on `crypto/hmac` (SHA1, 6 digits, 30s, ±1 step, 20-byte secret), tested with the RFC appendix vectors. It returns the matched step and `last_totp_step` blocks replay (pquerna/otp v1.5.0's `totp.ValidateCustom` returns only a bool). |
     | TOTP at rest | AES-256-GCM, AAD = user ID, key derived from `data/api/auth.key` (32 random bytes, 0600, in the 0700 socket dir), never stored in users.db. Losing the file loses every TOTP secret and, since 17f, every password (the pepper), so every user needs a reset link: back it up with users.db. Part 3 stage 1 replaced auth.key with `data/api/keys.db` and AES-GCM with XChaCha20-Poly1305 (`docs/part3-key-rotation.md`). |
-    | Recovery | 10 single-use recovery codes (24 base32 chars, `xxxx-xxxx-xxxx-xxxx-xxxx-xxxx`; 16 until 17e), shown once, stored as HMAC values; an admin can also issue a reset link. |
+    | Recovery | 10 single-use recovery codes (24 base32 chars, `xxxx-xxxx-xxxx-xxxx-xxxx-xxxx`; 16 until 17e), shown once, stored as HMAC values (since Part 3 stage 5: the SHA-256 of each code, encrypted with XChaCha20-Poly1305 under a keys.db master key and bound to the user, so rotation re-encrypts them without the codes; `docs/part3-key-rotation.md`); an admin can also issue a reset link. |
     | Invites | `{api.public_url}/signup#token=…`. The token is in the fragment, so it never reaches Cloudflare or server logs. Single use, TTL 24h by default (max 7d), stored as SHA-256. |
     | Lockout | Per-account exponential backoff after failed password or TOTP attempts (1s doubling, capped at 15m), reset on success; 100 consecutive failures disable the account until an admin enables it. A login challenge allows at most 5 TOTP tries. Unknown usernames get identical behaviour through an in-memory LRU keyed by HMAC(username), so responses and timing never reveal whether an account exists. Per-IP limits on the auth routes on top. |
     | Client IP | Keep chi's `ClientIPFromXFF` from loopback (see "Client IP"). |
@@ -1637,7 +1637,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     - `users`: id, username (UNIQUE, lowercase), password_phc, totp_secret_enc,
       last_totp_step, created_at, last_login_at, password_changed_at, disabled_at,
       failed_attempts, next_attempt_at.
-    - `recovery_codes`: user_id, code_hmac, used_at.
+    - `recovery_codes`: user_id, code_hmac, used_at (Part 3 stage 5: id, user_id, code_enc,
+      used_at).
     - `invites`: id, token_sha256 (UNIQUE), kind (`signup`|`reset`), target_user_id,
       reset_scope (`password`|`totp`|`both`), created_at, expires_at, used_at, used_by,
       revoked_at.

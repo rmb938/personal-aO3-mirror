@@ -253,22 +253,41 @@ func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model
 		if !ok {
 			return 0, false, nil
 		}
-		used, err := tx.UseRecoveryCode(ctx, u.ID, a.opts.Keyring.Load().RecoveryCodeMAC(norm), now)
+		used, err := a.useRecoveryCode(ctx, tx, u.ID, norm, now)
 		return 0, used, err
 	}
 	return 0, false, nil
 }
 
+// useRecoveryCode marks the user's unused recovery code whose normalized form is norm used,
+// reporting whether there was one. The stored codes are encrypted with random nonces, so it
+// checks all of them (at most RecoveryCodeCount).
+func (a *Auth) useRecoveryCode(ctx context.Context, tx *store.UsersTx, userID int64, norm string, now time.Time) (bool, error) {
+	codes, err := tx.UnusedRecoveryCodes(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	encs := make([][]byte, len(codes))
+	for i, c := range codes {
+		encs[i] = c.CodeEnc
+	}
+	i, err := a.opts.Keyring.Load().MatchRecoveryCode(userID, norm, encs)
+	if err != nil || i < 0 {
+		return false, err
+	}
+	return tx.UseRecoveryCode(ctx, userID, codes[i].ID, now)
+}
+
 // newRecoveryCodes makes a fresh set of codes for a user, replacing the old ones.
 func (a *Auth) newRecoveryCodes(ctx context.Context, tx *store.UsersTx, userID int64) ([]string, error) {
 	codes := auth.NewRecoveryCodes()
-	macs := make([][32]byte, len(codes))
+	encs := make([][]byte, len(codes))
 	ring := a.opts.Keyring.Load()
 	for i, c := range codes {
 		norm, _ := auth.NormalizeRecoveryCode(c)
-		macs[i] = ring.RecoveryCodeMAC(norm)
+		encs[i] = ring.EncryptRecoveryCode(userID, norm)
 	}
-	return codes, tx.ReplaceRecoveryCodes(ctx, userID, macs)
+	return codes, tx.ReplaceRecoveryCodes(ctx, userID, encs)
 }
 
 // ---- signing keys ----
