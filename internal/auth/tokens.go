@@ -48,8 +48,8 @@ func TokenSum(k TokenKind, token string) ([32]byte, bool) {
 }
 
 // Recovery codes: RecoveryCodeCount per user, each 24 base32 characters (120 bits, at least the
-// 112 that NIST SP 800-63B-4 §3.1.2.2 asks of a look-up secret stored as a keyed hash rather
-// than with a password hashing scheme) shown as six dash-separated groups of four, lower case.
+// 112 below which NIST SP 800-63B-4 §3.1.2.2 asks for a salted password hashing scheme rather
+// than an approved hash) shown as six dash-separated groups of four, lower case.
 const (
 	RecoveryCodeCount = 10
 	recoveryCodeBytes = 15
@@ -59,7 +59,7 @@ const (
 var recoveryB32 = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
 // NewRecoveryCodes returns RecoveryCodeCount new codes in display form (xxxx-xxxx-xxxx-xxxx-xxxx-xxxx).
-// Store RecoveryCodeMAC of each NormalizeRecoveryCode.
+// Store Keyring.EncryptRecoveryCode of each NormalizeRecoveryCode.
 func NewRecoveryCodes() []string {
 	codes := make([]string, RecoveryCodeCount)
 	for i := range codes {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/binary"
 	"testing"
 
@@ -138,23 +139,59 @@ func TestSigningSeedEncryption(t *testing.T) {
 	require.ErrorIs(t, err, ErrDecrypt)
 }
 
-func TestRecoveryCodeMAC(t *testing.T) {
-	key := NewMasterKey()
-	r1, err := NewKeyring(1, []MasterKey{{ID: 1, Key: key}})
-	require.NoError(t, err)
-	r2, err := NewKeyring(1, []MasterKey{{ID: 1, Key: key}})
-	require.NoError(t, err)
-	require.Equal(t, r1.RecoveryCodeMAC("abcd"), r2.RecoveryCodeMAC("abcd"), "same key, same MAC")
-	require.NotEqual(t, r1.RecoveryCodeMAC("abcd"), r1.RecoveryCodeMAC("abce"))
-	require.NotEqual(t, r1.RecoveryCodeMAC("abcd"), newTestKeyring(t).RecoveryCodeMAC("abcd"))
+func TestRecoveryCodeMatch(t *testing.T) {
+	r := newTestKeyring(t)
+	encs := [][]byte{r.EncryptRecoveryCode(1, "fixturecodeaaaa"), r.EncryptRecoveryCode(1, "fixturecodebbbb"),
+		r.EncryptRecoveryCode(1, "fixturecodecccc")}
+	require.NotEqual(t, encs[0], r.EncryptRecoveryCode(1, "fixturecodeaaaa"), "random nonces")
+	for _, enc := range encs {
+		require.NotContains(t, string(enc), "fixturecode", "no code in the clear")
+	}
 
+	for want, code := range []string{"fixturecodeaaaa", "fixturecodebbbb", "fixturecodecccc"} {
+		i, err := r.MatchRecoveryCode(1, code, encs)
+		require.NoError(t, err)
+		require.Equal(t, want, i)
+	}
+	i, err := r.MatchRecoveryCode(1, "fixturecodedddd", encs)
+	require.NoError(t, err)
+	require.Equal(t, -1, i, "wrong code")
+	i, err = r.MatchRecoveryCode(1, "fixturecodeaaaa", nil)
+	require.NoError(t, err)
+	require.Equal(t, -1, i, "no codes")
+
+	// Bound to the user: another user's AAD doesn't open them.
+	_, err = r.MatchRecoveryCode(2, "fixturecodeaaaa", encs)
+	require.ErrorIs(t, err, ErrDecrypt)
+	// Under another keyring: the same key ID, another key.
+	_, err = newTestKeyring(t).MatchRecoveryCode(1, "fixturecodeaaaa", encs)
+	require.ErrorIs(t, err, ErrDecrypt)
+	// A key the keyring doesn't hold.
+	other, err := NewKeyring(2, []MasterKey{{ID: 2, Key: NewMasterKey()}})
+	require.NoError(t, err)
+	_, err = other.MatchRecoveryCode(1, "fixturecodeaaaa", encs)
+	require.ErrorIs(t, err, ErrKeyNotHeld)
+	// One bad entry fails the whole match, even when another entry matches.
+	_, err = r.MatchRecoveryCode(1, "fixturecodeaaaa", append(encs[:1:1], []byte("corrupt")))
+	require.ErrorIs(t, err, ErrDecrypt)
+}
+
+// The stored value is the sealed SHA-256 of the code, so rotation can re-encrypt it without the
+// code or the old key's subkeys.
+func TestRecoveryCodeIsSealedDigest(t *testing.T) {
+	r := newTestKeyring(t)
+	got, err := r.open(recoveryAEAD, recoveryAAD(7), r.EncryptRecoveryCode(7, "fixturecodeaaaa"))
+	require.NoError(t, err)
+	want := sha256.Sum256([]byte("fixturecodeaaaa"))
+	require.Equal(t, want[:], got)
 }
 
 // Each use has its own HKDF subkey: a value sealed for one use doesn't open as another, even
 // with the same additional data.
 func TestKeyringSubkeysDistinct(t *testing.T) {
 	r := newTestKeyring(t)
-	uses := map[string]func(*keySet) cipher.AEAD{"totp": totpAEAD, "signing": signingAEAD, "password": passwordAEAD}
+	uses := map[string]func(*keySet) cipher.AEAD{"totp": totpAEAD, "signing": signingAEAD, "password": passwordAEAD,
+		"recovery": recoveryAEAD}
 	for name, seal := range uses {
 		enc := r.seal(seal, "user:1", []byte("fixture plaintext"))
 		for other, open := range uses {

@@ -132,25 +132,43 @@ func (tx *UsersTx) DeleteUser(ctx context.Context, id int64) error {
 	return execOne(ctx, tx.q, ErrNoUser, `DELETE FROM users WHERE id = ?`, id)
 }
 
-// ReplaceRecoveryCodes replaces every recovery code of an account with macs (unused).
-func (tx *UsersTx) ReplaceRecoveryCodes(ctx context.Context, userID int64, macs [][32]byte) error {
+// ReplaceRecoveryCodes replaces every recovery code of an account with encs (sealed, unused).
+func (tx *UsersTx) ReplaceRecoveryCodes(ctx context.Context, userID int64, encs [][]byte) error {
 	if _, err := tx.q.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, userID); err != nil {
 		return err
 	}
-	for _, m := range macs {
-		if _, err := tx.q.ExecContext(ctx, `INSERT INTO recovery_codes (user_id, code_hmac) VALUES (?,?)`,
-			userID, m[:]); err != nil {
+	for _, enc := range encs {
+		if _, err := tx.q.ExecContext(ctx, `INSERT INTO recovery_codes (user_id, code_enc) VALUES (?,?)`,
+			userID, enc); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// UseRecoveryCode marks an unused recovery code of an account used. It reports whether there
-// was one.
-func (tx *UsersTx) UseRecoveryCode(ctx context.Context, userID int64, mac [32]byte, at time.Time) (bool, error) {
+// UnusedRecoveryCodes returns an account's unused recovery codes, by ID.
+func (tx *UsersReadTx) UnusedRecoveryCodes(ctx context.Context, userID int64) (out []model.RecoveryCode, err error) {
+	rows, err := tx.q.QueryContext(ctx, `SELECT id, code_enc FROM recovery_codes
+		WHERE user_id = ? AND used_at = 0 ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var c model.RecoveryCode
+		if err := rows.Scan(&c.ID, &c.CodeEnc); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UseRecoveryCode marks the unused recovery code id of an account used. It reports whether
+// there was one.
+func (tx *UsersTx) UseRecoveryCode(ctx context.Context, userID, id int64, at time.Time) (bool, error) {
 	res, err := tx.q.ExecContext(ctx, `UPDATE recovery_codes SET used_at = ?
-		WHERE user_id = ? AND code_hmac = ? AND used_at = 0`, zeroUnix(at), userID, mac[:])
+		WHERE id = ? AND user_id = ? AND used_at = 0`, zeroUnix(at), id, userID)
 	if err != nil {
 		return false, err
 	}

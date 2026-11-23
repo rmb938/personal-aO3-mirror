@@ -312,6 +312,71 @@ func TestAuthRecoveryCodeLogin(t *testing.T) {
 	require.NoError(t, err)
 	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: u.codes[0]})
 	require.ErrorIs(t, err, ErrInvalidCredentials, "single use")
+
+	// A well-formed code that was never issued, and another user's code.
+	other := e.signup(t, "fixture_other")
+	for name, code := range map[string]string{"wrong": auth.NewRecoveryCodes()[0], "another user's": other.codes[0]} {
+		e.advance(backoffMax)
+		ch, err = e.a.Login(ctx, u.name, testPassword)
+		require.NoError(t, err)
+		_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: code})
+		require.ErrorIs(t, err, ErrInvalidCredentials, name)
+	}
+	acct, err = e.a.Account(ctx, other.id)
+	require.NoError(t, err)
+	assert.Equal(t, auth.RecoveryCodeCount, acct.RecoveryCodesLeft, "another user's code stays unused")
+
+	// The last code still works after the failures: every stored code is checked, not only the first.
+	e.advance(backoffMax)
+	ch, err = e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: u.codes[auth.RecoveryCodeCount-1]})
+	require.NoError(t, err)
+}
+
+// Codes sealed under another keyring (a users.db paired with the wrong keys.db) are a server
+// error, never a login and never "wrong code".
+func TestAuthRecoveryCodesUnderAnotherKeyring(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	ring := e.opts.Keyring.Load()
+	otherRing, err := auth.NewKeyring(ring.ActiveID(), []auth.MasterKey{{ID: ring.ActiveID(), Key: auth.NewMasterKey()}})
+	require.NoError(t, err)
+	norm, ok := auth.NormalizeRecoveryCode(u.codes[0])
+	require.True(t, ok)
+	require.NoError(t, e.users.AutoCommitForTestOnly().ReplaceRecoveryCodes(ctx, u.id,
+		[][]byte{otherRing.EncryptRecoveryCode(u.id, norm)}))
+
+	ch, err := e.a.Login(ctx, u.name, testPassword)
+	require.NoError(t, err)
+	_, err = e.a.LoginSecondFactor(ctx, ch.Token, SecondFactor{RecoveryCode: u.codes[0]})
+	require.ErrorIs(t, err, auth.ErrDecrypt)
+}
+
+// The stored codes are sealed digests: no code appears in users.db, and each opens only for its user.
+func TestAuthRecoveryCodesStoredSealed(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := context.Background()
+	u := e.signup(t, "fixture_user")
+	rows, err := e.users.AutoCommitForTestOnly().UnusedRecoveryCodes(ctx, u.id)
+	require.NoError(t, err)
+	require.Len(t, rows, auth.RecoveryCodeCount)
+	encs := make([][]byte, len(rows))
+	for i, row := range rows {
+		encs[i] = row.CodeEnc
+		for _, c := range u.codes {
+			norm, _ := auth.NormalizeRecoveryCode(c)
+			assert.False(t, bytes.Contains(row.CodeEnc, []byte(norm)), "no code in the clear")
+		}
+	}
+	ring := e.opts.Keyring.Load()
+	norm, _ := auth.NormalizeRecoveryCode(u.codes[3])
+	i, err := ring.MatchRecoveryCode(u.id, norm, encs)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, i, 0)
+	_, err = ring.MatchRecoveryCode(u.id+1, norm, encs)
+	require.ErrorIs(t, err, auth.ErrDecrypt, "bound to the user")
 }
 
 func TestAuthKeyRotation(t *testing.T) {

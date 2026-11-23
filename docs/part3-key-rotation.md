@@ -224,7 +224,7 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     (or decodes in Go) rather than `substr`.
   - Tests: `TestHasherPepper` becomes the wrap tests (another keyring doesn't verify, a copied
     row fails under another user's AAD, an unknown key ID), timing tests kept, `FuzzPHC` updated.
-- [ ] **5. Recovery codes as an encrypted hash.**
+- [x] **5. Recovery codes as an encrypted hash.**
   - users.db migration: `recovery_codes` becomes `(id INTEGER PRIMARY KEY, user_id, code_enc,
     used_at)`. The value is the keyring envelope of the SHA-256 of the normalized code (AAD
     `recovery:<user id>`). The `recovery-hmac` subkey and `RecoveryCodeMAC` go away; update the
@@ -232,6 +232,14 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
   - Random nonces make lookup by equality impossible, so `UseRecoveryCode` loads the user's
     unused codes (at most the issued count), decrypts each and compares in constant time,
     checking every code, not stopping at the first match.
+  - As built: migration `0003_recovery_codes_enc.sql` (index on `(user_id, used_at)`).
+    `Keyring.EncryptRecoveryCode(userID, normalized)` and `MatchRecoveryCode(userID,
+    normalized, encs)` (index or -1; any entry that doesn't open fails the whole match as
+    `ErrKeyNotHeld`/`ErrDecrypt`, a server error, never "wrong code"). The store has
+    `UnusedRecoveryCodes` and `UseRecoveryCode(userID, id, at)`, both inside the second-factor
+    transaction. 63B-4 §3.1.2.2 as re-checked: all look-up secrets SHALL be stored hashed with
+    an approved hash function; only those under 112 bits need a salted password hashing scheme.
+    Stage 6's re-encrypt needs a decrypt or re-wrap method for these rows.
   - Tests: use-once, wrong code, another user's code, codes under another keyring.
 - [ ] **6. Rotation.**
   - `LiveKeyring.Store` (the swap).
