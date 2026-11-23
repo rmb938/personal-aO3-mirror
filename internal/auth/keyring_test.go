@@ -116,6 +116,27 @@ func TestKeyringKeyIDs(t *testing.T) {
 	require.ErrorIs(t, err, ErrKeyNotHeld)
 }
 
+func TestSigningSeedEncryption(t *testing.T) {
+	r := newTestKeyring(t)
+	k := NewSigningKey()
+	seed := k.Seed()
+
+	enc := r.EncryptSigningSeed(k.ID, seed)
+	require.Len(t, enc, envelopeMin+len(seed))
+	require.NotContains(t, string(enc), string(seed))
+	got, err := r.DecryptSigningSeed(k.ID, enc)
+	require.NoError(t, err)
+	require.Equal(t, seed, got)
+
+	// Bound to its kid, and under its own subkey: a TOTP secret's context doesn't open it.
+	_, err = r.DecryptSigningSeed(k.ID+"x", enc)
+	require.ErrorIs(t, err, ErrDecrypt)
+	_, err = r.DecryptTOTPSecret(TOTPContext{signingAAD(k.ID)}, enc)
+	require.ErrorIs(t, err, ErrDecrypt)
+	_, err = newTestKeyring(t).DecryptSigningSeed(k.ID, enc)
+	require.ErrorIs(t, err, ErrDecrypt)
+}
+
 func TestRecoveryCodeMAC(t *testing.T) {
 	key := NewMasterKey()
 	r1, err := NewKeyring(1, []MasterKey{{ID: 1, Key: key}})

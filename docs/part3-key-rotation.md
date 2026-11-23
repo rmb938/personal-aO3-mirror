@@ -106,26 +106,50 @@ new one and swaps it atomically, like the JWT `keyRing`.
   | Password hash | `users.password_phc`, `enrollments.password_phc` | `user:<id>` / `enrollment:<invite id>`, plus the PHC prefix (params and salt) |
   | Recovery code | `recovery_codes.code_enc` | `recovery:<user id>` |
   | JWT signing seed | `signing_keys.private_key_enc` | `signing-key:<kid>` |
-- **Encrypt inside the write transaction that stores the value**, using the keyring loaded at
-  that moment. Argon2id (slow) stays outside the transaction, as now. Only the cheap encryption
-  step moves inside. That keeps a value encrypted under a key being retired from landing after the
-  re-encryption pass, apart from the straggler case the rotation handles (stage 5).
+- **Encrypt inside the write transaction that stores the value, with the keyring loaded inside
+  that transaction.** Argon2id (slow) stays outside the transaction, as now. Only the cheap
+  encryption step moves inside. users.db write transactions begin with `BEGIN IMMEDIATE`
+  (`_txlock=immediate`), so a writer holds the write lock from the moment it can load the
+  keyring until it commits. That makes rotation's re-encryption pass a barrier (see "Rotation").
+  A keyring loaded *before* the transaction (or kept past it) could write under a key the
+  rotation has already deleted, and that row would never decrypt again.
+- **The rule is enforced, not just reviewed** (stage 3, before stages 4 and 5 add encrypt calls
+  and stage 6 makes the keyring change):
+  - Encryption moves off `Keyring` onto `auth.Sealer`. `Keyring` keeps only the decrypt methods,
+    which are safe with any loaded keyring: a key is deleted only once no row references it.
+  - The swappable keyring is an `auth.LiveKeyring` (an `atomic.Pointer` inside): `Load()` returns
+    a `*Keyring` for decryption, `Store` is rotation's swap, and `Sealer(lock auth.WriteLock)` is
+    the only way to get a `Sealer`. It loads the active keyring at that call.
+  - `auth.WriteLock` is a live users.db write transaction: `*store.UsersTx` implements it
+    (`HoldsWriteLock() bool`, true until its transaction ends; `guarded` marks it done). auth
+    doesn't import store; the interface keeps it a leaf. A read transaction is a
+    `*store.UsersReadTx` and can't produce one, so loading outside a write transaction doesn't
+    compile.
+  - Every `Sealer` encrypt method checks `lock.HoldsWriteLock()` and panics if the transaction
+    has ended (a programming error, like `store.ErrTxMisuse`; the tests run every write path),
+    so a `Sealer` kept past its transaction fails at once instead of writing a straggler.
+  - What remains is deliberate bypass (another type implementing `WriteLock`), which review
+    catches, as with txguard.
 - The unknown-user backoff's `NameMAC` keys in-memory state only, so it moves to a random
   per-process key and leaves the keyring. Nothing about it needs to survive a restart or rotation.
 
-### Rotation (stage 5)
+### Rotation (stage 6)
 
 The two databases can't commit atomically together (SQLite only spans `ATTACH`ed databases
 without WAL), so rotation is ordered so that every crash point leaves every row's key present:
 
 1. **keys.db transaction:** retire the active key, insert a new active key.
 2. **Memory:** swap in the new keyring (both keys held). New writes use the new key.
-3. **users.db transaction:** re-encrypt every value whose key ID is not the active one. Pure
-   decrypt/encrypt work in memory, no Argon2id.
+3. **users.db write transaction:** re-encrypt every value whose key ID is not the active one.
+   Pure decrypt/encrypt work in memory, no Argon2id. This is the barrier: its `BEGIN
+   IMMEDIATE` waits for every writer already in a transaction, which includes every writer that
+   could have loaded the old keyring (it is only loaded inside a write transaction, "The
+   keyring"), and every writer after it loads the keyring after step 2. So once step 3 commits,
+   nothing can write under the old key, and no straggler can appear.
 4. **users.db read, then keys.db transaction:** delete each retired key that no row references.
-   Swap in a keyring without it. If a straggler still references it (a write that read the old
-   keyring before step 2), repeat step 3 once. If one still remains, leave the key and log; the
-   next run deletes it.
+   Swap in a keyring without it. A row still referencing it is a bug (the rule was broken), not
+   a race to retry: leave the key, log `master_key_straggler` at error, and let the next run
+   re-encrypt and delete it.
 
 | Crash after | State | Next start |
 |---|---|---|
@@ -139,7 +163,7 @@ references a key ID that keys.db doesn't hold (for example a mismatched restore)
 rotation, backup and finish step holds one in-process rotation mutex. Only `serve` writes either
 database.
 
-### Backup (stage 6)
+### Backup (stage 7)
 
 `ao3mirror backup <dir>` (an admin socket client) asks `serve` to snapshot both databases while
 holding the rotation mutex. `serve` creates `<dir>` (0700; it must not exist), pre-creates
@@ -156,7 +180,7 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
   - `auth.Keyring` replaces `Secrets`, loaded from keys.db (one key, the first created on first
     start), with TOTP secrets moved to the keyring envelope (version 2: XChaCha20-Poly1305 with
     the key ID; AES-GCM is gone) and the PHC `k=` meaning the
-    master key ID (the pepper-before-Argon2id design stays until stage 3).
+    master key ID (the pepper-before-Argon2id design stays until stage 4).
   - `NameMAC` moves to a random per-process key (`nameBackoff.key` in the controller).
   - `serve`'s `openAuth` opens keys.db, and auth.key is no longer read (no import or warning:
     no users yet; the user deletes the old file).
@@ -164,19 +188,33 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     users.db migration comment, and `ao3mirror.example.yaml` if it mentions auth.key.
   - Tests: keys.db store tests (create, permissions, `secure_delete` and journal mode applied),
     keyring encrypt/decrypt round trips, a wrong key ID, a tampered key ID byte, wrong AAD.
-- [ ] **2. Encrypt the JWT signing seeds.**
+- [x] **2. Encrypt the JWT signing seeds.**
   - users.db migration: `signing_keys.private_key` becomes `private_key_enc`. Existing rows are
     deleted (serve creates a new key; no users, so no tokens to keep).
   - `loadKeys` / `rotateSigningKey` encrypt inside their transaction and decrypt at load.
   - Tests: a users.db row holds no seed bytes in the clear (the stored blob differs from the
     seed and doesn't decrypt under another keyring), and load round trips.
-- [ ] **3. Password hashes in the encrypted-hash format.**
+- [ ] **3. Encrypt only through a transaction's Sealer.** Before stages 4 and 5, so their new
+  encrypt calls (passwords, recovery codes) are written against it from the start.
+  - `auth.Sealer` (the encrypt methods, moved off `Keyring`), `auth.LiveKeyring` (`Load`,
+    `Sealer(lock)`; `Store` comes with rotation in stage 6) and `auth.WriteLock`, as in "The
+    keyring". `HoldsWriteLock` on `*store.UsersTx`, false once `guarded` ends its transaction.
+  - `AuthOptions.Keyring` becomes the `*auth.LiveKeyring` (`LoadKeyring` returns one). Every
+    encrypt call (TOTP in `auth_enroll.go`, `addSigningKey`) uses `a.keyring.Sealer(tx)` with
+    the transaction that stores the value; decrypt calls use `a.keyring.Load()`.
+  - Out of scope, removed by stages 4 and 5: the password pepper (the hasher keeps reading it
+    from `Load()`) and `RecoveryCodeMAC`. Neither is encryption, and nothing rotates yet.
+  - Tests: encrypting with a `Sealer` after its transaction ends panics; a `Sealer` encrypts
+    under the active key it saw at `Sealer(tx)`; every write path still passes under
+    `go test -race`.
+- [ ] **4. Password hashes in the encrypted-hash format.**
   - PHC string: `$argon2id$v=19$m=…,t=…,p=…,k=<key id>$<salt>$<base64(nonce|ct)>`, the
     ciphertext being the keyring envelope (as above) of the raw Argon2id output with the AAD above. The HMAC pepper is
     removed (Argon2id hashes the NFC password directly).
-  - `Hasher.Hash` returns the unwrapped hash. The caller wraps it with the keyring inside the
-    write transaction. `Verify` takes the stored string, unwraps it (a key not held or a
-    decrypt failure is a server error, not "wrong password"), then compares in constant time.
+  - `Hasher.Hash` returns the unwrapped hash. The caller wraps it with the transaction's
+    `Sealer` inside the write transaction (stage 3). `Verify` takes the stored string, unwraps
+    it (a key not held or a decrypt failure is a server error, not "wrong password"), then
+    compares in constant time.
     The dummy hash for unknown users does the same unwrap plus Argon2id, so timing matches.
     `NeedsRehash` compares Argon2 parameters only (the key ID is rotation's job, not login's).
   - Enrollments wrap with the enrollment AAD, and confirming re-wraps for the user, as TOTP does.
@@ -184,16 +222,18 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     keyed hashing or encryption; re-check the exact wording when writing the comment).
   - Tests: `TestHasherPepper` becomes the wrap tests (another keyring doesn't verify, a copied
     row fails under another user's AAD, an unknown key ID), timing tests kept, `FuzzPHC` updated.
-- [ ] **4. Recovery codes as an encrypted hash.**
+- [ ] **5. Recovery codes as an encrypted hash.**
   - users.db migration: `recovery_codes` becomes `(id INTEGER PRIMARY KEY, user_id, code_enc,
     used_at)`. The value is the keyring envelope of the SHA-256 of the normalized code (AAD
-    `recovery:<user id>`). The `recovery-hmac` subkey and `RecoveryCodeMAC` go away; update the
+    `recovery:<user id>`), sealed with the transaction's `Sealer`. The `recovery-hmac` subkey and `RecoveryCodeMAC` go away; update the
     §3.1.2.2 comment (an approved hash of a 120-bit code, then encrypted).
   - Random nonces make lookup by equality impossible, so `UseRecoveryCode` loads the user's
     unused codes (at most the issued count), decrypts each and compares in constant time,
     checking every code, not stopping at the first match.
   - Tests: use-once, wrong code, another user's code, codes under another keyring.
-- [ ] **5. Rotation.**
+- [ ] **6. Rotation.**
+  - `LiveKeyring.Store` (the swap). Test: a `Sealer` from a transaction that began before a
+    swap still encrypts under the old key (the barrier, not the sealer, covers that).
   - Config: `auth.master_key_rotation: 720h` (24h..8760h, like `signing_key_rotation`).
   - Controller: `RotateMasterKey` (admin) and `RotateMasterKeyIfDue` (scheduled), the startup
     "finish rotation" and key-ID consistency check, all under one mutex, with the four steps
@@ -205,10 +245,13 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
   - Log events: `master_key_rotated` (reason admin/scheduled, rows re-encrypted per table,
     key IDs), `master_key_deleted`, `master_key_straggler`. No key material.
   - Tests (clock-driven, temp stores): due/not due; a crash injected after each step, then a
-    restart that finishes it; a straggler written between steps 2 and 3; two triggers at once
+    restart that finishes it; the barrier (a writer that loaded the old keyring inside its
+    transaction and is held open across step 2 commits before step 3 starts, and step 3
+    re-encrypts its row, so step 4 deletes the key); a row planted under the retired key
+    after step 3 (the bug case) keeps the key and logs `master_key_straggler`; two triggers at once
     rotate once; a users.db referencing a missing key refuses to start; every value type
     decrypts after rotation and the old key is gone from keys.db.
-- [ ] **6. Backup.**
+- [ ] **7. Backup.**
   - Route `POST /api/v1/admin/backup` with a `request` body `{dir}` (absolute, cleaned, bounded
     length), 201 `{dir}` (or 204), a problem for "target exists", and CLI `ao3mirror backup
     <dir>` (resolves a relative path to an absolute one client-side).
@@ -222,9 +265,9 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
 ## Verification
 
 - `make check` passes after every stage.
-- After stage 5, a manual check the user runs (the guard keeps Claude out of `data/`):
+- After stage 6, a manual check the user runs (the guard keeps Claude out of `data/`):
   `ao3mirror auth rotate-master-key`, then log in with an existing test account (password,
   TOTP and a recovery code all still work), and `data/logs/` shows `master_key_rotated` and
   `master_key_deleted`.
-- After stage 6: `ao3mirror backup /some/new/dir`, then restore it into a scratch config and
+- After stage 7: `ao3mirror backup /some/new/dir`, then restore it into a scratch config and
   log in.

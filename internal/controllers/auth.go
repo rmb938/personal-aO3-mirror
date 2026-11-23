@@ -342,9 +342,8 @@ func (a *Auth) loadKeys(ctx context.Context) error {
 				return rows, nil
 			}
 		}
-		k := auth.NewSigningKey()
-		row := model.SigningKey{ID: k.ID, Seed: k.Seed(), CreatedAt: now}
-		return append(rows, row), tx.AddSigningKey(ctx, row)
+		row, err := a.addSigningKey(ctx, tx, auth.NewSigningKey(), now)
+		return append(rows, row), err
 	})
 	if err != nil {
 		return err
@@ -353,7 +352,11 @@ func (a *Auth) loadKeys(ctx context.Context) error {
 	var created time.Time
 	var retired []retiredKey
 	for _, row := range rows { // oldest first: the newest active key signs
-		k, err := auth.SigningKeyFromSeed(row.ID, row.Seed)
+		seed, err := a.opts.Keyring.DecryptSigningSeed(row.ID, row.SeedEnc)
+		if err != nil {
+			return fmt.Errorf("controllers: signing key: %w", err)
+		}
+		k, err := auth.SigningKeyFromSeed(row.ID, seed)
 		if err != nil {
 			return fmt.Errorf("controllers: signing key: %w", err)
 		}
@@ -413,7 +416,8 @@ func (a *Auth) rotateSigningKey(ctx context.Context, ifDue bool) (kid string, ro
 		if err := tx.DeleteSigningKeysRetiredBy(ctx, now.Add(-a.keyGrace())); err != nil {
 			return false, err
 		}
-		return true, tx.AddSigningKey(ctx, model.SigningKey{ID: k.ID, Seed: k.Seed(), CreatedAt: now})
+		_, err := a.addSigningKey(ctx, tx, k, now)
+		return err == nil, err
 	})
 	if err != nil || !rotated {
 		return "", false, err
@@ -427,6 +431,14 @@ func (a *Auth) rotateSigningKey(ctx context.Context, ifDue bool) (kid string, ro
 	}
 	a.event(ctx, slog.LevelInfo, "signing_key_rotated", "reason", reason)
 	return k.ID, true, nil
+}
+
+// addSigningKey stores k as the new active signing key in tx, its seed encrypted under the
+// active master key inside the same transaction (docs/part3-key-rotation.md "The keyring").
+// It returns the stored row.
+func (a *Auth) addSigningKey(ctx context.Context, tx *store.UsersTx, k auth.SigningKey, now time.Time) (model.SigningKey, error) {
+	row := model.SigningKey{ID: k.ID, SeedEnc: a.opts.Keyring.EncryptSigningSeed(k.ID, k.Seed()), CreatedAt: now}
+	return row, tx.AddSigningKey(ctx, row)
 }
 
 // storedKeyDue reports whether users.db's active signing key (the newest unretired one) has

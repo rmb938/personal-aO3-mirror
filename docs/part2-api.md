@@ -1648,7 +1648,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       attempts.
     - `sessions`: id, user_id, refresh_sha256, prev_refresh_sha256, created_at, last_used_at
       (updated on refresh, not per request), expires_at, revoked_at.
-    - `signing_keys`: kid, private_key, created_at, retired_at.
+    - `signing_keys`: kid, private_key_enc (the seed encrypted under a master key, Part 3
+      stage 2), created_at, retired_at.
   - **Flows** (JSON bodies through `runtime.DecodeJSON`; every token in a body, never a URL):
     - Signup: `POST /api/v1/auth/signup` `{invite_token, username, password}` checks the invite,
       the username (`[a-z0-9_-]{3,32}`, case-folded) and the password policy, and returns

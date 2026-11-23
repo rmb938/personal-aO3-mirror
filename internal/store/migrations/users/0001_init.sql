@@ -2,7 +2,7 @@
 -- meta.db and content.db: only `serve` opens it. Times are unix seconds, 0 = never.
 -- Secrets are never stored in the clear: passwords as Argon2id PHC strings, TOTP secrets
 -- sealed under a master key from keys.db (not in this file; docs/part3-key-rotation.md),
--- opaque tokens as SHA-256, recovery codes as HMAC-SHA256.
+-- opaque tokens as SHA-256, recovery codes as HMAC-SHA256, JWT signing seeds sealed (v2).
 
 CREATE TABLE users (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT, -- never reused: it is the JWT sub
