@@ -189,11 +189,11 @@ const (
 // notHashingInTx is the NotInTx reason for all three.
 const notHashingInTx = "password hash"
 
-func (a *Auth) verifyPassword(ctx context.Context, phc, password string) (bool, error) {
+func (a *Auth) verifyPassword(ctx context.Context, c auth.PasswordContext, phc, password string) (bool, error) {
 	if err := store.NotInTx(ctx, notHashingInTx); err != nil {
 		return false, err
 	}
-	return a.opts.Hasher.Verify(ctx, phc, password)
+	return a.opts.Hasher.Verify(ctx, c, phc, password)
 }
 
 func (a *Auth) verifyDummy(ctx context.Context, password string) error {
@@ -203,11 +203,11 @@ func (a *Auth) verifyDummy(ctx context.Context, password string) error {
 	return a.opts.Hasher.VerifyDummy(ctx, password)
 }
 
-func (a *Auth) hashPassword(ctx context.Context, password string) (string, error) {
+func (a *Auth) hashPassword(ctx context.Context, c auth.PasswordContext, password string) (string, error) {
 	if err := store.NotInTx(ctx, notHashingInTx); err != nil {
 		return "", err
 	}
-	return a.opts.Hasher.Hash(ctx, password)
+	return a.opts.Hasher.Hash(ctx, c, password)
 }
 
 // NormalizeUsername returns the stored form of a username: ASCII letters lower-cased. It is

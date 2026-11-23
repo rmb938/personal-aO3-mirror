@@ -202,7 +202,7 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     closed last milliseconds.
   - Tests: `NewLiveKeyring` refuses nil and `Load` returns the keyring; every path still
     passes under `go test -race`.
-- [ ] **4. Password hashes in the encrypted-hash format.**
+- [x] **4. Password hashes in the encrypted-hash format.**
   - PHC string: `$argon2id$v=19$m=…,t=…,p=…,k=<key id>$<salt>$<base64(nonce|ct)>`, the
     ciphertext being the keyring envelope (as above) of the raw Argon2id output with the AAD above. The HMAC pepper is
     removed (Argon2id hashes the NFC password directly).
@@ -215,6 +215,13 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
   - Enrollments wrap with the enrollment AAD, and confirming re-wraps for the user, as TOTP does.
   - Update the 63B-4 citations: the keyed step is now encryption after hashing (§3.1.1.2 allows
     keyed hashing or encryption; re-check the exact wording when writing the comment).
+  - As built: `auth.PasswordContext` (`UserPassword`, `EnrollmentPassword`); the AAD is the
+    context followed by the PHC string up to the salt. `Keyring.RewrapPasswordHash(from, to,
+    phc)` re-wraps without Argon2id, so confirm calls it inside its transaction (signup inserts
+    the user with an empty hash, then sets the re-wrapped one); stage 6's re-encrypt uses it with
+    `from == to`. The dummy hash is wrapped afresh at each `VerifyDummy`, so it never names a
+    deleted key. password_phc is text, so stage 6 selects its rows by the `,k=<id>$` parameter
+    (or decodes in Go) rather than `substr`.
   - Tests: `TestHasherPepper` becomes the wrap tests (another keyring doesn't verify, a copied
     row fails under another user's AAD, an unknown key ID), timing tests kept, `FuzzPHC` updated.
 - [ ] **5. Recovery codes as an encrypted hash.**

@@ -13,6 +13,20 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
+// requireUserHash checks that user uid's stored password hash was re-wrapped for the user on
+// confirm: it verifies under the user's context and not under its enrollment's (invite
+// inviteID).
+func requireUserHash(t *testing.T, e *authEnv, uid, inviteID int64, password string) {
+	t.Helper()
+	u, err := e.users.AutoCommitForTestOnly().UserByID(context.Background(), uid)
+	require.NoError(t, err)
+	ok, err := e.opts.Hasher.Verify(context.Background(), auth.UserPassword(uid), u.PasswordPHC, password)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = e.opts.Hasher.Verify(context.Background(), auth.EnrollmentPassword(inviteID), u.PasswordPHC, password)
+	require.ErrorIs(t, err, auth.ErrDecrypt)
+}
+
 func TestAuthInviteSingleUseAndExpiry(t *testing.T) {
 	e := newAuthEnv(t)
 	ctx := context.Background()
@@ -26,8 +40,9 @@ func TestAuthInviteSingleUseAndExpiry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, e.clk.Now().Add(EnrollmentTTL), en.ExpiresAt)
 	assert.True(t, strings.HasPrefix(en.OTPAuthURI, "otpauth://totp/ao3mirror:fixture_a?secret="+en.TOTPSecret))
-	_, err = e.a.ConfirmSignup(ctx, en.Token, auth.TOTPCode(decodeSecret(t, en.TOTPSecret), e.clk.Now()))
+	c, err := e.a.ConfirmSignup(ctx, en.Token, auth.TOTPCode(decodeSecret(t, en.TOTPSecret), e.clk.Now()))
 	require.NoError(t, err)
+	requireUserHash(t, e, c.UserID, l.ID, testPassword)
 
 	_, err = e.a.Signup(ctx, tok, "fixture_b", testPassword)
 	require.ErrorIs(t, err, ErrInvalidToken, "used")
@@ -144,6 +159,8 @@ func TestAuthResetPassword(t *testing.T) {
 	acct, err := e.a.Account(ctx, u.id)
 	require.NoError(t, err)
 	assert.Equal(t, auth.RecoveryCodeCount, acct.RecoveryCodesLeft)
+
+	requireUserHash(t, e, u.id, r.ID, newPassword)
 
 	_, err = e.a.Authenticate(ctx, p.AccessToken)
 	require.ErrorIs(t, err, ErrInvalidToken, "a reset revokes every session")

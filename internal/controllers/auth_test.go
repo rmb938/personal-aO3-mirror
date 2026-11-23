@@ -466,7 +466,7 @@ func TestAuthScheduledKeyRotation(t *testing.T) {
 func TestAuthHashingRefusedInsideTx(t *testing.T) {
 	e := newAuthEnv(t)
 	err := e.users.InReadTx(context.Background(), func(ctx context.Context, _ *store.UsersReadTx) error {
-		_, err := e.a.hashPassword(ctx, testPassword)
+		_, err := e.a.hashPassword(ctx, auth.UserPassword(1), testPassword)
 		return err
 	})
 	require.ErrorIs(t, err, store.ErrTxMisuse)

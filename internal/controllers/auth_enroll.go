@@ -105,12 +105,13 @@ func (a *Auth) Signup(ctx context.Context, inviteToken, username, password strin
 	if err := auth.CheckPassword(password, name); err != nil {
 		return Enrollment{}, err
 	}
-	if _, err := store.ReadUsersValue(ctx, a.users, func(ctx context.Context, tx *store.UsersReadTx) (model.Invite, error) {
+	hashedFor, err := store.ReadUsersValue(ctx, a.users, func(ctx context.Context, tx *store.UsersReadTx) (model.Invite, error) {
 		return check(ctx, tx, name)
-	}); err != nil {
+	})
+	if err != nil {
 		return Enrollment{}, err
 	}
-	phc, err := a.hashPassword(ctx, password)
+	phc, err := a.hashPassword(ctx, auth.EnrollmentPassword(hashedFor.ID), password)
 	if err != nil {
 		return Enrollment{}, err
 	}
@@ -121,6 +122,9 @@ func (a *Auth) Signup(ctx context.Context, inviteToken, username, password strin
 		inv, err := check(ctx, &tx.UsersReadTx, name) // again: the hash took time
 		if err != nil {
 			return inv, err
+		}
+		if inv.ID != hashedFor.ID { // the same token names the same invite
+			return inv, errors.New("controllers: signup invite changed during the hash")
 		}
 		if err := tx.DeleteExpiredEnrollments(ctx, now); err != nil {
 			return inv, err
@@ -195,10 +199,18 @@ func (a *Auth) ConfirmSignup(ctx context.Context, enrollmentToken, code string) 
 			fail = ErrUsernameTaken
 			return nil
 		}
-		// The secret is sealed for the user's ID, which exists only after the insert.
-		uid, err := tx.CreateUser(ctx, model.User{Username: e.Username, PasswordPHC: e.PasswordPHC,
+		// The secret and password hash are sealed for the user's ID, which exists only after the
+		// insert.
+		uid, err := tx.CreateUser(ctx, model.User{Username: e.Username, PasswordPHC: "",
 			TOTPSecretEnc: []byte{}, CreatedAt: now, PasswordChangedAt: now})
 		if err != nil {
+			return err
+		}
+		phc, err := a.opts.Keyring.Load().RewrapPasswordHash(auth.EnrollmentPassword(inv.ID), auth.UserPassword(uid), e.PasswordPHC)
+		if err != nil {
+			return err
+		}
+		if err := tx.SetUserPassword(ctx, uid, phc, now); err != nil {
 			return err
 		}
 		if err := tx.SetUserTOTP(ctx, uid, a.opts.Keyring.Load().EncryptTOTPSecret(auth.UserTOTP(uid), secret), step); err != nil {
@@ -272,10 +284,11 @@ func (a *Auth) StartReset(ctx context.Context, inviteToken, password string) (En
 		if err := auth.CheckPassword(password, t.user.Username); err != nil {
 			return Enrollment{}, err
 		}
-		if phc, err = a.hashPassword(ctx, password); err != nil {
+		if phc, err = a.hashPassword(ctx, auth.EnrollmentPassword(t.inv.ID), password); err != nil {
 			return Enrollment{}, err
 		}
 	}
+	hashedFor := t.inv.ID
 
 	var secret []byte
 	if t.inv.Scope.TOTP() {
@@ -286,6 +299,9 @@ func (a *Auth) StartReset(ctx context.Context, inviteToken, password string) (En
 		t, err := check(ctx, &tx.UsersReadTx)
 		if err != nil {
 			return t, err
+		}
+		if t.inv.ID != hashedFor { // the same token names the same invite
+			return t, errors.New("controllers: reset invite changed during the hash")
 		}
 		if err := tx.DeleteExpiredEnrollments(ctx, now); err != nil {
 			return t, err
@@ -377,7 +393,11 @@ func (a *Auth) ConfirmReset(ctx context.Context, enrollmentToken, code string) (
 			}
 		}
 		if e.PasswordPHC != "" {
-			if err := tx.SetUserPassword(ctx, u.ID, e.PasswordPHC, now); err != nil {
+			phc, err := a.opts.Keyring.Load().RewrapPasswordHash(auth.EnrollmentPassword(inv.ID), auth.UserPassword(u.ID), e.PasswordPHC)
+			if err != nil {
+				return err
+			}
+			if err := tx.SetUserPassword(ctx, u.ID, phc, now); err != nil {
 				return err
 			}
 		}

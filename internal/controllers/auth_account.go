@@ -76,13 +76,13 @@ func (a *Auth) ChangePassword(ctx context.Context, p Principal, current, next, c
 	if wait, ok := waitFor(u.NextAttemptAt, now); ok {
 		return RateLimitedError{RetryAfter: wait}
 	}
-	good, err := a.verifyPassword(ctx, u.PasswordPHC, current)
+	good, err := a.verifyPassword(ctx, auth.UserPassword(u.ID), u.PasswordPHC, current)
 	if err != nil {
 		return err
 	}
 	phc := ""
 	if good {
-		if phc, err = a.hashPassword(ctx, next); err != nil {
+		if phc, err = a.hashPassword(ctx, auth.UserPassword(u.ID), next); err != nil {
 			return err
 		}
 	}

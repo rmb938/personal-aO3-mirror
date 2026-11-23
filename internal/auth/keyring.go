@@ -58,8 +58,8 @@ type Keyring struct {
 type keySet struct {
 	totp         cipher.AEAD // XChaCha20-Poly1305
 	signing      cipher.AEAD // XChaCha20-Poly1305, for the JWT signing seeds
+	password     cipher.AEAD // XChaCha20-Poly1305, over Argon2id outputs; the PHC "k" names its key
 	recoveryHMAC []byte
-	pepper       []byte // the password pepper; the PHC "k" parameter names its master key
 }
 
 // NewKeyring returns a Keyring over keys, encrypting with the key whose ID is active. IDs must
@@ -104,7 +104,7 @@ func newKeySet(master []byte) (*keySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	pepper, err := derive("ao3mirror password-pepper")
+	passKey, err := derive("ao3mirror password-enc")
 	if err != nil {
 		return nil, err
 	}
@@ -116,22 +116,17 @@ func newKeySet(master []byte) (*keySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &keySet{totp: totp, signing: signing, recoveryHMAC: rec, pepper: pepper}, nil
+	password, err := chacha20poly1305.NewX(passKey)
+	if err != nil {
+		return nil, err
+	}
+	return &keySet{totp: totp, signing: signing, password: password, recoveryHMAC: rec}, nil
 }
 
 // ActiveID is the ID of the master key new values are encrypted under.
 func (r *Keyring) ActiveID() int64 { return int64(r.active) }
 
 func (r *Keyring) activeSet() *keySet { return r.keys[r.active] }
-
-// pepperKey returns the password pepper of the master key with the given ID, if held.
-func (r *Keyring) pepperKey(id uint32) ([]byte, bool) {
-	ks, ok := r.keys[id]
-	if !ok {
-		return nil, false
-	}
-	return ks.pepper, true
-}
 
 // seal encrypts plaintext under the active key's AEAD (chosen by aead) with a random nonce.
 // The additional data is the header (version and key ID) followed by aad, so neither the
@@ -189,6 +184,62 @@ func (r *Keyring) EncryptTOTPSecret(c TOTPContext, secret []byte) []byte {
 // when its master key isn't in the keyring, ErrDecrypt when it doesn't open.
 func (r *Keyring) DecryptTOTPSecret(c TOTPContext, enc []byte) ([]byte, error) {
 	return r.open(totpAEAD, c.aad, enc)
+}
+
+func passwordAEAD(ks *keySet) cipher.AEAD { return ks.password }
+
+// PasswordContext binds a wrapped password hash to the row it belongs to, as TOTPContext does
+// for TOTP secrets: a pending enrollment's hash is bound to its invite, and confirming re-wraps
+// it for the user (Keyring.RewrapPasswordHash).
+type PasswordContext struct{ aad string }
+
+// UserPassword is the context of a user's password hash.
+func UserPassword(userID int64) PasswordContext {
+	return PasswordContext{"user:" + strconv.FormatInt(userID, 10)}
+}
+
+// EnrollmentPassword is the context of a pending signup or reset's password hash.
+func EnrollmentPassword(inviteID int64) PasswordContext {
+	return PasswordContext{"enrollment:" + strconv.FormatInt(inviteID, 10)}
+}
+
+// dummyPassword is the context of the Hasher's dummy hash, which no row holds. The other
+// contexts start with a word and a colon, so it can't equal one.
+var dummyPassword = PasswordContext{"dummy"}
+
+// wrapPasswordHash seals key (an Argon2id output) under the active master key into ph, which
+// holds the parameters and salt: ph.keyID becomes the active ID and ph.sealed the nonce and
+// ciphertext. The additional data is the header, c and the PHC string up to the salt, so
+// neither the row nor the parameters, key ID or salt can change undetected.
+func (r *Keyring) wrapPasswordHash(c PasswordContext, ph *phcHash, key []byte) {
+	ph.keyID = r.active
+	env := r.seal(passwordAEAD, c.aad+phcPrefix(*ph), key)
+	ph.sealed = env[envelopeHeader:]
+}
+
+// unwrapPasswordHash opens what wrapPasswordHash sealed into ph with the same context:
+// ErrKeyNotHeld when its master key isn't in the keyring, ErrDecrypt when it doesn't open.
+func (r *Keyring) unwrapPasswordHash(c PasswordContext, ph phcHash) ([]byte, error) {
+	env := make([]byte, envelopeHeader, envelopeHeader+len(ph.sealed))
+	env[0] = envelopeVersion
+	binary.BigEndian.PutUint32(env[1:envelopeHeader], ph.keyID)
+	return r.open(passwordAEAD, c.aad+phcPrefix(ph), append(env, ph.sealed...))
+}
+
+// RewrapPasswordHash re-wraps the PHC string phc from context from to context to under the
+// active master key. It runs no Argon2id (only the outer encryption changes), so it may run
+// inside a transaction. A malformed phc is ErrMalformedHash; otherwise as unwrapPasswordHash.
+func (r *Keyring) RewrapPasswordHash(from, to PasswordContext, phc string) (string, error) {
+	ph, err := decodePHC(phc)
+	if err != nil {
+		return "", err
+	}
+	key, err := r.unwrapPasswordHash(from, ph)
+	if err != nil {
+		return "", err
+	}
+	r.wrapPasswordHash(to, &ph, key)
+	return encodePHC(ph), nil
 }
 
 func signingAEAD(ks *keySet) cipher.AEAD { return ks.signing }
