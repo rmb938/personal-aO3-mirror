@@ -46,8 +46,8 @@ type MasterKey struct {
 func NewMasterKey() []byte { return randomBytes(MasterKeyBytes) }
 
 // Keyring holds the master keys (from keys.db) and the subkeys HKDF-SHA256 derives from each.
-// keys.db never goes into users.db, so a copy of users.db alone can't decrypt TOTP secrets,
-// check recovery codes or guess passwords. Encryption always uses the active key and writes its
+// keys.db never goes into users.db, so a copy of users.db alone can't decrypt TOTP secrets or
+// signing keys, check recovery codes or guess passwords. Encryption always uses the active key and writes its
 // ID into the ciphertext; decryption uses the key the ciphertext names. A Keyring is immutable.
 type Keyring struct {
 	active uint32
@@ -57,6 +57,7 @@ type Keyring struct {
 // keySet is one master key's subkeys.
 type keySet struct {
 	totp         cipher.AEAD // XChaCha20-Poly1305
+	signing      cipher.AEAD // XChaCha20-Poly1305, for the JWT signing seeds
 	recoveryHMAC []byte
 	pepper       []byte // the password pepper; the PHC "k" parameter names its master key
 }
@@ -95,6 +96,10 @@ func newKeySet(master []byte) (*keySet, error) {
 	if err != nil {
 		return nil, err
 	}
+	signKey, err := derive("ao3mirror signing-key-enc")
+	if err != nil {
+		return nil, err
+	}
 	rec, err := derive("ao3mirror recovery-hmac")
 	if err != nil {
 		return nil, err
@@ -107,7 +112,11 @@ func newKeySet(master []byte) (*keySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &keySet{totp: totp, recoveryHMAC: rec, pepper: pepper}, nil
+	signing, err := chacha20poly1305.NewX(signKey)
+	if err != nil {
+		return nil, err
+	}
+	return &keySet{totp: totp, signing: signing, recoveryHMAC: rec, pepper: pepper}, nil
 }
 
 // ActiveID is the ID of the master key new values are encrypted under.
@@ -180,6 +189,23 @@ func (r *Keyring) EncryptTOTPSecret(c TOTPContext, secret []byte) []byte {
 // when its master key isn't in the keyring, ErrDecrypt when it doesn't open.
 func (r *Keyring) DecryptTOTPSecret(c TOTPContext, enc []byte) ([]byte, error) {
 	return r.open(totpAEAD, c.aad, enc)
+}
+
+func signingAEAD(ks *keySet) cipher.AEAD { return ks.signing }
+
+func signingAAD(kid string) string { return "signing-key:" + kid }
+
+// EncryptSigningSeed encrypts an access-token signing key's Ed25519 seed with
+// XChaCha20-Poly1305 under the active master key, bound to its kid, so a copy of users.db
+// alone can't mint tokens.
+func (r *Keyring) EncryptSigningSeed(kid string, seed []byte) []byte {
+	return r.seal(signingAEAD, signingAAD(kid), seed)
+}
+
+// DecryptSigningSeed opens what EncryptSigningSeed sealed for the same kid: ErrKeyNotHeld
+// when its master key isn't in the keyring, ErrDecrypt when it doesn't open.
+func (r *Keyring) DecryptSigningSeed(kid string, enc []byte) ([]byte, error) {
+	return r.open(signingAEAD, signingAAD(kid), enc)
 }
 
 // RecoveryCodeMAC is the stored form of a recovery code: HMAC-SHA256 of its normalized form

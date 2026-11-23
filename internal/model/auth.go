@@ -103,7 +103,7 @@ func (s Session) Active(now time.Time) bool { return s.RevokedAt.IsZero() && now
 // SigningKey is a stored access-token signing key.
 type SigningKey struct {
 	ID        string // the JWT kid
-	Seed      []byte // Ed25519 private seed
+	SeedEnc   []byte // the Ed25519 private seed, encrypted (auth.Keyring.EncryptSigningSeed)
 	CreatedAt time.Time
 	RetiredAt time.Time // zero for the active key
 }

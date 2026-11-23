@@ -163,7 +163,7 @@ func (tx *UsersTx) DeleteExpiredSessions(ctx context.Context, now time.Time) err
 
 // SigningKeys returns every stored signing key, oldest first.
 func (tx *UsersReadTx) SigningKeys(ctx context.Context) (out []model.SigningKey, err error) {
-	rows, err := tx.q.QueryContext(ctx, `SELECT kid, private_key, created_at, retired_at FROM signing_keys
+	rows, err := tx.q.QueryContext(ctx, `SELECT kid, private_key_enc, created_at, retired_at FROM signing_keys
 		ORDER BY created_at, kid`)
 	if err != nil {
 		return nil, err
@@ -172,7 +172,7 @@ func (tx *UsersReadTx) SigningKeys(ctx context.Context) (out []model.SigningKey,
 	for rows.Next() {
 		var k model.SigningKey
 		var created, retired int64
-		if err := rows.Scan(&k.ID, &k.Seed, &created, &retired); err != nil {
+		if err := rows.Scan(&k.ID, &k.SeedEnc, &created, &retired); err != nil {
 			return nil, err
 		}
 		k.CreatedAt, k.RetiredAt = unixTime(created), unixTime(retired)
@@ -183,8 +183,8 @@ func (tx *UsersReadTx) SigningKeys(ctx context.Context) (out []model.SigningKey,
 
 // AddSigningKey stores a new active signing key.
 func (tx *UsersTx) AddSigningKey(ctx context.Context, k model.SigningKey) error {
-	_, err := tx.q.ExecContext(ctx, `INSERT INTO signing_keys (kid, private_key, created_at) VALUES (?,?,?)`,
-		k.ID, k.Seed, zeroUnix(k.CreatedAt))
+	_, err := tx.q.ExecContext(ctx, `INSERT INTO signing_keys (kid, private_key_enc, created_at) VALUES (?,?,?)`,
+		k.ID, k.SeedEnc, zeroUnix(k.CreatedAt))
 	return err
 }
 

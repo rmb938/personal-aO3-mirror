@@ -335,13 +335,14 @@ func TestSessions(t *testing.T) {
 func TestSigningKeys(t *testing.T) {
 	_, tx := openUsersTest(t)
 	ctx := context.Background()
-	require.NoError(t, tx.AddSigningKey(ctx, model.SigningKey{ID: "k1", Seed: []byte{1}, CreatedAt: usersT0}))
+	require.NoError(t, tx.AddSigningKey(ctx, model.SigningKey{ID: "k1", SeedEnc: []byte{1}, CreatedAt: usersT0}))
 	require.NoError(t, tx.RetireSigningKeys(ctx, usersT0.Add(time.Hour)))
-	require.NoError(t, tx.AddSigningKey(ctx, model.SigningKey{ID: "k2", Seed: []byte{2}, CreatedAt: usersT0.Add(time.Hour)}))
+	require.NoError(t, tx.AddSigningKey(ctx, model.SigningKey{ID: "k2", SeedEnc: []byte{2}, CreatedAt: usersT0.Add(time.Hour)}))
 	keys, err := tx.SigningKeys(ctx)
 	require.NoError(t, err)
 	require.Len(t, keys, 2)
 	assert.Equal(t, "k1", keys[0].ID)
+	assert.Equal(t, []byte{1}, keys[0].SeedEnc)
 	assert.Equal(t, usersT0.Add(time.Hour), keys[0].RetiredAt.UTC())
 	assert.True(t, keys[1].RetiredAt.IsZero())
 
