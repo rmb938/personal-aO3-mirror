@@ -95,11 +95,13 @@ func FuzzVerifier(f *testing.F) {
 
 // FuzzPHC checks decodePHC both ways. Any string decodes only when it is canonical (encodePHC
 // gives it back), its parameters are within the maxArgon2* bounds (so a corrupt row can't make
-// Verify allocate more than 1 GiB) and it names a master key ID (k ≥ 1). Values encoded by
-// encodePHC decode exactly when they are within those bounds.
+// Verify allocate more than 1 GiB), its wrapped hash is sealedOverhead longer than KeyLen and it
+// names a master key ID (k ≥ 1). Values encoded by encodePHC decode exactly when they are
+// within those bounds. key is the fuzzed Argon2id output; its wrapped form is key plus
+// sealedOverhead bytes (the contents don't matter to decoding).
 func FuzzPHC(f *testing.F) {
 	salt16, key32 := make([]byte, 16), make([]byte, 32)
-	good := encodePHC(phcHash{params: DefaultArgon2, pepper: 1, salt: salt16, key: key32})
+	good := encodePHC(phcHash{params: DefaultArgon2, keyID: 1, salt: salt16, sealed: wrapped(key32)})
 	for _, s := range []string{
 		good, "", "$", "$argon2id$v=19$m=65536,t=3,p=4,k=1$$", strings.Replace(good, "m=65536", "m=065536", 1),
 		strings.Replace(good, "m=65536", "m=1048577", 1), strings.Replace(good, "m=65536", "m=+65536", 1),
@@ -115,34 +117,37 @@ func FuzzPHC(f *testing.F) {
 	f.Add("", uint32(7), uint32(1), uint8(1), uint32(0), salt16[:8], key32[:8])
 	f.Add("", uint32(1<<20+1), uint32(17), uint8(0), uint32(1), salt16[:7], slices.Concat(key32, key32))
 	f.Add("", uint32(64), uint32(16), uint8(8), uint32(1<<32-1), slices.Concat(salt16, salt16), key32)
-	f.Fuzz(func(t *testing.T, s string, m, tm uint32, th uint8, pepper uint32, salt, key []byte) {
+	f.Fuzz(func(t *testing.T, s string, m, tm uint32, th uint8, keyID uint32, salt, key []byte) {
 		if ph, err := decodePHC(s); err == nil {
 			p := ph.params
 			require.Equal(t, s, encodePHC(ph), "only a canonical PHC string decodes")
-			require.True(t, inArgon2Bounds(p.Memory, p.Time, uint32(p.Threads), len(ph.salt), len(ph.key)), "%+v", p)
-			require.NotZero(t, ph.pepper)
+			require.True(t, inArgon2Bounds(p.Memory, p.Time, uint32(p.Threads), len(ph.salt), int(p.KeyLen)), "%+v", p)
+			require.NotZero(t, ph.keyID)
 			require.Equal(t, len(ph.salt), int(p.SaltLen))
-			require.Equal(t, len(ph.key), int(p.KeyLen))
+			require.Equal(t, len(ph.sealed), int(p.KeyLen)+sealedOverhead)
 		} else {
 			require.ErrorIs(t, err, ErrMalformedHash)
 		}
 
 		in := phcHash{
 			params: Argon2Params{Memory: m, Time: tm, Threads: th, SaltLen: uint32(len(salt)), KeyLen: uint32(len(key))}, //nolint:gosec // G115: fuzz input lengths are small
-			pepper: pepper, salt: salt, key: key,
+			keyID:  keyID, salt: salt, sealed: wrapped(key),
 		}
 		got, err := decodePHC(encodePHC(in))
-		if !inArgon2Bounds(m, tm, uint32(th), len(salt), len(key)) || pepper == 0 {
+		if !inArgon2Bounds(m, tm, uint32(th), len(salt), len(key)) || keyID == 0 {
 			require.ErrorIs(t, err, ErrMalformedHash)
 			return
 		}
 		require.NoError(t, err)
 		require.Equal(t, in.params, got.params)
-		require.Equal(t, pepper, got.pepper)
+		require.Equal(t, keyID, got.keyID)
 		require.Equal(t, salt, got.salt)
-		require.Equal(t, key, got.key)
+		require.Equal(t, in.sealed, got.sealed)
 	})
 }
+
+// wrapped stands in for a wrapped Argon2id output of key: sealedOverhead bytes longer.
+func wrapped(key []byte) []byte { return slices.Concat(key, make([]byte, sealedOverhead)) }
 
 // inArgon2Bounds is the documented range of stored parameters: memory 8×threads KiB to 1 GiB,
 // time 1..16, threads 1..16, salt and key 8..64 bytes.

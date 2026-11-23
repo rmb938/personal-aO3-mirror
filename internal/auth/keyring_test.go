@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/cipher"
 	"encoding/binary"
 	"testing"
 
@@ -147,7 +148,22 @@ func TestRecoveryCodeMAC(t *testing.T) {
 	require.NotEqual(t, r1.RecoveryCodeMAC("abcd"), r1.RecoveryCodeMAC("abce"))
 	require.NotEqual(t, r1.RecoveryCodeMAC("abcd"), newTestKeyring(t).RecoveryCodeMAC("abcd"))
 
-	// Each use has its own HKDF subkey.
-	ks := r1.activeSet()
-	require.NotEqual(t, ks.recoveryHMAC, ks.pepper)
+}
+
+// Each use has its own HKDF subkey: a value sealed for one use doesn't open as another, even
+// with the same additional data.
+func TestKeyringSubkeysDistinct(t *testing.T) {
+	r := newTestKeyring(t)
+	uses := map[string]func(*keySet) cipher.AEAD{"totp": totpAEAD, "signing": signingAEAD, "password": passwordAEAD}
+	for name, seal := range uses {
+		enc := r.seal(seal, "user:1", []byte("fixture plaintext"))
+		for other, open := range uses {
+			_, err := r.open(open, "user:1", enc)
+			if other == name {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrDecrypt, "%s sealed, %s opened", name, other)
+			}
+		}
+	}
 }

@@ -83,14 +83,22 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	require.NoError(tb, err)
 	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(tb, err)
-	phc, err := hasher.Hash(ctx, fixturePassword) // outside the transaction (txguard)
+	// Outside the transaction (txguard). Each hash is wrapped for its row: users 1 and 2 and the
+	// signup enrollment.
+	var phcs [2]string
+	for i := range phcs {
+		var err error
+		phcs[i], err = hasher.Hash(ctx, auth.UserPassword(int64(i+1)), fixturePassword)
+		require.NoError(tb, err)
+	}
+	enrollPHC, err := hasher.Hash(ctx, auth.EnrollmentPassword(seedInvite), fixturePassword)
 	require.NoError(tb, err)
 	recovery, ok := auth.NormalizeRecoveryCode(seedRecoveryCode)
 	require.True(tb, ok, "seedRecoveryCode is well-formed")
 	require.NoError(tb, users.InTx(ctx, func(ctx context.Context, tx *store.UsersTx) error {
 		for i, name := range []string{seedUserName, seedOtherName} {
 			id := int64(i + 1)
-			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: phc,
+			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: phcs[i],
 				TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.UserTOTP(id), seedTOTPSecret),
 				CreatedAt:     seedTime.Add(-time.Hour), PasswordChangedAt: seedTime.Add(-time.Hour)}); err != nil {
 				return err
@@ -119,7 +127,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 			tokenSum(tb, auth.InviteToken, seedResetToken)); err != nil {
 			return err
 		}
-		if err := tx.PutEnrollment(ctx, model.Enrollment{InviteID: seedInvite, Username: seedNewName, PasswordPHC: "$fixture",
+		if err := tx.PutEnrollment(ctx, model.Enrollment{InviteID: seedInvite, Username: seedNewName, PasswordPHC: enrollPHC,
 			TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(seedInvite), seedTOTPSecret),
 			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedSignupEnrollToken)); err != nil {
 			return err

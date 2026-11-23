@@ -31,7 +31,7 @@ func TestHasherFlood(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, cap(h.sem), "the default cap")
 	ctx := t.Context()
-	phc, err := h.Hash(ctx, "fixture password")
+	phc, err := h.Hash(ctx, UserPassword(1), "fixture password")
 	require.NoError(t, err)
 
 	// A low GC target, so finished hashes' memory is collected soon and the peak shows what
@@ -67,7 +67,7 @@ func TestHasherFlood(t *testing.T) {
 	for i := range floodN {
 		flood.Go(func() {
 			<-start
-			oks[i], errs[i] = h.Verify(ctx, phc, "fixture password")
+			oks[i], errs[i] = h.Verify(ctx, UserPassword(1), phc, "fixture password")
 		})
 	}
 	close(start)
@@ -76,7 +76,7 @@ func TestHasherFlood(t *testing.T) {
 	// Both slots are held and the queue is long: a request deadline ends the wait.
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 	began := time.Now()
-	_, err = h.Verify(dctx, phc, "fixture password")
+	_, err = h.Verify(dctx, UserPassword(1), phc, "fixture password")
 	cancel()
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Less(t, time.Since(began), 5*time.Second, "left at its deadline, not at MaxWait")

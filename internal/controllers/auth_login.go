@@ -70,13 +70,13 @@ func (a *Auth) Login(ctx context.Context, username, password string) (LoginChall
 		a.event(ctx, slog.LevelInfo, "login_refused", "reason", reasonBackoff, "user_id", u.ID)
 		return LoginChallenge{}, RateLimitedError{RetryAfter: wait}
 	}
-	good, err := a.verifyPassword(ctx, u.PasswordPHC, password)
+	good, err := a.verifyPassword(ctx, auth.UserPassword(u.ID), u.PasswordPHC, password)
 	if err != nil {
 		return LoginChallenge{}, err
 	}
 	rehash := ""
 	if good && !u.Disabled() && a.opts.Hasher.NeedsRehash(u.PasswordPHC) {
-		if rehash, err = a.hashPassword(ctx, password); err != nil {
+		if rehash, err = a.hashPassword(ctx, auth.UserPassword(u.ID), password); err != nil {
 			// The login goes on with the old hash; the next one tries again.
 			a.event(ctx, slog.LevelWarn, "password_rehash_skipped", "user_id", u.ID, "err", err.Error())
 			rehash = ""

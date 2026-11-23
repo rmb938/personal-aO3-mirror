@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -130,28 +131,32 @@ type HasherOptions struct {
 	MaxWait     time.Duration // longest wait for a slot before ErrHasherBusy; 5s
 }
 
-// Hasher hashes and verifies passwords with Argon2id in PHC string format. Before Argon2id the
-// NFC password is peppered: HMAC-SHA256 under a key from the Keyring's active master key (NIST
-// SP 800-63B-4 §3.1.1.2's keyed hashing step, with the key kept apart from the hashes), so a
-// copy of users.db alone allows no offline guessing. The PHC string names that master key
-// ("k=<id>"), so a hash under another key can be told apart and rehashed on login.
+// Hasher hashes and verifies passwords with Argon2id in PHC string format, over the NFC
+// password. The Argon2id output is then encrypted (XChaCha20-Poly1305 under a key from the
+// Keyring's active master key, bound to its row by a PasswordContext): NIST SP 800-63B-4
+// §3.1.1.2's "additional iteration of a keyed hashing or encryption operation using a secret
+// key known only to the verifier", with the key "stored separately from the hashed passwords"
+// (in keys.db). So a copy of users.db alone allows no offline guessing. Because the keyed step
+// comes after Argon2id, master key rotation re-wraps a hash without the password
+// (Keyring.RewrapPasswordHash). The PHC string names the master key ("k=<id>").
 //
 // At most Concurrency hashes run at once (each holds Params.Memory), so a flood of logins can't
 // exhaust memory; a caller that waits longer than MaxWait gets ErrHasherBusy (the API answers
 // 503).
 type Hasher struct {
-	keyring *LiveKeyring // read with Load at each use; the pepper goes in Part 3 stage 4
+	keyring *LiveKeyring // read with Load once per call
 	params  Argon2Params
 	sem     chan struct{}
 	maxWait time.Duration
-	dummy   string // a hash of a random password, verified for unknown users
+	dummy   phcHash // the parameters and salt of a hash verified for unknown users
+	dummyK  []byte  // its random Argon2id output, wrapped afresh at each VerifyDummy
 }
 
-// NewHasher returns a Hasher peppering with the active master key of keyring's current
+// NewHasher returns a Hasher wrapping hashes under the active master key of keyring's current
 // Keyring. It builds the dummy hash without running Argon2id.
 func NewHasher(keyring *LiveKeyring, opts HasherOptions) (*Hasher, error) {
 	if keyring == nil {
-		return nil, errors.New("auth: NewHasher needs the Keyring (for the password pepper)")
+		return nil, errors.New("auth: NewHasher needs the Keyring (to wrap password hashes)")
 	}
 	if opts.Params == (Argon2Params{}) {
 		opts.Params = DefaultArgon2
@@ -166,62 +171,71 @@ func NewHasher(keyring *LiveKeyring, opts HasherOptions) (*Hasher, error) {
 		opts.MaxWait = 5 * time.Second
 	}
 	h := &Hasher{keyring: keyring, params: opts.Params, sem: make(chan struct{}, opts.Concurrency), maxWait: opts.MaxWait}
-	h.dummy = encodePHC(phcHash{
-		params: h.params, pepper: keyring.Load().active,
-		salt: randomBytes(int(h.params.SaltLen)), key: randomBytes(int(h.params.KeyLen)),
-	})
+	h.dummy = phcHash{params: h.params, salt: randomBytes(int(h.params.SaltLen))}
+	h.dummyK = randomBytes(int(h.params.KeyLen))
 	return h, nil
 }
 
-// Hash returns the PHC string of password (after NFC, peppered) with a new random salt.
-func (h *Hasher) Hash(ctx context.Context, password string) (string, error) {
-	ring := h.keyring.Load() // once: the pepper's key ID and the pepper come from one Keyring
-	ph := phcHash{params: h.params, pepper: ring.active, salt: randomBytes(int(h.params.SaltLen))}
-	key, err := h.derive(ctx, ring, ph, password)
+// Hash returns the PHC string of password (after NFC) with a new random salt, its Argon2id
+// output wrapped for c under the active master key.
+func (h *Hasher) Hash(ctx context.Context, c PasswordContext, password string) (string, error) {
+	ph := phcHash{params: h.params, salt: randomBytes(int(h.params.SaltLen))}
+	key, err := h.derive(ctx, ph, password)
 	if err != nil {
 		return "", err
 	}
-	ph.key = key
+	h.keyring.Load().wrapPasswordHash(c, &ph, key)
 	return encodePHC(ph), nil
 }
 
-// Verify reports whether password matches the PHC string phc, using the parameters and pepper
-// key stored in it. A malformed phc, or one naming a master key the Keyring doesn't hold, is
-// ErrMalformedHash.
-func (h *Hasher) Verify(ctx context.Context, phc, password string) (bool, error) {
+// Verify reports whether password matches the PHC string phc stored for c, using the
+// parameters and master key named in it. A malformed phc is ErrMalformedHash; one whose master
+// key isn't held is ErrKeyNotHeld, and one that doesn't unwrap for c is ErrDecrypt. Those are
+// server errors, never a wrong password: unwrapping needs no password.
+func (h *Hasher) Verify(ctx context.Context, c PasswordContext, phc, password string) (bool, error) {
 	ph, err := decodePHC(phc)
 	if err != nil {
 		return false, err
 	}
-	got, err := h.derive(ctx, h.keyring.Load(), ph, password)
-	if err != nil {
-		return false, err
-	}
-	return subtle.ConstantTimeCompare(got, ph.key) == 1, nil
+	return h.verify(ctx, h.keyring.Load(), c, ph, password)
 }
 
 // VerifyDummy does the work of a failed Verify for a user that doesn't exist, so a login for an
-// unknown username takes as long as one with a wrong password. It never matches.
+// unknown username takes as long as one with a wrong password: an unwrap and Argon2id with the
+// same parameters. The dummy is wrapped under the current active key first (microseconds next
+// to Argon2id), so it never names a master key that rotation has deleted. It never matches.
 func (h *Hasher) VerifyDummy(ctx context.Context, password string) error {
-	_, err := h.Verify(ctx, h.dummy, password)
+	ring := h.keyring.Load()
+	ph := h.dummy
+	ring.wrapPasswordHash(dummyPassword, &ph, h.dummyK)
+	_, err := h.verify(ctx, ring, dummyPassword, ph, password)
 	return err
 }
 
-// NeedsRehash reports whether phc was made with parameters or a master key other than the
-// Hasher's (or is malformed), so a successful login should store a new hash.
+// NeedsRehash reports whether phc was made with Argon2 parameters other than the Hasher's (or
+// is malformed), so a successful login should store a new hash. Its master key doesn't count:
+// re-wrapping under the active key is rotation's job.
 func (h *Hasher) NeedsRehash(phc string) bool {
 	ph, err := decodePHC(phc)
-	return err != nil || ph.params != h.params || ph.pepper != h.keyring.Load().active
+	return err != nil || ph.params != h.params
 }
 
-// derive peppers the NFC password with the pepper of ph's master key (from ring), then runs
-// Argon2id with ph's parameters and salt once a slot is free.
-func (h *Hasher) derive(ctx context.Context, ring *Keyring, ph phcHash, password string) ([]byte, error) {
-	pepper, ok := ring.pepperKey(ph.pepper)
-	if !ok {
-		return nil, ErrMalformedHash
+// verify unwraps ph's Argon2id output for c (with ring), derives the password's and compares
+// them in constant time.
+func (h *Hasher) verify(ctx context.Context, ring *Keyring, c PasswordContext, ph phcHash, password string) (bool, error) {
+	want, err := ring.unwrapPasswordHash(c, ph)
+	if err != nil {
+		return false, err
 	}
-	peppered := mac32(pepper, NormalizePassword(password))
+	got, err := h.derive(ctx, ph, password)
+	if err != nil {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare(got, want) == 1, nil
+}
+
+// derive runs Argon2id over the NFC password with ph's parameters and salt once a slot is free.
+func (h *Hasher) derive(ctx context.Context, ph phcHash, password string) ([]byte, error) {
 	t := time.NewTimer(h.maxWait)
 	defer t.Stop()
 	select {
@@ -233,7 +247,7 @@ func (h *Hasher) derive(ctx context.Context, ring *Keyring, ph phcHash, password
 	}
 	defer func() { <-h.sem }()
 	p := ph.params
-	return argon2.IDKey(peppered[:], ph.salt, p.Time, p.Memory, p.Threads, p.KeyLen), nil
+	return argon2.IDKey([]byte(NormalizePassword(password)), ph.salt, p.Time, p.Memory, p.Threads, p.KeyLen), nil
 }
 
 func (p Argon2Params) check() error {
@@ -250,27 +264,37 @@ func (p Argon2Params) check() error {
 
 var phcB64 = base64.RawStdEncoding
 
-// phcHash is a stored password hash: Argon2id's parameters, the ID of the master key whose
-// pepper it used (Keyring.pepperKey), the salt and the derived key.
+// sealedOverhead is what wrapping adds to an Argon2id output in the PHC hash field: the nonce
+// and the tag (the envelope's version and key ID are in the PHC string itself).
+const sealedOverhead = chacha20poly1305.NonceSizeX + chacha20poly1305.Overhead
+
+// phcHash is a stored password hash: Argon2id's parameters (KeyLen is the unwrapped output's
+// length), the ID of the master key it is wrapped under, the salt, and the wrapped output
+// (nonce | ciphertext+tag, Keyring.wrapPasswordHash).
 type phcHash struct {
-	params    Argon2Params
-	pepper    uint32 // a master key ID
-	salt, key []byte
+	params       Argon2Params
+	keyID        uint32
+	salt, sealed []byte
 }
 
-// encodePHC formats $argon2id$v=19$m=<m>,t=<t>,p=<p>,k=<key id>$<salt>$<hash> (unpadded
-// standard base64). "k" is this server's own parameter: a stock Argon2id verifier refuses the
-// string rather than checking it without the pepper.
+// encodePHC formats $argon2id$v=19$m=<m>,t=<t>,p=<p>,k=<key id>$<salt>$<wrapped hash>
+// (unpadded standard base64). "k" is this server's own parameter: a stock Argon2id verifier
+// refuses the string rather than comparing against the wrapped hash.
 func encodePHC(h phcHash) string {
+	return phcPrefix(h) + "$" + phcB64.EncodeToString(h.sealed)
+}
+
+// phcPrefix is the PHC string up to and including the salt: what the wrapped hash is bound to
+// besides its row.
+func phcPrefix(h phcHash) string {
 	p := h.params
-	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d,k=%d$%s$%s",
-		argon2.Version, p.Memory, p.Time, p.Threads, h.pepper,
-		phcB64.EncodeToString(h.salt), phcB64.EncodeToString(h.key))
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d,k=%d$%s",
+		argon2.Version, p.Memory, p.Time, p.Threads, h.keyID, phcB64.EncodeToString(h.salt))
 }
 
 // decodePHC parses what encodePHC writes, strictly: the parameters in that order, decimal
-// without leading zeros, the bounds of Argon2Params.check, and a master key ID from 1 to
-// MaxMasterKeyID.
+// without leading zeros, the bounds of Argon2Params.check (KeyLen being the wrapped hash's
+// length less sealedOverhead), and a master key ID from 1 to MaxMasterKeyID.
 func decodePHC(s string) (phcHash, error) {
 	parts := strings.Split(s, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" ||
@@ -285,19 +309,19 @@ func decodePHC(s string) (phcHash, error) {
 	t, okT := phcParam(kv[1], "t=", maxArgon2Time)
 	th, okP := phcParam(kv[2], "p=", maxArgon2Threads)
 	k, okK := phcParam(kv[3], "k=", MaxMasterKeyID)
-	salt, okSalt := phcBytes(parts[4])
-	key, okKey := phcBytes(parts[5])
-	if !okM || !okT || !okP || !okK || k == 0 || !okSalt || !okKey {
+	salt, okSalt := phcBytes(parts[4], maxArgon2Bytes)
+	sealed, okSealed := phcBytes(parts[5], maxArgon2Bytes+sealedOverhead)
+	if !okM || !okT || !okP || !okK || k == 0 || !okSalt || !okSealed || len(sealed) < sealedOverhead {
 		return phcHash{}, ErrMalformedHash
 	}
 	p := Argon2Params{
 		Memory: uint32(m), Time: uint32(t), Threads: uint8(th), //nolint:gosec // G115: bounds-checked above
-		SaltLen: uint32(len(salt)), KeyLen: uint32(len(key)), //nolint:gosec // G115: bounds-checked above
+		SaltLen: uint32(len(salt)), KeyLen: uint32(len(sealed) - sealedOverhead), //nolint:gosec // G115: bounds-checked above
 	}
 	if p.check() != nil {
 		return phcHash{}, ErrMalformedHash
 	}
-	return phcHash{params: p, pepper: uint32(k), salt: salt, key: key}, nil //nolint:gosec // G115: phcParam bounds k by MaxMasterKeyID
+	return phcHash{params: p, keyID: uint32(k), salt: salt, sealed: sealed}, nil //nolint:gosec // G115: phcParam bounds k by MaxMasterKeyID
 }
 
 // phcParam parses "<name><decimal>" with no leading zeros and a value at most max.
@@ -310,10 +334,10 @@ func phcParam(s, name string, maxVal uint64) (uint64, bool) {
 	return n, true
 }
 
-// phcBytes decodes a salt or hash field of at most maxArgon2Bytes in its one canonical form.
+// phcBytes decodes a salt or hash field of at most maxLen bytes in its one canonical form.
 // Strict decoding still skips CR and LF, so the re-encoding must give s back.
-func phcBytes(s string) ([]byte, bool) {
-	if len(s) > phcB64.EncodedLen(maxArgon2Bytes) {
+func phcBytes(s string, maxLen int) ([]byte, bool) {
+	if len(s) > phcB64.EncodedLen(maxLen) {
 		return nil, false
 	}
 	b, err := phcB64.Strict().DecodeString(s)
