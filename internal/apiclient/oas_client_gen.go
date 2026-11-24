@@ -93,6 +93,15 @@ type Invoker interface {
 	//
 	// POST /api/v1/sources
 	AddSource(ctx context.Context, request *SourceAddRequest, options ...RequestOption) (AddSourceRes, error)
+	// Backup invokes backup operation.
+	//
+	// `serve` creates `dir` (0700) and writes `users.db` and `keys.db` into it (0600), as one consistent
+	// pair: no master key rotation or deletion runs in between. The copies are as sensitive as the live
+	// files. To restore, stop `serve`, copy both into `data/api/` and start it. `dir` must not exist (409
+	// already-exists); its parent must (404).
+	//
+	// POST /api/v1/admin/backup
+	Backup(ctx context.Context, request *BackupRequest, options ...RequestOption) error
 	// CancelSource invokes cancelSource operation.
 	//
 	// An already cancelled source is 409 `state-conflict`.
@@ -702,6 +711,73 @@ func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest, r
 	}
 
 	result, err := decodeAddSourceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// Backup invokes backup operation.
+//
+// `serve` creates `dir` (0700) and writes `users.db` and `keys.db` into it (0600), as one consistent
+// pair: no master key rotation or deletion runs in between. The copies are as sensitive as the live
+// files. To restore, stop `serve`, copy both into `data/api/` and start it. `dir` must not exist (409
+// already-exists); its parent must (404).
+//
+// POST /api/v1/admin/backup
+func (c *Client) Backup(ctx context.Context, request *BackupRequest, options ...RequestOption) error {
+	_, err := c.sendBackup(ctx, request, options...)
+	return err
+}
+
+func (c *Client) sendBackup(ctx context.Context, request *BackupRequest, requestOptions ...RequestOption) (res *BackupNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/admin/backup"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeBackupRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeBackupResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

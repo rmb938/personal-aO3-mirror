@@ -104,7 +104,8 @@ input bounds) live in `internal/web/api/CLAUDE.md`. One applies beyond that dire
   such code needs a second store call or a decision between calls, move it into a controller.
 - All store access is inside a transaction: query methods exist only on `*store.ReadTx` /
   `*store.Tx`, reached through `store.InReadTx` / `store.InTx` (or `store.ReadValue` /
-  `WriteValue`). `AutoCommitForTestOnly` is for tests only.
+  `WriteValue`). `AutoCommitForTestOnly` is for tests only. The one exception is
+  `VacuumInto` (backup): SQLite can't VACUUM inside a transaction.
 - A controller uses one transaction per step; an AO3 fetch ends a step. Typical shape: read
   (InReadTx) → fetch → write (InTx, re-reading anything the fetch may have raced with). Writes
   that belong together go in the same transaction. This is a design rule, checked in review.

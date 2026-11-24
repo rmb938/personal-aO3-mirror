@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -184,12 +187,24 @@ type routeSample struct {
 	account bool
 }
 
+// sampleDirs (made and removed by TestMain) holds the directories samples name in their body.
+var (
+	sampleDirs string
+	sampleDirN atomic.Int64
+)
+
+// backupDirPlaceholder in a sample body becomes a new, not yet existing directory under
+// sampleDirs for each request, so every backup sample can succeed.
+const backupDirPlaceholder = "{backup_dir}"
+
 // request builds the sample's request, with suffix appended to its target.
 func (s routeSample) request(method, suffix string) *http.Request {
 	if s.body == "" {
 		return httptest.NewRequest(method, s.target+suffix, nil)
 	}
-	req := httptest.NewRequest(method, s.target+suffix, strings.NewReader(s.body))
+	body := strings.ReplaceAll(s.body, backupDirPlaceholder,
+		filepath.Join(sampleDirs, "backup-"+strconv.FormatInt(sampleDirN.Add(1), 10)))
+	req := httptest.NewRequest(method, s.target+suffix, strings.NewReader(body))
 	req.Header.Set("Content-Type", runtime.ContentTypeJSON)
 	return req
 }
@@ -277,6 +292,8 @@ var routeSamples = map[string]routeSample{
 		fresh: true},
 	"POST /api/v1/admin/master-keys/rotate": {target: "/api/v1/admin/master-keys/rotate", status: http.StatusNoContent,
 		fresh: true},
+	"POST /api/v1/admin/backup": {target: "/api/v1/admin/backup", status: http.StatusNoContent,
+		body: `{"dir":"` + backupDirPlaceholder + `"}`},
 	// Auth entry points over the seeded invites and pending enrollments.
 	"POST /api/v1/auth/signup": {target: "/api/v1/auth/signup", status: http.StatusOK, fresh: true,
 		body: `{"invite_token":"` + seedInviteToken + `","username":"Fixture_Signup","password":"fixture correct horse"}`},

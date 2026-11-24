@@ -20,6 +20,28 @@ The mirrored works in `data/` are stored unencrypted (search needs them in the c
 mirror works that aren't public any more (restricted to logged-in users, or since deleted by
 their authors), keep `data/` and its backups on an encrypted disk (LUKS, FileVault, BitLocker).
 
+## Backing up accounts
+
+Accounts live in `users.db` in the admin socket's directory (`data/api/` by default), and every
+secret in it (password hashes, TOTP secrets, recovery codes, token signing keys) is encrypted
+under master keys kept beside it in `keys.db`.
+The two only work as a pair: users.db without its keys.db can't log anyone in, and every
+account then needs an admin reset link.
+
+With `ao3mirror serve` running, `ao3mirror backup DIR` writes a consistent copy of both into
+`DIR`, a new directory (mode 0700, files 0600). Serve pauses master key rotation while it
+copies, so the pair always matches.
+
+- **Contents:** users.db and keys.db only. The mirror itself (`meta.db`, `content.db`,
+  images) is not included: copy `data/` with `run` and `serve` stopped for that.
+- **Sensitivity:** a backup is as sensitive as the live files. Keep it private and on an
+  encrypted disk. Keeping both files together decrypts every stored secret.
+- **Retention:** serve deletes a retired master key 7 days after rotation, but a backup keeps
+  its keys for as long as the backup exists. Delete old backups when you no longer need them.
+- **Restore:** stop `serve`, copy both files from the backup into that directory (keep them
+  0600, and delete any `users.db-wal` and `users.db-shm` left there) and start `serve`. On startup it checks that every value in users.db is under a key in
+  keys.db, and refuses to start on a mismatched pair.
+
 ## Parser skeletons
 
 `testdata/skeletons/*.skel.html` are structure-only copies of real AO3 pages, used to check the

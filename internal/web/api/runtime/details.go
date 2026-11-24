@@ -93,4 +93,8 @@ var (
 	DetailBadAuthorization  = problem.NewDetail("the Authorization header must be sent once, as Bearer and then the access token")
 	DetailAdminNoAccount    = problem.NewDetail("the admin socket has no signed-in account; use the public listener with an access token")
 	DetailReauthCredentials = problem.NewDetail("the current password or the TOTP code is not valid")
+
+	// Backup (Part 3 stage 7).
+	DetailBackupExists   = problem.NewDetail("the backup directory already exists; name a new one")
+	DetailNoBackupParent = problem.NewDetail("the backup directory's parent directory does not exist")
 )

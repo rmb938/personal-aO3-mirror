@@ -1372,6 +1372,26 @@ paths:
       responses:
         "204": { description: The new key is active and users.db is re-encrypted under it. }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/backup:
+    post:
+      operationId: backup
+      summary: Copy users.db and keys.db into a new directory.
+      description: |
+        `serve` creates `dir` (0700) and writes `users.db` and `keys.db` into it (0600), as
+        one consistent pair: no master key rotation or deletion runs in between. The copies are
+        as sensitive as the live files. To restore, stop `serve`, copy both into `data/api/`
+        and start it. `dir` must not exist (409 already-exists); its parent must (404).
+      x-admin-only: true
+      security: []
+      x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, already-exists, not-found]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupRequest" }
+      responses:
+        "204": { description: Both copies are written and synced to disk. }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     bearerAuth:
@@ -3335,6 +3355,18 @@ components:
         ttl:
           allOf: [{ $ref: "#/components/schemas/Duration" }]
           description: How long the link stays usable, 1m..168h; omitted is `auth.invite_ttl`.
+    BackupRequest:
+      type: object
+      required: [dir]
+      additionalProperties: false
+      properties:
+        dir:
+          type: string
+          minLength: 2
+          maxLength: 1024
+          description: |
+            The new backup directory: an absolute, clean path (no trailing slash, `.` or `..`
+            segments), at most 1024 bytes.
     ResetScope:
       type: string
       description: What a reset replaces.
