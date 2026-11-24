@@ -17,6 +17,9 @@ import (
 // users.db.
 const KeysFile = "keys.db"
 
+// ErrNoMasterKey is a master key ID with no key in the state the operation needs.
+var ErrNoMasterKey = errors.New("store: no such master key")
+
 // Keys is keys.db, the master keys that encrypt every secret in users.db
 // (docs/part3-key-rotation.md). It is a separate database from users.db, so a copy of users.db
 // alone decrypts nothing; only `serve` opens it. Like Users it has no query methods: all access
@@ -166,4 +169,17 @@ func (tx *KeysTx) InsertMasterKey(ctx context.Context, key []byte, at time.Time)
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// RetireMasterKey marks the active master key id retired at at. It fails with ErrNoMasterKey
+// when id isn't the active key.
+func (tx *KeysTx) RetireMasterKey(ctx context.Context, id int64, at time.Time) error {
+	return execOne(ctx, tx.q, ErrNoMasterKey, `UPDATE master_keys SET retired_at = ? WHERE id = ? AND retired_at = 0`,
+		zeroUnix(at), id)
+}
+
+// DeleteMasterKey deletes the retired master key id (secure_delete overwrites it). It fails
+// with ErrNoMasterKey when id isn't a retired key: the active key is never deleted.
+func (tx *KeysTx) DeleteMasterKey(ctx context.Context, id int64) error {
+	return execOne(ctx, tx.q, ErrNoMasterKey, `DELETE FROM master_keys WHERE id = ? AND retired_at != 0`, id)
 }

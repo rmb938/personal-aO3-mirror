@@ -79,9 +79,10 @@ type server struct {
 
 // accounts are users.db, keys.db and the Auth controller over them.
 type accounts struct {
-	users *store.Users
-	keys  *store.Keys
-	auth  *controllers.Auth
+	users  *store.Users
+	keys   *store.Keys
+	master *controllers.MasterKeys
+	auth   *controllers.Auth
 }
 
 // Close closes users.db and keys.db.
@@ -146,8 +147,9 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 }
 
 // openAuth opens users.db and keys.db in the admin socket's directory (private to this user,
-// like the socket) and builds the Auth controller over them. keys.db gets its first master key
-// on first start. On an error, both databases are closed.
+// like the socket) and builds the MasterKeys and Auth controllers over them. keys.db gets its
+// first master key on first start; an interrupted master key rotation is finished, and a
+// users.db under a key keys.db lacks is refused. On an error, both databases are closed.
 func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc accounts, err error) {
 	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
 	if err := privateDir(dir); err != nil {
@@ -162,15 +164,22 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc acc
 			err = errors.Join(err, keys.Close())
 		}
 	}()
-	keyring, err := controllers.LoadKeyring(ctx, keys, time.Now(), log)
-	if err != nil {
-		return accounts{}, err
-	}
-	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{})
-	if err != nil {
-		return accounts{}, err
-	}
 	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
+	if err != nil {
+		return accounts{}, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, users.Close())
+		}
+	}()
+	master, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users,
+		Logger: log, Now: time.Now, Rotation: cfg.Auth.MasterKeyRotation})
+	if err != nil {
+		return accounts{}, err
+	}
+	keyring := master.Keyring()
+	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{})
 	if err != nil {
 		return accounts{}, err
 	}
@@ -186,9 +195,9 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc acc
 		SigningKeyRotation: cfg.Auth.SigningKeyRotation,
 	})
 	if err != nil {
-		return accounts{}, errors.Join(err, users.Close())
+		return accounts{}, err
 	}
-	return accounts{users: users, keys: keys, auth: ctl}, nil
+	return accounts{users: users, keys: keys, master: master, auth: ctl}, nil
 }
 
 // privateDir creates dir (0700) if needed and refuses it when group or others can reach it:
@@ -280,7 +289,7 @@ func (s *server) serve(ctx context.Context) (err error) {
 		"login_per_min", ac.Rate.LoginPerMin, "refresh_per_min", ac.Rate.RefreshPerMin,
 		"public_url", ac.PublicURL, "access_ttl", au.AccessTTL.String(), "refresh_ttl", au.RefreshTTL.String(),
 		"max_session_age", au.MaxSessionAge.String(), "invite_ttl", au.InviteTTL.String(),
-		"signing_key_rotation", au.SigningKeyRotation.String(),
+		"signing_key_rotation", au.SigningKeyRotation.String(), "master_key_rotation", au.MasterKeyRotation.String(),
 	}
 	s.log.Info("api serving", attrs...)
 
@@ -301,7 +310,7 @@ func (s *server) serve(ctx context.Context) (err error) {
 		})
 	}
 	g.Go(func() error {
-		rotateSigningKeys(gctx, s.accounts.auth, s.log, signingKeyCheckInterval)
+		runKeyChecks(gctx, s.log, keyCheckInterval, keyChecks(s.accounts))
 		return nil
 	})
 	g.Go(func() error {
@@ -320,19 +329,46 @@ func (s *server) serve(ctx context.Context) (err error) {
 	return g.Wait()
 }
 
-// signingKeyCheckInterval is how often serve checks the signing key's age: a rotation only
-// needs to land within an hour of its due time.
-const signingKeyCheckInterval = time.Hour
+// keyCheckInterval is how often serve checks the keys' ages: a rotation or a retired master
+// key's deletion only needs to land within an hour of its due time.
+const keyCheckInterval = time.Hour
 
-// rotateSigningKeys rotates the access-token signing key when it is due. It checks straight away
-// (a server that was down past the due date rotates at startup), then every tick until ctx ends. A
-// failed check is logged and retried on the next tick.
-func rotateSigningKeys(ctx context.Context, ctl *controllers.Auth, log *slog.Logger, every time.Duration) {
+// keyCheck is one of serve's periodic key checks; name is a fixed label for its log line.
+type keyCheck struct {
+	name string
+	run  func(context.Context) error
+}
+
+// keyChecks are serve's checks: the signing key rotation, the master key rotation and the
+// retired master keys' deletion (docs/part3-key-rotation.md "Rotation").
+func keyChecks(acc accounts) []keyCheck {
+	return []keyCheck{
+		{"signing key rotation", func(ctx context.Context) error {
+			_, err := acc.auth.RotateSigningKeyIfDue(ctx)
+			return err
+		}},
+		{"master key rotation", func(ctx context.Context) error {
+			_, err := acc.master.RotateMasterKeyIfDue(ctx)
+			return err
+		}},
+		{"retired master key deletion", func(ctx context.Context) error {
+			_, err := acc.master.DeleteRetiredMasterKeys(ctx)
+			return err
+		}},
+	}
+}
+
+// runKeyChecks runs every check straight away (a server that was down past a due date catches
+// up at startup), then every tick until ctx ends. A failed check is logged and retried on the
+// next tick.
+func runKeyChecks(ctx context.Context, log *slog.Logger, every time.Duration, checks []keyCheck) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		if _, err := ctl.RotateSigningKeyIfDue(ctx); err != nil && ctx.Err() == nil {
-			log.Warn("signing key rotation check failed", "err", err.Error())
+		for _, c := range checks {
+			if err := c.run(ctx); err != nil && ctx.Err() == nil {
+				log.Warn(c.name+" check failed", "err", err.Error())
+			}
 		}
 		select {
 		case <-ctx.Done():

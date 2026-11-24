@@ -29,9 +29,11 @@ const (
 
 type authEnv struct {
 	a     *Auth
+	mk    *MasterKeys
 	opts  AuthOptions
 	clk   *fakeClock
 	users *store.Users
+	keys  *store.Keys
 	logs  *bytes.Buffer
 }
 
@@ -46,20 +48,21 @@ func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	keys, err := store.OpenKeys(context.Background(), filepath.Join(dir, "api"), store.Options{Now: clk.Now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
-	keyring, err := LoadKeyring(context.Background(), keys, clk.Now(), slog.New(slog.DiscardHandler))
+	logs := &bytes.Buffer{}
+	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	mk, err := NewMasterKeys(context.Background(), MasterKeysOptions{Keys: keys, Users: users, Now: clk.Now, Logger: log})
 	require.NoError(t, err)
+	keyring := mk.Keyring()
 	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(t, err)
-	logs := &bytes.Buffer{}
-	opts := AuthOptions{Users: users, Keyring: keyring, Hasher: hasher, Now: clk.Now,
-		Logger:    slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	opts := AuthOptions{Users: users, Keyring: keyring, Hasher: hasher, Now: clk.Now, Logger: log,
 		PublicURL: "https://mirror.example.com"}
 	for _, f := range tweaks {
 		f(&opts)
 	}
 	a, err := NewAuth(context.Background(), opts)
 	require.NoError(t, err)
-	return &authEnv{a: a, opts: opts, clk: clk, users: users, logs: logs}
+	return &authEnv{a: a, mk: mk, opts: opts, clk: clk, users: users, keys: keys, logs: logs}
 }
 
 func (e *authEnv) advance(d time.Duration) { _ = e.clk.Sleep(context.Background(), d) }

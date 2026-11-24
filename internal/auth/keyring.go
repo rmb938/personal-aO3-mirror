@@ -164,6 +164,19 @@ func (r *Keyring) open(aead func(*keySet) cipher.AEAD, aad string, enc []byte) (
 	return pt, nil
 }
 
+// reseal re-encrypts enc (from seal with the same aad) under the active key. It returns enc
+// itself and false when enc already names the active key; otherwise as open.
+func (r *Keyring) reseal(aead func(*keySet) cipher.AEAD, aad string, enc []byte) ([]byte, bool, error) {
+	if len(enc) >= envelopeMin && enc[0] == envelopeVersion && binary.BigEndian.Uint32(enc[1:envelopeHeader]) == r.active {
+		return enc, false, nil
+	}
+	pt, err := r.open(aead, aad, enc)
+	if err != nil {
+		return nil, false, err
+	}
+	return r.seal(aead, aad, pt), true, nil
+}
+
 func totpAEAD(ks *keySet) cipher.AEAD { return ks.totp }
 
 // TOTPContext binds an encrypted TOTP secret to the row it belongs to (the additional data),
@@ -188,6 +201,13 @@ func (r *Keyring) EncryptTOTPSecret(c TOTPContext, secret []byte) []byte {
 // when its master key isn't in the keyring, ErrDecrypt when it doesn't open.
 func (r *Keyring) DecryptTOTPSecret(c TOTPContext, enc []byte) ([]byte, error) {
 	return r.open(totpAEAD, c.aad, enc)
+}
+
+// ReencryptTOTPSecret re-encrypts what EncryptTOTPSecret sealed under the active master key,
+// for rotation. It returns enc unchanged and false when enc is already under the active key;
+// otherwise as DecryptTOTPSecret.
+func (r *Keyring) ReencryptTOTPSecret(c TOTPContext, enc []byte) ([]byte, bool, error) {
+	return r.reseal(totpAEAD, c.aad, enc)
 }
 
 func passwordAEAD(ks *keySet) cipher.AEAD { return ks.password }
@@ -246,6 +266,21 @@ func (r *Keyring) RewrapPasswordHash(from, to PasswordContext, phc string) (stri
 	return encodePHC(ph), nil
 }
 
+// ReencryptPasswordHash re-wraps the PHC string phc under the active master key in the same
+// context, for rotation. It returns phc unchanged and false when phc is already under the
+// active key; otherwise as RewrapPasswordHash.
+func (r *Keyring) ReencryptPasswordHash(c PasswordContext, phc string) (string, bool, error) {
+	ph, err := decodePHC(phc)
+	if err != nil {
+		return "", false, err
+	}
+	if ph.keyID == r.active {
+		return phc, false, nil
+	}
+	out, err := r.RewrapPasswordHash(c, c, phc)
+	return out, err == nil, err
+}
+
 func signingAEAD(ks *keySet) cipher.AEAD { return ks.signing }
 
 func signingAAD(kid string) string { return "signing-key:" + kid }
@@ -263,6 +298,13 @@ func (r *Keyring) DecryptSigningSeed(kid string, enc []byte) ([]byte, error) {
 	return r.open(signingAEAD, signingAAD(kid), enc)
 }
 
+// ReencryptSigningSeed re-encrypts what EncryptSigningSeed sealed under the active master key,
+// for rotation: enc unchanged and false when it is already under the active key; otherwise as
+// DecryptSigningSeed.
+func (r *Keyring) ReencryptSigningSeed(kid string, enc []byte) ([]byte, bool, error) {
+	return r.reseal(signingAEAD, signingAAD(kid), enc)
+}
+
 func recoveryAEAD(ks *keySet) cipher.AEAD { return ks.recovery }
 
 func recoveryAAD(userID int64) string { return "recovery:" + strconv.FormatInt(userID, 10) }
@@ -277,6 +319,13 @@ func recoveryAAD(userID int64) string { return "recovery:" + strconv.FormatInt(u
 func (r *Keyring) EncryptRecoveryCode(userID int64, normalized string) []byte {
 	d := sha256.Sum256([]byte(normalized))
 	return r.seal(recoveryAEAD, recoveryAAD(userID), d[:])
+}
+
+// ReencryptRecoveryCode re-encrypts what EncryptRecoveryCode sealed for the user under the
+// active master key, for rotation: enc unchanged and false when it is already under the active
+// key; ErrKeyNotHeld or ErrDecrypt when it doesn't open.
+func (r *Keyring) ReencryptRecoveryCode(userID int64, enc []byte) ([]byte, bool, error) {
+	return r.reseal(recoveryAEAD, recoveryAAD(userID), enc)
 }
 
 // MatchRecoveryCode returns the index in encs (the user's stored codes, from

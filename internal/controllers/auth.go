@@ -41,7 +41,7 @@ type Auth struct {
 // AuthOptions configure NewAuth. Zero durations take the defaults.
 type AuthOptions struct {
 	Users   *store.Users
-	Keyring *auth.LiveKeyring // from LoadKeyring
+	Keyring *auth.LiveKeyring // MasterKeys.Keyring
 	Hasher  *auth.Hasher
 	Logger  *slog.Logger
 	Now     func() time.Time
@@ -180,8 +180,9 @@ const (
 	reasonRefreshReuse   = "refresh_reuse"
 	reasonSessionUser    = "session_user_mismatch"
 	reasonSessionRevoked = "session_inactive"
-	reasonAdmin          = "admin"     // an admin asked (signing key rotation)
-	reasonScheduled      = "scheduled" // the key reached auth.signing_key_rotation
+	reasonAdmin          = "admin"     // an admin asked (signing or master key rotation)
+	reasonScheduled      = "scheduled" // the key reached auth.signing_key_rotation or master_key_rotation
+	reasonStartup        = "startup"   // serve's start finished an interrupted master key rotation
 )
 
 // ---- passwords (never inside a transaction) ----

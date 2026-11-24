@@ -80,13 +80,15 @@ func TestAuthDefaultsAndValidation(t *testing.T) {
 	cfg, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\n"))
 	require.NoError(t, err)
 	assert.Equal(t, Auth{AccessTTL: 15 * time.Minute, RefreshTTL: 720 * time.Hour, MaxSessionAge: 720 * time.Hour,
-		InviteTTL: 24 * time.Hour, TOTPIssuer: "ao3mirror", SigningKeyRotation: 720 * time.Hour}, cfg.Auth)
+		InviteTTL: 24 * time.Hour, TOTPIssuer: "ao3mirror", SigningKeyRotation: 720 * time.Hour,
+		MasterKeyRotation: 720 * time.Hour}, cfg.Auth)
 
 	for _, yml := range []string{
 		"access_ttl: 5m", "access_ttl: 1h", "refresh_ttl: 1h",
 		"refresh_ttl: 2160h, max_session_age: 2160h", "max_session_age: 8760h",
 		"invite_ttl: 1m", "invite_ttl: 168h", "totp_issuer: \"My Mirror 2.0_x-y\"", "totp_issuer: a",
 		"totp_issuer: " + strings.Repeat("a", 32), "signing_key_rotation: 24h", "signing_key_rotation: 8760h",
+		"master_key_rotation: 24h", "master_key_rotation: 8760h",
 	} {
 		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\nauth: {" + yml + "}\n"))
 		require.NoError(t, err, yml)
@@ -110,6 +112,8 @@ func TestAuthDefaultsAndValidation(t *testing.T) {
 		"signing_key_rotation: 23h":               "auth.signing_key_rotation",
 		"signing_key_rotation: 8761h":             "auth.signing_key_rotation",
 		"signing_key_rotation: 0s":                "auth.signing_key_rotation",
+		"master_key_rotation: 23h":                "auth.master_key_rotation",
+		"master_key_rotation: 8761h":              "auth.master_key_rotation",
 		"enabled: false":                          "field enabled not found",
 	} {
 		_, err := Parse([]byte("contact: {discord: \"@fixture_user\"}\nauth: {" + yml + "}\n"))

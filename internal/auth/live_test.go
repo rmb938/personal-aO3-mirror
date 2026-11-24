@@ -19,5 +19,14 @@ func TestLiveKeyring(t *testing.T) {
 	require.Error(t, err)
 
 	r := newTestKeyring(t)
-	require.Same(t, r, live(t, r).Load())
+	l := live(t, r)
+	require.Same(t, r, l.Load())
+
+	// A snapshot loaded before a swap keeps its keyring; new loads get the new one.
+	snap := l.Load()
+	r2 := newTestKeyring(t)
+	l.Store(r2)
+	require.Same(t, r, snap)
+	require.Same(t, r2, l.Load())
+	require.Panics(t, func() { l.Store(nil) })
 }

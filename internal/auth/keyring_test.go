@@ -118,6 +118,117 @@ func TestKeyringKeyIDs(t *testing.T) {
 	require.ErrorIs(t, err, ErrKeyNotHeld)
 }
 
+// TestReencrypt covers rotation's re-encryption of every value kind: a value under the old key
+// moves to the active key in the same context, one already under it is returned unchanged
+// without opening it, and one under an unheld key or the wrong context fails.
+func TestReencrypt(t *testing.T) {
+	k1 := NewMasterKey()
+	old, err := NewKeyring(1, []MasterKey{{ID: 1, Key: k1}})
+	require.NoError(t, err)
+	both, err := NewKeyring(2, []MasterKey{{ID: 1, Key: k1}, {ID: 2, Key: NewMasterKey()}})
+	require.NoError(t, err)
+	unheld, err := NewKeyring(3, []MasterKey{{ID: 3, Key: NewMasterKey()}})
+	require.NoError(t, err)
+	type kind struct {
+		seal      func(*Keyring) []byte
+		reencrypt func(r *Keyring, enc []byte, otherRow bool) ([]byte, bool, error)
+		open      func(r *Keyring, enc []byte) error
+	}
+	secret := []byte("fixture secret")
+	kinds := map[string]kind{
+		"totp": {
+			seal: func(r *Keyring) []byte { return r.EncryptTOTPSecret(UserTOTP(1), secret) },
+			reencrypt: func(r *Keyring, enc []byte, otherRow bool) ([]byte, bool, error) {
+				c := UserTOTP(1)
+				if otherRow {
+					c = EnrollmentTOTP(1)
+				}
+				return r.ReencryptTOTPSecret(c, enc)
+			},
+			open: func(r *Keyring, enc []byte) error { _, err := r.DecryptTOTPSecret(UserTOTP(1), enc); return err },
+		},
+		"signing seed": {
+			seal: func(r *Keyring) []byte { return r.EncryptSigningSeed("kid1", secret) },
+			reencrypt: func(r *Keyring, enc []byte, otherRow bool) ([]byte, bool, error) {
+				kid := "kid1"
+				if otherRow {
+					kid = "kid2"
+				}
+				return r.ReencryptSigningSeed(kid, enc)
+			},
+			open: func(r *Keyring, enc []byte) error { _, err := r.DecryptSigningSeed("kid1", enc); return err },
+		},
+		"recovery code": {
+			seal: func(r *Keyring) []byte { return r.EncryptRecoveryCode(1, "fixturecode") },
+			reencrypt: func(r *Keyring, enc []byte, otherRow bool) ([]byte, bool, error) {
+				uid := int64(1)
+				if otherRow {
+					uid = 2
+				}
+				return r.ReencryptRecoveryCode(uid, enc)
+			},
+			open: func(r *Keyring, enc []byte) error {
+				i, err := r.MatchRecoveryCode(1, "fixturecode", [][]byte{enc})
+				if err == nil && i != 0 {
+					return ErrDecrypt
+				}
+				return err
+			},
+		},
+	}
+	for name, k := range kinds {
+		enc := k.seal(old)
+		got, changed, err := k.reencrypt(both, enc, false)
+		require.NoError(t, err, name)
+		require.True(t, changed, name)
+		require.Equal(t, uint32(2), binary.BigEndian.Uint32(got[1:5]), name)
+		require.NoError(t, k.open(both, got), name)
+
+		same, changed, err := k.reencrypt(both, got, false)
+		require.NoError(t, err, name)
+		require.False(t, changed, name)
+		require.Equal(t, got, same, name)
+
+		_, _, err = k.reencrypt(both, enc, true)
+		require.ErrorIs(t, err, ErrDecrypt, "%s: another row's context", name)
+		_, _, err = k.reencrypt(unheld, enc, false)
+		require.ErrorIs(t, err, ErrKeyNotHeld, name)
+	}
+}
+
+func TestReencryptPasswordHash(t *testing.T) {
+	ctx := t.Context()
+	k1 := NewMasterKey()
+	old, err := NewKeyring(1, []MasterKey{{ID: 1, Key: k1}})
+	require.NoError(t, err)
+	both, err := NewKeyring(2, []MasterKey{{ID: 1, Key: k1}, {ID: 2, Key: NewMasterKey()}})
+	require.NoError(t, err)
+	l := live(t, old)
+	h, err := NewHasher(l, HasherOptions{Params: cheap})
+	require.NoError(t, err)
+	phc, err := h.Hash(ctx, UserPassword(1), "fixture horse staple")
+	require.NoError(t, err)
+
+	got, changed, err := both.ReencryptPasswordHash(UserPassword(1), phc)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Contains(t, got, ",k=2$")
+	l.Store(both)
+	ok, err := h.Verify(ctx, UserPassword(1), got, "fixture horse staple")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	same, changed, err := both.ReencryptPasswordHash(UserPassword(1), got)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, got, same)
+
+	_, _, err = both.ReencryptPasswordHash(UserPassword(2), phc)
+	require.ErrorIs(t, err, ErrDecrypt, "another user's context")
+	_, _, err = both.ReencryptPasswordHash(UserPassword(1), "not a phc")
+	require.ErrorIs(t, err, ErrMalformedHash)
+}
+
 func TestSigningSeedEncryption(t *testing.T) {
 	r := newTestKeyring(t)
 	k := NewSigningKey()

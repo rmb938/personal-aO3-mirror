@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,6 +130,27 @@ func TestMasterKeys(t *testing.T) {
 	assert.True(t, got[0].RetiredAt.Equal(usersT0.Add(1e9)))
 	assert.Equal(t, id2, got[1].ID)
 	assert.True(t, got[1].RetiredAt.IsZero(), "active")
+}
+
+func TestRetireAndDeleteMasterKey(t *testing.T) {
+	_, tx := openKeysTest(t)
+	ctx := context.Background()
+	id, err := tx.InsertMasterKey(ctx, bytes.Repeat([]byte{1}, 32), usersT0)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, tx.DeleteMasterKey(ctx, id), ErrNoMasterKey, "the active key is never deleted")
+	require.ErrorIs(t, tx.RetireMasterKey(ctx, id+1, usersT0), ErrNoMasterKey, "no such key")
+	require.NoError(t, tx.RetireMasterKey(ctx, id, usersT0.Add(time.Hour)))
+	require.ErrorIs(t, tx.RetireMasterKey(ctx, id, usersT0), ErrNoMasterKey, "already retired")
+	got, err := tx.MasterKeys(ctx)
+	require.NoError(t, err)
+	require.True(t, got[0].RetiredAt.Equal(usersT0.Add(time.Hour)))
+
+	require.NoError(t, tx.DeleteMasterKey(ctx, id))
+	require.ErrorIs(t, tx.DeleteMasterKey(ctx, id), ErrNoMasterKey)
+	got, err = tx.MasterKeys(ctx)
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
 
 func TestKeysTxGuard(t *testing.T) {
