@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
 )
@@ -163,4 +164,17 @@ func TestAdminRotateSigningKey(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	requireNoContent(t, post(t, a.Admin(), "/api/v1/admin/signing-keys/rotate"), "rotate")
 	assert.Contains(t, logs.String(), `"event":"signing_key_rotated"`)
+}
+
+// TestAdminRotateMasterKey rotates the master key, then logs in with the password and TOTP
+// secret and with a recovery code, all now under the new key.
+func TestAdminRotateMasterKey(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	requireNoContent(t, post(t, a.Admin(), route.AdminMasterKeyRotate), "rotate")
+	assert.Contains(t, logs.String(), `"event":"master_key_rotated"`)
+	assert.Contains(t, logs.String(), `"reason":"admin"`)
+
+	h := a.Public()
+	requirePair(t, postJSON(t, h, route.AuthLoginTOTP, totpBody(login(t, h, seedUserName), seedTOTPCode)))
+	requirePair(t, postJSON(t, h, route.AuthLoginTOTP, recoveryBody(seedChallengeToken, seedRecoveryCode)))
 }

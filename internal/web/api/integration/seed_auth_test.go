@@ -138,7 +138,7 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 			TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(seedReset), seedTOTPSecret),
 			ExpiresAt:     seedTime.Add(10 * time.Minute)}, tokenSum(tb, auth.EnrollmentToken, seedResetEnrollToken))
 	}))
-	a, err := controllers.NewAuth(ctx, controllers.AuthOptions{Users: users, Keyring: secrets, Hasher: hasher, Logger: log,
+	a, err := controllers.NewAuth(ctx, controllers.AuthOptions{Users: users, MasterKeys: mk, Hasher: hasher, Logger: log,
 		Now: func() time.Time { return seedTime }, PublicURL: testPublicURL})
 	require.NoError(tb, err)
 	return a

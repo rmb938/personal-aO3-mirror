@@ -533,6 +533,15 @@ type Invoker interface {
 	//
 	// DELETE /api/v1/admin/sessions/{id}
 	RevokeSession(ctx context.Context, params RevokeSessionParams, options ...RequestOption) error
+	// RotateMasterKey invokes rotateMasterKey operation.
+	//
+	// Every secret in users.db (password hashes, TOTP secrets, recovery codes, signing keys) is
+	// re-encrypted under the new key before the response. Nobody is logged out. The retired key stays in
+	// keys.db for 7 days, then is deleted. `serve` also rotates on its own every
+	// `auth.master_key_rotation`.
+	//
+	// POST /api/v1/admin/master-keys/rotate
+	RotateMasterKey(ctx context.Context, options ...RequestOption) error
 	// RotateSigningKey invokes rotateSigningKey operation.
 	//
 	// Tokens signed by the old key keep verifying until they expire (`auth.access_ttl`); new tokens use
@@ -7257,6 +7266,70 @@ func (c *Client) sendRevokeSession(ctx context.Context, params RevokeSessionPara
 	}
 
 	result, err := decodeRevokeSessionResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RotateMasterKey invokes rotateMasterKey operation.
+//
+// Every secret in users.db (password hashes, TOTP secrets, recovery codes, signing keys) is
+// re-encrypted under the new key before the response. Nobody is logged out. The retired key stays in
+// keys.db for 7 days, then is deleted. `serve` also rotates on its own every
+// `auth.master_key_rotation`.
+//
+// POST /api/v1/admin/master-keys/rotate
+func (c *Client) RotateMasterKey(ctx context.Context, options ...RequestOption) error {
+	_, err := c.sendRotateMasterKey(ctx, options...)
+	return err
+}
+
+func (c *Client) sendRotateMasterKey(ctx context.Context, requestOptions ...RequestOption) (res *RotateMasterKeyNoContent, err error) {
+
+	var reqCfg requestConfig
+	reqCfg.setDefaults(c.baseClient)
+	for _, o := range requestOptions {
+		o(&reqCfg)
+	}
+
+	u := c.serverURL
+	if override := reqCfg.ServerURL; override != nil {
+		u = override
+	}
+	u = uri.Clone(u)
+	var pathParts [1]string
+	pathParts[0] = "/api/v1/admin/master-keys/rotate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	if err := reqCfg.onRequest(r); err != nil {
+		return res, errors.Wrap(err, "edit request")
+	}
+
+	resp, err := reqCfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	if err := reqCfg.onResponse(resp); err != nil {
+		return res, errors.Wrap(err, "edit response")
+	}
+
+	result, err := decodeRotateMasterKeyResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

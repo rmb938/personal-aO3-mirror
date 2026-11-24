@@ -103,3 +103,16 @@ func (a *Handlers) RotateSigningKey(r *http.Request) (any, error) {
 	}
 	return runtime.NoContent(), nil
 }
+
+// RotateMasterKey is POST /api/v1/admin/master-keys/rotate (204): a new master key, with every
+// secret in users.db re-encrypted under it before the response. The retired key is kept for 7
+// days (docs/part3-key-rotation.md "Rotation").
+func (a *Handlers) RotateMasterKey(r *http.Request) (any, error) {
+	if err := runtime.NoParams(r); err != nil {
+		return nil, err
+	}
+	if _, err := a.ctl.Auth().MasterKeys().RotateMasterKey(r.Context()); err != nil {
+		return nil, err
+	}
+	return runtime.NoContent(), nil
+}

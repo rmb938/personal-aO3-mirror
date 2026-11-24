@@ -241,10 +241,13 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     an approved hash function; only those under 112 bits need a salted password hashing scheme.
     Stage 6's re-encrypt needs a decrypt or re-wrap method for these rows.
   - Tests: use-once, wrong code, another user's code, codes under another keyring.
-- [ ] **6. Rotation.** Split in two PRs (2026-11-23): **6a** (done) is everything below except
-  the route and CLI; **6b** is the route `POST /api/v1/admin/master-keys/rotate`, OpenAPI,
+- [x] **6. Rotation.** Split in two PRs (2026-11-23): **6a** (done) is everything below except
+  the route and CLI; **6b** (done) is the route `POST /api/v1/admin/master-keys/rotate`, OpenAPI,
   `make generate`, the leak-test sample and `ao3mirror auth rotate-master-key`, calling
   `MasterKeys.RotateMasterKey`.
+  - As built (6b): `AuthOptions.MasterKeys` replaces `AuthOptions.Keyring` (Auth takes its
+    keyring from it), and the handler reaches the controller through `Auth().MasterKeys()`.
+    The integration test rotates, then logs in with password + TOTP and with a recovery code.
   - As built (6a): `controllers.MasterKeys` (`internal/controllers/keyring.go`) replaces
     `LoadKeyring`: `NewMasterKeys` loads or creates the first key, then runs the startup
     re-encrypt, which is also the consistency check (a value under a key not held fails it with

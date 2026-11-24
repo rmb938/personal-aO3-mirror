@@ -82,6 +82,7 @@ const (
 	AdminUserSessions     = "/api/v1/admin/users/{id}/sessions"
 	AdminSession          = "/api/v1/admin/sessions/{id}"
 	AdminSigningKeyRotate = "/api/v1/admin/signing-keys/rotate"
+	AdminMasterKeyRotate  = "/api/v1/admin/master-keys/rotate"
 )
 
 // Anonymous reports whether the public listener serves pattern without an access token: the

@@ -275,6 +275,8 @@ var routeSamples = map[string]routeSample{
 	"DELETE /api/v1/admin/sessions/{id}":    {target: "/api/v1/admin/sessions/1", status: http.StatusNoContent, fresh: true},
 	"POST /api/v1/admin/signing-keys/rotate": {target: "/api/v1/admin/signing-keys/rotate", status: http.StatusNoContent,
 		fresh: true},
+	"POST /api/v1/admin/master-keys/rotate": {target: "/api/v1/admin/master-keys/rotate", status: http.StatusNoContent,
+		fresh: true},
 	// Auth entry points over the seeded invites and pending enrollments.
 	"POST /api/v1/auth/signup": {target: "/api/v1/auth/signup", status: http.StatusOK, fresh: true,
 		body: `{"invite_token":"` + seedInviteToken + `","username":"Fixture_Signup","password":"fixture correct horse"}`},

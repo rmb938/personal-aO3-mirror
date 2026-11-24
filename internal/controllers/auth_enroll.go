@@ -131,7 +131,7 @@ func (a *Auth) Signup(ctx context.Context, inviteToken, username, password strin
 		}
 		return inv, tx.PutEnrollment(ctx, model.Enrollment{
 			InviteID: inv.ID, Username: name, PasswordPHC: phc,
-			TOTPSecretEnc: a.opts.Keyring.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), secret),
+			TOTPSecretEnc: a.keyring.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), secret),
 			ExpiresAt:     enrollmentExpiry(inv, now),
 		}, esum)
 	})
@@ -182,7 +182,7 @@ func (a *Auth) ConfirmSignup(ctx context.Context, enrollmentToken, code string) 
 			reason, fail = why, ErrInvalidToken
 			return err
 		}
-		secret, err := a.opts.Keyring.Load().DecryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), e.TOTPSecretEnc)
+		secret, err := a.keyring.Load().DecryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), e.TOTPSecretEnc)
 		if err != nil {
 			return err
 		}
@@ -206,14 +206,14 @@ func (a *Auth) ConfirmSignup(ctx context.Context, enrollmentToken, code string) 
 		if err != nil {
 			return err
 		}
-		phc, err := a.opts.Keyring.Load().RewrapPasswordHash(auth.EnrollmentPassword(inv.ID), auth.UserPassword(uid), e.PasswordPHC)
+		phc, err := a.keyring.Load().RewrapPasswordHash(auth.EnrollmentPassword(inv.ID), auth.UserPassword(uid), e.PasswordPHC)
 		if err != nil {
 			return err
 		}
 		if err := tx.SetUserPassword(ctx, uid, phc, now); err != nil {
 			return err
 		}
-		if err := tx.SetUserTOTP(ctx, uid, a.opts.Keyring.Load().EncryptTOTPSecret(auth.UserTOTP(uid), secret), step); err != nil {
+		if err := tx.SetUserTOTP(ctx, uid, a.keyring.Load().EncryptTOTPSecret(auth.UserTOTP(uid), secret), step); err != nil {
 			return err
 		}
 		codes, err := a.newRecoveryCodes(ctx, tx, uid)
@@ -308,7 +308,7 @@ func (a *Auth) StartReset(ctx context.Context, inviteToken, password string) (En
 		}
 		e := model.Enrollment{InviteID: t.inv.ID, PasswordPHC: phc, ExpiresAt: enrollmentExpiry(t.inv, now)}
 		if secret != nil {
-			e.TOTPSecretEnc = a.opts.Keyring.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(t.inv.ID), secret)
+			e.TOTPSecretEnc = a.keyring.Load().EncryptTOTPSecret(auth.EnrollmentTOTP(t.inv.ID), secret)
 		}
 		return t, tx.PutEnrollment(ctx, e, esum)
 	})
@@ -360,7 +360,7 @@ func (a *Auth) ConfirmReset(ctx context.Context, enrollmentToken, code string) (
 		}
 		newSecret := e.TOTPSecretEnc != nil
 		if newSecret {
-			secret, err := a.opts.Keyring.Load().DecryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), e.TOTPSecretEnc)
+			secret, err := a.keyring.Load().DecryptTOTPSecret(auth.EnrollmentTOTP(inv.ID), e.TOTPSecretEnc)
 			if err != nil {
 				return err
 			}
@@ -369,7 +369,7 @@ func (a *Auth) ConfirmReset(ctx context.Context, enrollmentToken, code string) (
 				reason, fail = reasonBadCode, ErrInvalidCredentials
 				return nil
 			}
-			if err := tx.SetUserTOTP(ctx, u.ID, a.opts.Keyring.Load().EncryptTOTPSecret(auth.UserTOTP(u.ID), secret), step); err != nil {
+			if err := tx.SetUserTOTP(ctx, u.ID, a.keyring.Load().EncryptTOTPSecret(auth.UserTOTP(u.ID), secret), step); err != nil {
 				return err
 			}
 		} else {
@@ -393,7 +393,7 @@ func (a *Auth) ConfirmReset(ctx context.Context, enrollmentToken, code string) (
 			}
 		}
 		if e.PasswordPHC != "" {
-			phc, err := a.opts.Keyring.Load().RewrapPasswordHash(auth.EnrollmentPassword(inv.ID), auth.UserPassword(u.ID), e.PasswordPHC)
+			phc, err := a.keyring.Load().RewrapPasswordHash(auth.EnrollmentPassword(inv.ID), auth.UserPassword(u.ID), e.PasswordPHC)
 			if err != nil {
 				return err
 			}

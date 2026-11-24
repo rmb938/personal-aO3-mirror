@@ -184,7 +184,7 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc acc
 		return accounts{}, err
 	}
 	ctl, err := controllers.NewAuth(ctx, controllers.AuthOptions{
-		Users: users, Keyring: keyring, Hasher: hasher, Logger: log, Now: time.Now,
+		Users: users, MasterKeys: master, Hasher: hasher, Logger: log, Now: time.Now,
 		PublicURL:     cfg.API.PublicURL,
 		AccessTTL:     cfg.Auth.AccessTTL,
 		RefreshTTL:    cfg.Auth.RefreshTTL,
