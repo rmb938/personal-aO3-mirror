@@ -17,7 +17,8 @@ import (
 // problemFor maps any handler error to a problem, in one place: *problem.Error as is; store
 // (and controllers) not-found sentinels → 404; state conflicts → 409; a work over the whole-work cap → 422
 // work-too-large; an existing source → 409 already-exists; failed credentials or an unusable
-// auth token → 401 invalid-credentials; a taken username → 409 already-exists; an auth input
+// auth token → 401 invalid-credentials; a taken username or an existing backup directory → 409
+// already-exists; a backup directory without its parent → 404; an auth input
 // the controller refuses (username, password policy) → 422 on its member; a busy password
 // hasher, a cancelled or timed-out request → 503; anything else → 500 internal. internal reports
 // whether the error is unexpected (the caller logs it).
@@ -65,6 +66,10 @@ func ProblemFor(err error) (p dto.Problem, internal bool) {
 		e = problem.WithDetail(dto.TypeInvalidCredentials, DetailInvalidToken)
 	case errors.Is(err, controllers.ErrUsernameTaken):
 		e = problem.WithDetail(dto.TypeAlreadyExists, DetailUsernameTaken)
+	case errors.Is(err, controllers.ErrBackupExists):
+		e = problem.WithDetail(dto.TypeAlreadyExists, DetailBackupExists)
+	case errors.Is(err, controllers.ErrNoBackupParent):
+		e = problem.WithDetail(dto.TypeNotFound, DetailNoBackupParent)
 	case errors.Is(err, auth.ErrHasherBusy):
 		e = problem.WithDetail(dto.TypeUnavailable, DetailBusy)
 	case errors.As(err, new(controllers.RateLimitedError)):

@@ -108,5 +108,6 @@ func registerRoutes(a *runtime.API, c *controllers.Controllers, r *chi.Mux, admi
 		r.Delete(route.AdminSession, a.Handle(h.IDAction(ac.RevokeSession)))
 		r.Post(route.AdminSigningKeyRotate, a.Handle(h.RotateSigningKey))
 		r.Post(route.AdminMasterKeyRotate, a.Handle(h.RotateMasterKey))
+		r.Post(route.AdminBackup, a.Handle(h.Backup))
 	}
 }

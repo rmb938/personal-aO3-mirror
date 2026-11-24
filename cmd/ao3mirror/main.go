@@ -43,10 +43,12 @@ commands:
   session revoke ID  end one session
   auth ...           rotate the access-token signing key or the master key
                      ('ao3mirror auth' for details)
+  backup DIR         copy users.db and keys.db into a new directory DIR
+                     ('ao3mirror backup' for details and how to restore)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
 
-source, status, jobs, debug, invite, user, session and auth talk to the API's admin socket:
-'ao3mirror serve' must be running.
+source, status, jobs, debug, invite, user, session, auth and backup talk to the API's admin
+socket: 'ao3mirror serve' must be running.
 `
 
 func main() {
@@ -85,6 +87,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if isAccountCommand(rest[0]) && (len(rest) == 1 || rest[1] == "help" || rest[1] == "-h" || rest[1] == "--help") {
 		fmt.Fprint(stdout, accountUsages[rest[0]])
+		return 0
+	}
+	if rest[0] == "backup" && (len(rest) == 1 || rest[1] == "help" || rest[1] == "-h" || rest[1] == "--help") {
+		fmt.Fprint(stdout, backupUsage)
 		return 0
 	}
 
@@ -144,7 +150,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer st.Close()
 		ctl := newControllers(cfg, logger, st, nil)
 		return runReparse(ctx, ctl, rest[1:], stdout, stderr)
-	case "source", "status", "jobs", "debug", "invite", "user", "session", "auth":
+	case "source", "status", "jobs", "debug", "invite", "user", "session", "auth", "backup":
 		// API clients: they talk to the admin socket of a running serve, never to the store.
 		a, err := openApp(cfg)
 		if err != nil {
@@ -160,6 +166,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runJobs(ctx, a, rest[1:], stdout, stderr)
 		case "debug":
 			return runDebug(ctx, a, rest[1:], stdout, stderr)
+		case "backup":
+			return runBackup(ctx, a, rest[1:], stdout, stderr)
 		default:
 			return runAccount(ctx, a, rest[0], rest[1:], stdout, stderr)
 		}

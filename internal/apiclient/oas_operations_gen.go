@@ -7,6 +7,7 @@ type OperationName = string
 
 const (
 	AddSourceOperation               OperationName = "AddSource"
+	BackupOperation                  OperationName = "Backup"
 	CancelSourceOperation            OperationName = "CancelSource"
 	ChangePasswordOperation          OperationName = "ChangePassword"
 	ConfirmResetOperation            OperationName = "ConfirmReset"

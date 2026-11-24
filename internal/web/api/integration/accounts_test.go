@@ -5,6 +5,8 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -177,4 +179,29 @@ func TestAdminRotateMasterKey(t *testing.T) {
 	h := a.Public()
 	requirePair(t, postJSON(t, h, route.AuthLoginTOTP, totpBody(login(t, h, seedUserName), seedTOTPCode)))
 	requirePair(t, postJSON(t, h, route.AuthLoginTOTP, recoveryBody(seedChallengeToken, seedRecoveryCode)))
+}
+
+// TestAdminBackup writes a backup, then refuses the same directory again, one whose parent is
+// missing and a relative path. The path never reaches the logs.
+func TestAdminBackup(t *testing.T) {
+	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
+	h := a.Admin()
+	dir := filepath.Join(t.TempDir(), "backup")
+	body := func(d string) string { return `{"dir":` + strconv.Quote(d) + `}` }
+	requireNoContent(t, postJSON(t, h, route.AdminBackup, body(dir)), "backup")
+	for _, name := range []string{"users.db", "keys.db"} {
+		fi, err := os.Stat(filepath.Join(dir, name))
+		require.NoError(t, err, name)
+		assert.Positive(t, fi.Size(), name)
+	}
+	assert.Contains(t, logs.String(), `"event":"backup_created"`)
+
+	w := postJSON(t, h, route.AdminBackup, body(dir))
+	require.Equal(t, http.StatusConflict, w.Code)
+	requireProblem(t, w, dto.TypeAlreadyExists, runtime.DetailBackupExists.Message())
+	w = postJSON(t, h, route.AdminBackup, body(filepath.Join(dir, "missing", "backup")))
+	require.Equal(t, http.StatusNotFound, w.Code)
+	requireProblem(t, w, dto.TypeNotFound, runtime.DetailNoBackupParent.Message())
+	assert.Contains(t, problemPointers(t, postJSON(t, h, route.AdminBackup, body("relative/backup")), "relative"), "/dir")
+	assert.NotContains(t, logs.String(), dir, "no path in the logs")
 }

@@ -536,9 +536,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "openapi:", err)
 		os.Exit(1)
 	}
+	if sampleDirs, err = os.MkdirTemp("", "ao3mirror-integration-"); err != nil {
+		fmt.Fprintln(os.Stderr, "sample dirs:", err)
+		os.Exit(1)
+	}
 	testutil.Observe(c.observe)
 	code := m.Run()
 	testutil.Observe(nil)
+	if err := os.RemoveAll(sampleDirs); err != nil {
+		fmt.Fprintln(os.Stderr, "sample dirs:", err)
+		code = 1
+	}
 	if code == 0 && fullRun() {
 		if gaps := c.gaps(); len(gaps) > 0 {
 			fmt.Fprintln(os.Stderr, "openapi: declared but never produced by a test:")

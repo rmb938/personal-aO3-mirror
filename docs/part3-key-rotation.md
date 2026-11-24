@@ -289,7 +289,18 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     after step 3 is re-encrypted by step 4 (logging `master_key_straggler`) before the key goes;
     two triggers at once rotate once; a users.db referencing a missing key refuses to start;
     every value type decrypts after rotation and the deleted key is gone from keys.db.
-- [ ] **7. Backup.**
+- [x] **7. Backup.**
+  - As built: `POST /api/v1/admin/backup` returns 204 (no path in a response, so no verbatim
+    type for it). An existing dir is 409 `already-exists` and a missing parent is 404
+    `not-found`, both existing problem types with their own details. `request.Backup` bounds
+    `dir` to 1024 bytes and refuses anything other than an absolute, clean path, and `/`.
+    `MasterKeys.BackupDatabases` (`internal/controllers/backup.go`) runs `VacuumInto` on
+    `store.Users` and `store.Keys`, the one store call outside a transaction (SQLite refuses
+    VACUUM in one; it still refuses a transaction's ctx). It fsyncs each copy and the dir
+    (VACUUM INTO writes unsynced) and removes the dir on failure. It logs `backup_created`
+    with sizes and timing but no path (the path comes from the request body). The docs are the
+    README's "Backing up accounts" and `ao3mirror backup`'s help. The integration samples get
+    a fresh dir per request through a `{backup_dir}` placeholder.
   - Route `POST /api/v1/admin/backup` with a `request` body `{dir}` (absolute, cleaned, bounded
     length), 201 `{dir}` (or 204), a problem for "target exists", and CLI `ao3mirror backup
     <dir>` (resolves a relative path to an absolute one client-side).

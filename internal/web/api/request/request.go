@@ -38,5 +38,6 @@ func Types() []any {
 		Refresh{},
 		ChangePassword{},
 		RegenerateRecoveryCodes{},
+		Backup{},
 	}
 }
