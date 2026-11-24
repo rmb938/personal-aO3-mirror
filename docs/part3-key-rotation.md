@@ -241,21 +241,44 @@ meta.db and content.db aren't part of it (they hold no key-dependent data).
     an approved hash function; only those under 112 bits need a salted password hashing scheme.
     Stage 6's re-encrypt needs a decrypt or re-wrap method for these rows.
   - Tests: use-once, wrong code, another user's code, codes under another keyring.
-- [ ] **6. Rotation.**
+- [ ] **6. Rotation.** Split in two PRs (2026-11-23): **6a** (done) is everything below except
+  the route and CLI; **6b** is the route `POST /api/v1/admin/master-keys/rotate`, OpenAPI,
+  `make generate`, the leak-test sample and `ao3mirror auth rotate-master-key`, calling
+  `MasterKeys.RotateMasterKey`.
+  - As built (6a): `controllers.MasterKeys` (`internal/controllers/keyring.go`) replaces
+    `LoadKeyring`: `NewMasterKeys` loads or creates the first key, then runs the startup
+    re-encrypt, which is also the consistency check (a value under a key not held fails it with
+    `auth.ErrKeyNotHeld`, and serve refuses to start). `Keyring()` gives the `LiveKeyring` to the
+    Hasher and Auth. It holds the rotation mutex (stage 7's backup takes it too).
+    `RotateMasterKey`, `RotateMasterKeyIfDue` and `DeleteRetiredMasterKeys` as planned.
+  - As built: one re-encrypt pass serves steps 3 and 4 and startup: it re-encrypts every value
+    not under the active key, so step 4 also catches stragglers under other retired keys. The
+    tables are tiny, so the store reads whole tables (`ListUsers`, `Enrollments`,
+    `RecoveryCodes`, `SigningKeys`) and the keyring's `Reencrypt*` methods skip values already
+    under the active key without opening them (the key ID format stays in `internal/auth`; no
+    `substr` or `,k=` SQL, and no "key IDs in use" query). Setters: `SetUserSecrets`,
+    `SetEnrollmentSecrets`, `SetRecoveryCodeEnc`, `SetSigningKeySeed`; keys.db gets
+    `RetireMasterKey` and `DeleteMasterKey` (never the active key).
+  - As built: a malformed stored value (not only a missing key) also stops startup, since it
+    could never be re-encrypted. The startup pass logs `master_key_reencrypted` (reason
+    `startup`, counts) when it finished an interrupted rotation. serve's hourly loop is
+    `runKeyChecks` over `keyChecks` (signing rotation, master rotation, retired-key deletion).
+  - Not detected: a users.db paired with another keys.db whose active key has the *same* ID
+    (both fresh, key 1); values then fail to decrypt at use (a server error), not at startup.
   - `LiveKeyring.Store` (the swap).
   - Config: `auth.master_key_rotation: 720h` (24h..8760h, like `signing_key_rotation`).
     `masterKeyRetention` (7 days) is a constant, not config.
   - Controller: `RotateMasterKey` (admin) and `RotateMasterKeyIfDue` (scheduled), steps 1–3;
     `DeleteRetiredMasterKeys` (steps 4–5); the startup re-encrypt and key-ID consistency check.
-    All under one mutex. The store gets the queries for "rows not under key N" and "rows under
-    key N" per table, and "key IDs in use".
+    All under one mutex. (Planned store queries per key; built as whole-table reads, above.)
   - `serve` runs the rotation due check and the retired-key delete check with the signing-key
     check: at startup, then hourly.
   - Route `POST /api/v1/admin/master-keys/rotate` (204) and CLI `ao3mirror auth
     rotate-master-key`. Per Part 2 conventions: route constant, OpenAPI, `make generate`, an
     all-routes leak test sample.
   - Log events: `master_key_rotated` (reason admin/scheduled, rows re-encrypted per table,
-    key IDs), `master_key_deleted`, `master_key_straggler`. No key material.
+    key IDs), `master_key_deleted`, `master_key_straggler`, `master_key_reencrypted`
+    (startup). No key material.
   - Tests (clock-driven, temp stores): due/not due; a crash injected after each step, then a
     restart (or the next hourly check) that finishes it; a retired key is kept until
     `masterKeyRetention` has passed and deleted at the first check after; a snapshot taken

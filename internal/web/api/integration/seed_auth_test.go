@@ -79,8 +79,10 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, keys.Close()) })
-	secrets, err := controllers.LoadKeyring(ctx, keys, seedTime, log)
+	mk, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users, Logger: log,
+		Now: func() time.Time { return seedTime }})
 	require.NoError(tb, err)
+	secrets := mk.Keyring()
 	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(tb, err)
 	// Outside the transaction (txguard). Each hash is wrapped for its row: users 1 and 2 and the

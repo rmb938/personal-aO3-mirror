@@ -188,9 +188,10 @@ func (l *lockedBuffer) count(s string) int {
 	return strings.Count(l.b.String(), s)
 }
 
-// TestRotateSigningKeys checks serve's rotation loop: a key already due rotates at once, a key
-// that becomes due rotates on a later tick, and the loop stops with its context.
-func TestRotateSigningKeys(t *testing.T) {
+// TestKeyChecks checks serve's key check loop: a key already due rotates at once, a key that
+// becomes due rotates on a later tick, a retired master key is deleted once its retention has
+// passed, and the loop stops with its context.
+func TestKeyChecks(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "api")
 	var offset atomic.Int64
 	t0 := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
@@ -203,39 +204,53 @@ func TestRotateSigningKeys(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
 	logs := &lockedBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
-	keyring, err := controllers.LoadKeyring(t.Context(), keys, now(), log)
+	mk, err := controllers.NewMasterKeys(t.Context(), controllers.MasterKeysOptions{Keys: keys, Users: users,
+		Logger: log, Now: now, Rotation: 48 * time.Hour})
 	require.NoError(t, err)
+	keyring := mk.Keyring()
 	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{})
 	require.NoError(t, err)
 	ctl, err := controllers.NewAuth(t.Context(), controllers.AuthOptions{Users: users, Keyring: keyring,
 		Hasher: hasher, Logger: log, Now: now, PublicURL: "https://mirror.example.com",
 		SigningKeyRotation: 24 * time.Hour})
 	require.NoError(t, err)
-	const rotated = `"event":"signing_key_rotated","reason":"scheduled"`
+	acc := accounts{users: users, keys: keys, master: mk, auth: ctl}
+	const (
+		signingRotated = `"event":"signing_key_rotated","reason":"scheduled"`
+		masterRotated  = `"event":"master_key_rotated","reason":"scheduled"`
+		masterDeleted  = `"event":"master_key_deleted"`
+	)
 
-	offset.Store(int64(25 * time.Hour)) // the server was down past the due date
+	offset.Store(int64(25 * time.Hour)) // the server was down past the signing key's due date
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		rotateSigningKeys(ctx, ctl, log, 10*time.Millisecond)
+		runKeyChecks(ctx, log, 10*time.Millisecond, keyChecks(acc))
 	}()
-	require.Eventually(t, func() bool { return logs.count(rotated) == 1 }, 5*time.Second, 5*time.Millisecond,
+	require.Eventually(t, func() bool { return logs.count(signingRotated) == 1 }, 5*time.Second, 5*time.Millisecond,
 		"rotated at startup")
 	time.Sleep(50 * time.Millisecond) // a few ticks with nothing due
-	assert.Equal(t, 1, logs.count(rotated), "not due again yet")
+	assert.Equal(t, 1, logs.count(signingRotated), "not due again yet")
+	assert.Zero(t, logs.count(masterRotated), "master key not due yet")
 
 	offset.Store(int64(49 * time.Hour))
-	require.Eventually(t, func() bool { return logs.count(rotated) == 2 }, 5*time.Second, 5*time.Millisecond,
-		"rotated on a tick")
+	require.Eventually(t, func() bool { return logs.count(signingRotated) == 2 && logs.count(masterRotated) == 1 },
+		5*time.Second, 5*time.Millisecond, "rotated on a tick")
+	time.Sleep(50 * time.Millisecond)
+	assert.Zero(t, logs.count(masterDeleted), "retired key kept")
+
+	offset.Store(int64(49*time.Hour + 7*24*time.Hour)) // the retired key's retention has passed
+	require.Eventually(t, func() bool { return logs.count(masterDeleted) == 1 }, 5*time.Second, 5*time.Millisecond,
+		"retired key deleted on a tick")
 
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("rotation loop did not stop")
+		t.Fatal("key check loop did not stop")
 	}
-	assert.Zero(t, logs.count("rotation check failed"))
+	assert.Zero(t, logs.count("check failed"))
 }
 
 // TestAuthBoundsMatchController keeps config's invite TTL bounds in step with the controller's.

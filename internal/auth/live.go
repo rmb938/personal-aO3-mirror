@@ -23,3 +23,12 @@ func NewLiveKeyring(r *Keyring) (*LiveKeyring, error) {
 
 // Load returns the current Keyring. Load once per operation and use that snapshot throughout.
 func (l *LiveKeyring) Load() *Keyring { return l.p.Load() }
+
+// Store swaps in r (a master key rotation's new keyring). Loads already taken keep their
+// snapshot. r must not be nil.
+func (l *LiveKeyring) Store(r *Keyring) {
+	if r == nil {
+		panic("auth: nil keyring")
+	}
+	l.p.Store(r)
+}

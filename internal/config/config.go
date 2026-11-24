@@ -142,6 +142,9 @@ type Auth struct {
 	TOTPIssuer    string        `yaml:"totp_issuer"` // the issuer authenticator apps show
 	// SigningKeyRotation is how old the access-token signing key gets before serve replaces it.
 	SigningKeyRotation time.Duration `yaml:"signing_key_rotation"`
+	// MasterKeyRotation is how old the master key (keys.db) gets before serve replaces it and
+	// re-encrypts users.db (docs/part3-key-rotation.md).
+	MasterKeyRotation time.Duration `yaml:"master_key_rotation"`
 }
 
 // Auth bounds (docs/part2-api.md stage 16 "Config"). MinInviteTTL and MaxInviteTTL match
@@ -158,6 +161,10 @@ const (
 	// cheap here, so the default is far shorter (docs/part2-api.md stage 16h).
 	MinSigningKeyRotation = 24 * time.Hour
 	MaxSigningKeyRotation = 8760 * time.Hour
+	// The master key encrypts; rotating it is cheap too (a few rows re-encrypted), so it uses
+	// the same bounds (docs/part3-key-rotation.md).
+	MinMasterKeyRotation = 24 * time.Hour
+	MaxMasterKeyRotation = 8760 * time.Hour
 )
 
 // totpIssuer is auth.totp_issuer: 1-32 of letters, digits, space, '.', '_' and '-', not
@@ -188,6 +195,7 @@ func Default() Config {
 			TOTPIssuer:    "ao3mirror",
 
 			SigningKeyRotation: 720 * time.Hour,
+			MasterKeyRotation:  720 * time.Hour,
 		},
 		API: API{
 			Listen:          "127.0.0.1:8080",
@@ -313,6 +321,9 @@ func (a Auth) validate() []error {
 	}
 	if a.SigningKeyRotation < MinSigningKeyRotation || a.SigningKeyRotation > MaxSigningKeyRotation {
 		add("auth.signing_key_rotation %s must be between %s and %s", a.SigningKeyRotation, MinSigningKeyRotation, MaxSigningKeyRotation)
+	}
+	if a.MasterKeyRotation < MinMasterKeyRotation || a.MasterKeyRotation > MaxMasterKeyRotation {
+		add("auth.master_key_rotation %s must be between %s and %s", a.MasterKeyRotation, MinMasterKeyRotation, MaxMasterKeyRotation)
 	}
 	if !totpIssuer.MatchString(a.TOTPIssuer) {
 		add("auth.totp_issuer %q must be 1-32 of letters, digits, space, '.', '_' or '-', not starting or ending with a space", a.TOTPIssuer)

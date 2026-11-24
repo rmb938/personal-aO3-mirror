@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/auth"
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -26,12 +28,28 @@ func (c *cli) seedAccounts() {
 	users, err := store.OpenUsers(ctx, dir, store.Options{})
 	require.NoError(c.t, err)
 	defer func() { require.NoError(c.t, users.Close()) }()
+	keys, err := store.OpenKeys(ctx, dir, store.Options{})
+	require.NoError(c.t, err)
+	defer func() { require.NoError(c.t, keys.Close()) }()
+	// Nothing here logs in, but serve checks at startup that every secret decrypts, so they are
+	// real values under keys.db's key.
+	mk, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users})
+	require.NoError(c.t, err)
+	hasher, err := auth.NewHasher(mk.Keyring(), auth.HasherOptions{
+		Params: auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}})
+	require.NoError(c.t, err)
+	var phcs [2]string
+	for i := range phcs {
+		phcs[i], err = hasher.Hash(ctx, auth.UserPassword(int64(i+1)), "fixture horse staple")
+		require.NoError(c.t, err)
+	}
 	now := time.Now()
 	require.NoError(c.t, users.InTx(ctx, func(ctx context.Context, tx *store.UsersTx) error {
-		for _, name := range []string{"fixture_user", "fixture_other"} {
-			// Nothing here logs in; the secrets only fill the NOT NULL columns.
-			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: "$fixture", TOTPSecretEnc: []byte("fixture"),
-				CreatedAt: now.Add(-time.Hour), PasswordChangedAt: now.Add(-time.Hour)}); err != nil {
+		for i, name := range []string{"fixture_user", "fixture_other"} {
+			id := int64(i + 1)
+			if _, err := tx.CreateUser(ctx, model.User{Username: name, PasswordPHC: phcs[i],
+				TOTPSecretEnc: mk.Keyring().Load().EncryptTOTPSecret(auth.UserTOTP(id), []byte("fixture")),
+				CreatedAt:     now.Add(-time.Hour), PasswordChangedAt: now.Add(-time.Hour)}); err != nil {
 				return err
 			}
 		}

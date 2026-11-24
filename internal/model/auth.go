@@ -23,6 +23,7 @@ type User struct {
 // RecoveryCode is a stored recovery code.
 type RecoveryCode struct {
 	ID      int64
+	UserID  int64  // set by store.UsersReadTx.RecoveryCodes only
 	CodeEnc []byte // the code's digest, sealed for the user (auth.Keyring.EncryptRecoveryCode)
 }
 

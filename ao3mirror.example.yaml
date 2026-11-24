@@ -61,6 +61,7 @@ auth:
   invite_ttl: 24h          # default lifetime of invite and reset links (1m-168h)
   totp_issuer: ao3mirror   # name authenticator apps show (1-32 of A-Z a-z 0-9 space . _ -)
   signing_key_rotation: 720h  # serve replaces the access-token signing key this often (24h-8760h)
+  master_key_rotation: 720h   # serve replaces the keys.db master key and re-encrypts users.db this often (24h-8760h)
 
 # `ao3mirror serve`: the JSON API (docs/part2-api.md). Every fanwork string is hashed unless a
 # request asks to reveal it; `serve --no-reveal` refuses even that.
