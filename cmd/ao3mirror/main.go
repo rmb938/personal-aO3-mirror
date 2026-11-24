@@ -37,10 +37,12 @@ commands:
   serve [--no-reveal]  run the JSON API (api: config); strings are hashed unless a request
                      asks to reveal; --no-reveal refuses that too (docs/part2-api.md)
   invite ...         create/list/revoke signup invites
+                     ('ao3mirror invite' for details)
   user ...           list/disable/enable/delete accounts, reset links, sessions
+                     ('ao3mirror user' for details)
   session revoke ID  end one session
-  auth rotate-key    start a new access-token signing key
-                     ('ao3mirror invite' for details of these four)
+  auth ...           rotate the access-token signing key or the master key
+                     ('ao3mirror auth' for details)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
 
 source, status, jobs, debug, invite, user, session and auth talk to the API's admin socket:
@@ -82,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if isAccountCommand(rest[0]) && (len(rest) == 1 || rest[1] == "help" || rest[1] == "-h" || rest[1] == "--help") {
-		fmt.Fprint(stdout, accountUsage)
+		fmt.Fprint(stdout, accountUsages[rest[0]])
 		return 0
 	}
 

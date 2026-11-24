@@ -29,10 +29,11 @@ import (
 // at runtime with store.NotInTx). Logs carry an event, a reason and numeric IDs; never
 // usernames, passwords, codes or tokens.
 type Auth struct {
-	opts  AuthOptions
-	users *store.Users
-	log   *slog.Logger
-	names *nameBackoff
+	opts    AuthOptions
+	users   *store.Users
+	keyring *auth.LiveKeyring // opts.MasterKeys.Keyring()
+	log     *slog.Logger
+	names   *nameBackoff
 
 	keysMu sync.Mutex // serializes rotation and ring rebuilds
 	ring   atomic.Pointer[keyRing]
@@ -40,11 +41,13 @@ type Auth struct {
 
 // AuthOptions configure NewAuth. Zero durations take the defaults.
 type AuthOptions struct {
-	Users   *store.Users
-	Keyring *auth.LiveKeyring // MasterKeys.Keyring
-	Hasher  *auth.Hasher
-	Logger  *slog.Logger
-	Now     func() time.Time
+	Users *store.Users
+	// MasterKeys holds the keyring every users.db secret is encrypted under; Auth.MasterKeys
+	// exposes it for the admin rotation route.
+	MasterKeys *MasterKeys
+	Hasher     *auth.Hasher
+	Logger     *slog.Logger
+	Now        func() time.Time
 
 	PublicURL  string        // api.public_url: the JWT iss and the base of invite links
 	AccessTTL  time.Duration // auth.access_ttl; 15m
@@ -109,8 +112,8 @@ type Principal struct {
 // NewAuth returns the Auth controller. It loads the signing keys from users.db, creating the
 // first one, and drops keys whose tokens have all expired.
 func NewAuth(ctx context.Context, opts AuthOptions) (*Auth, error) {
-	if opts.Users == nil || opts.Keyring == nil || opts.Hasher == nil {
-		return nil, errors.New("controllers: auth needs users, a keyring and a hasher")
+	if opts.Users == nil || opts.MasterKeys == nil || opts.Hasher == nil {
+		return nil, errors.New("controllers: auth needs users, master keys and a hasher")
 	}
 	if err := checkPublicURL(opts.PublicURL); err != nil {
 		return nil, err
@@ -132,13 +135,16 @@ func NewAuth(ctx context.Context, opts AuthOptions) (*Auth, error) {
 	if opts.UnknownNames == 0 {
 		opts.UnknownNames = 10000
 	}
-	a := &Auth{opts: opts, users: opts.Users, log: opts.Logger.With("component", "auth"),
-		names: newNameBackoff(opts.UnknownNames)}
+	a := &Auth{opts: opts, users: opts.Users, keyring: opts.MasterKeys.Keyring(),
+		log: opts.Logger.With("component", "auth"), names: newNameBackoff(opts.UnknownNames)}
 	if err := a.loadKeys(ctx); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
+
+// MasterKeys is the master key controller given in AuthOptions.MasterKeys.
+func (a *Auth) MasterKeys() *MasterKeys { return a.opts.MasterKeys }
 
 func durationOr(d, def time.Duration) time.Duration {
 	if d == 0 {
@@ -243,7 +249,7 @@ type SecondFactor struct {
 func (a *Auth) checkSecondFactor(ctx context.Context, tx *store.UsersTx, u model.User, f SecondFactor, now time.Time) (step int64, ok bool, err error) {
 	switch {
 	case f.Code != "" && f.RecoveryCode == "":
-		secret, err := a.opts.Keyring.Load().DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
+		secret, err := a.keyring.Load().DecryptTOTPSecret(auth.UserTOTP(u.ID), u.TOTPSecretEnc)
 		if err != nil {
 			return 0, false, err
 		}
@@ -272,7 +278,7 @@ func (a *Auth) useRecoveryCode(ctx context.Context, tx *store.UsersTx, userID in
 	for i, c := range codes {
 		encs[i] = c.CodeEnc
 	}
-	i, err := a.opts.Keyring.Load().MatchRecoveryCode(userID, norm, encs)
+	i, err := a.keyring.Load().MatchRecoveryCode(userID, norm, encs)
 	if err != nil || i < 0 {
 		return false, err
 	}
@@ -283,7 +289,7 @@ func (a *Auth) useRecoveryCode(ctx context.Context, tx *store.UsersTx, userID in
 func (a *Auth) newRecoveryCodes(ctx context.Context, tx *store.UsersTx, userID int64) ([]string, error) {
 	codes := auth.NewRecoveryCodes()
 	encs := make([][]byte, len(codes))
-	ring := a.opts.Keyring.Load()
+	ring := a.keyring.Load()
 	for i, c := range codes {
 		norm, _ := auth.NormalizeRecoveryCode(c)
 		encs[i] = ring.EncryptRecoveryCode(userID, norm)
@@ -373,7 +379,7 @@ func (a *Auth) loadKeys(ctx context.Context) error {
 	var created time.Time
 	var retired []retiredKey
 	for _, row := range rows { // oldest first: the newest active key signs
-		seed, err := a.opts.Keyring.Load().DecryptSigningSeed(row.ID, row.SeedEnc)
+		seed, err := a.keyring.Load().DecryptSigningSeed(row.ID, row.SeedEnc)
 		if err != nil {
 			return fmt.Errorf("controllers: signing key: %w", err)
 		}
@@ -457,7 +463,7 @@ func (a *Auth) rotateSigningKey(ctx context.Context, ifDue bool) (kid string, ro
 // addSigningKey stores k as the new active signing key in tx, its seed encrypted under the
 // active master key. It returns the stored row.
 func (a *Auth) addSigningKey(ctx context.Context, tx *store.UsersTx, k auth.SigningKey, now time.Time) (model.SigningKey, error) {
-	row := model.SigningKey{ID: k.ID, SeedEnc: a.opts.Keyring.Load().EncryptSigningSeed(k.ID, k.Seed()), CreatedAt: now}
+	row := model.SigningKey{ID: k.ID, SeedEnc: a.keyring.Load().EncryptSigningSeed(k.ID, k.Seed()), CreatedAt: now}
 	return row, tx.AddSigningKey(ctx, row)
 }
 

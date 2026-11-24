@@ -1357,6 +1357,21 @@ paths:
       responses:
         "204": { description: The new key is active. }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/admin/master-keys/rotate:
+    post:
+      operationId: rotateMasterKey
+      summary: Start a new master key and re-encrypt users.db under it.
+      description: |
+        Every secret in users.db (password hashes, TOTP secrets, recovery codes, signing keys)
+        is re-encrypted under the new key before the response. Nobody is logged out. The
+        retired key stays in keys.db for 7 days, then is deleted. `serve` also rotates on its
+        own every `auth.master_key_rotation`.
+      x-admin-only: true
+      security: []
+      x-problems: [forbidden]
+      responses:
+        "204": { description: The new key is active and users.db is re-encrypted under it. }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     bearerAuth:

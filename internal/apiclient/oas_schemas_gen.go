@@ -5893,6 +5893,9 @@ type RevokeInviteNoContent struct{}
 // RevokeSessionNoContent is response for RevokeSession operation.
 type RevokeSessionNoContent struct{}
 
+// RotateMasterKeyNoContent is response for RotateMasterKey operation.
+type RotateMasterKeyNoContent struct{}
+
 // RotateSigningKeyNoContent is response for RotateSigningKey operation.
 type RotateSigningKeyNoContent struct{}
 

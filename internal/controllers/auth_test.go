@@ -52,10 +52,9 @@ func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	mk, err := NewMasterKeys(context.Background(), MasterKeysOptions{Keys: keys, Users: users, Now: clk.Now, Logger: log})
 	require.NoError(t, err)
-	keyring := mk.Keyring()
-	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{Params: cheapArgon2})
+	hasher, err := auth.NewHasher(mk.Keyring(), auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(t, err)
-	opts := AuthOptions{Users: users, Keyring: keyring, Hasher: hasher, Now: clk.Now, Logger: log,
+	opts := AuthOptions{Users: users, MasterKeys: mk, Hasher: hasher, Now: clk.Now, Logger: log,
 		PublicURL: "https://mirror.example.com"}
 	for _, f := range tweaks {
 		f(&opts)
@@ -343,7 +342,7 @@ func TestAuthRecoveryCodesUnderAnotherKeyring(t *testing.T) {
 	e := newAuthEnv(t)
 	ctx := context.Background()
 	u := e.signup(t, "fixture_user")
-	ring := e.opts.Keyring.Load()
+	ring := e.mk.Keyring().Load()
 	otherRing, err := auth.NewKeyring(ring.ActiveID(), []auth.MasterKey{{ID: ring.ActiveID(), Key: auth.NewMasterKey()}})
 	require.NoError(t, err)
 	norm, ok := auth.NormalizeRecoveryCode(u.codes[0])
@@ -373,7 +372,7 @@ func TestAuthRecoveryCodesStoredSealed(t *testing.T) {
 			assert.False(t, bytes.Contains(row.CodeEnc, []byte(norm)), "no code in the clear")
 		}
 	}
-	ring := e.opts.Keyring.Load()
+	ring := e.mk.Keyring().Load()
 	norm, _ := auth.NormalizeRecoveryCode(u.codes[3])
 	i, err := ring.MatchRecoveryCode(u.id, norm, encs)
 	require.NoError(t, err)
@@ -437,7 +436,7 @@ func TestAuthSigningSeedsEncrypted(t *testing.T) {
 	r := e.a.ring.Load()
 	seeds := map[string][]byte{r.active.ID: r.active.Seed()}
 
-	ring := e.opts.Keyring.Load()
+	ring := e.mk.Keyring().Load()
 	otherRing, err := auth.NewKeyring(ring.ActiveID(), []auth.MasterKey{{ID: ring.ActiveID(), Key: auth.NewMasterKey()}})
 	require.NoError(t, err)
 	other, err := auth.NewLiveKeyring(otherRing)
@@ -463,7 +462,7 @@ func TestAuthSigningSeedsEncrypted(t *testing.T) {
 	assert.Equal(t, r.active.ID, again.ring.Load().active.ID)
 	assert.Equal(t, r.active.Seed(), again.ring.Load().active.Seed())
 	opts := e.opts
-	opts.Keyring = other
+	opts.MasterKeys = &MasterKeys{live: other}
 	_, err = NewAuth(ctx, opts)
 	require.ErrorIs(t, err, auth.ErrDecrypt)
 }

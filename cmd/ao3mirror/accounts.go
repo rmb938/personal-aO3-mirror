@@ -13,11 +13,18 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/apiclient"
 )
 
-const accountUsage = `usage: ao3mirror invite|user|session|auth <command> [flags]
+// accountUsages are the account command groups' usage texts, by group.
+var accountUsages = map[string]string{
+	"invite": `usage: ao3mirror invite <command> [flags]
 
   invite create [--ttl 24h]    a signup link (default auth.invite_ttl, at most 168h)
   invite list                  every invite and reset link, used or not
   invite revoke ID             stop an unused invite or reset link working
+
+A link is printed once, when it is made: send it to the person it is for.
+` + adminSocketNote,
+	"user": `usage: ao3mirror user <command> [flags]
+
   user list                    accounts
   user disable ID              block logins and revoke the account's sessions
   user enable ID               allow logins again and clear failed attempts
@@ -25,66 +32,89 @@ const accountUsage = `usage: ao3mirror invite|user|session|auth <command> [flags
   user reset ID --scope password|totp|both [--ttl 24h]
                                a link that replaces the password, the TOTP secret or both
   user sessions ID             the account's sessions
+
+A link is printed once, when it is made: send it to the person it is for.
+` + adminSocketNote,
+	"session": `usage: ao3mirror session <command>
+
   session revoke ID            end one session (its refresh token stops working)
+` + adminSocketNote,
+	"auth": `usage: ao3mirror auth <command>
+
   auth rotate-key              start a new access-token signing key; tokens signed by the
                                old one keep working until they expire
+  auth rotate-master-key       start a new master key and re-encrypt users.db under it
+                               (serve also does this every auth.master_key_rotation)
+` + adminSocketNote,
+}
 
-A link is printed once, when it is made: send it to the person it is for. These commands talk
-to the API's admin socket, so 'ao3mirror serve' must be running.
+const adminSocketNote = `
+These commands talk to the API's admin socket, so 'ao3mirror serve' must be running.
 `
 
-// isAccountCommand reports whether cmd is one of the account command groups in accountUsage.
+// isAccountCommand reports whether cmd is one of the account command groups in accountUsages.
 func isAccountCommand(cmd string) bool {
-	return cmd == "invite" || cmd == "user" || cmd == "session" || cmd == "auth"
+	_, ok := accountUsages[cmd]
+	return ok
+}
+
+// usageErr prints group's usage and returns the usage exit code.
+func usageErr(errOut io.Writer, group string) int {
+	fmt.Fprint(errOut, accountUsages[group])
+	return 2
 }
 
 // runAccount runs one account command (group is invite, user, session or auth).
 func runAccount(ctx context.Context, a *app, group string, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(errOut, accountUsage)
-		return 2
+		return usageErr(errOut, group)
 	}
 	cmd, rest := args[0], args[1:]
 	switch group + " " + cmd {
 	case "invite create":
 		return inviteCreate(ctx, a, rest, out, errOut)
 	case "invite list":
-		return noArgs(errOut, rest, func() int { return inviteList(ctx, a, out, errOut) })
+		return noArgs(errOut, group, rest, func() int { return inviteList(ctx, a, out, errOut) })
 	case "user list":
-		return noArgs(errOut, rest, func() int { return userList(ctx, a, out, errOut) })
+		return noArgs(errOut, group, rest, func() int { return userList(ctx, a, out, errOut) })
 	case "user reset":
 		return userReset(ctx, a, rest, out, errOut)
 	case "user sessions":
-		return withID(errOut, rest, func(id apiclient.ID) int { return userSessions(ctx, a, id, out, errOut) })
+		return withID(errOut, group, rest, func(id apiclient.ID) int { return userSessions(ctx, a, id, out, errOut) })
 	case "invite revoke", "user disable", "user enable", "user delete", "session revoke":
-		return withID(errOut, rest, func(id apiclient.ID) int { return accountAction(ctx, a, group, cmd, id, out, errOut) })
+		return withID(errOut, group, rest, func(id apiclient.ID) int { return accountAction(ctx, a, group, cmd, id, out, errOut) })
 	case "auth rotate-key":
-		return noArgs(errOut, rest, func() int {
+		return noArgs(errOut, group, rest, func() int {
 			if err := a.client.RotateSigningKey(ctx); err != nil {
 				return fail(errOut, "auth rotate-key", err)
 			}
 			fmt.Fprintln(out, "signing key rotated; tokens signed by the old key work until they expire")
 			return 0
 		})
+	case "auth rotate-master-key":
+		return noArgs(errOut, group, rest, func() int {
+			if err := a.client.RotateMasterKey(ctx); err != nil {
+				return fail(errOut, "auth rotate-master-key", err)
+			}
+			fmt.Fprintln(out, "master key rotated; users.db is re-encrypted under the new key, and the old key is deleted in 7 days")
+			return 0
+		})
 	}
-	fmt.Fprint(errOut, accountUsage)
-	return 2
+	return usageErr(errOut, group)
 }
 
-// noArgs runs fn when args is empty, otherwise prints the usage.
-func noArgs(errOut io.Writer, args []string, fn func() int) int {
+// noArgs runs fn when args is empty, otherwise prints group's usage.
+func noArgs(errOut io.Writer, group string, args []string, fn func() int) int {
 	if len(args) != 0 {
-		fmt.Fprint(errOut, accountUsage)
-		return 2
+		return usageErr(errOut, group)
 	}
 	return fn()
 }
 
-// withID runs fn with the one positional id in args, otherwise prints the usage.
-func withID(errOut io.Writer, args []string, fn func(apiclient.ID) int) int {
+// withID runs fn with the one positional id in args, otherwise prints group's usage.
+func withID(errOut io.Writer, group string, args []string, fn func(apiclient.ID) int) int {
 	if len(args) != 1 {
-		fmt.Fprint(errOut, accountUsage)
-		return 2
+		return usageErr(errOut, group)
 	}
 	id, ok := parseID(errOut, args[0])
 	if !ok {
@@ -98,8 +128,7 @@ func inviteCreate(ctx context.Context, a *app, args []string, out, errOut io.Wri
 	fs.SetOutput(errOut)
 	ttl := fs.Duration("ttl", 0, "how long the link works (default auth.invite_ttl)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		fmt.Fprint(errOut, accountUsage)
-		return 2
+		return usageErr(errOut, "invite")
 	}
 	req := &apiclient.CreateInviteRequest{}
 	if flagSet(fs, "ttl") {
@@ -120,8 +149,7 @@ func userReset(ctx context.Context, a *app, args []string, out, errOut io.Writer
 	ttl := fs.Duration("ttl", 0, "how long the link works (default auth.invite_ttl)")
 	arg, ok := parseWithPositional(fs, args)
 	if !ok {
-		fmt.Fprint(errOut, accountUsage)
-		return 2
+		return usageErr(errOut, "user")
 	}
 	id, ok := parseID(errOut, arg)
 	if !ok {

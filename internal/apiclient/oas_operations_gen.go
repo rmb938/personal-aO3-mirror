@@ -67,6 +67,7 @@ const (
 	RevokeAccountSessionOperation    OperationName = "RevokeAccountSession"
 	RevokeInviteOperation            OperationName = "RevokeInvite"
 	RevokeSessionOperation           OperationName = "RevokeSession"
+	RotateMasterKeyOperation         OperationName = "RotateMasterKey"
 	RotateSigningKeyOperation        OperationName = "RotateSigningKey"
 	SetSourceSettingsOperation       OperationName = "SetSourceSettings"
 	SignupOperation                  OperationName = "Signup"

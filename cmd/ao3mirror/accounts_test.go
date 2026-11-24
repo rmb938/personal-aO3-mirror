@@ -108,6 +108,7 @@ func TestAccountCLI(t *testing.T) {
 		{[]string{"user", "enable", "2"}, "user 2 enabled"},
 		{[]string{"user", "delete", "2"}, "user 2 deleted"},
 		{[]string{"auth", "rotate-key"}, "signing key rotated"},
+		{[]string{"auth", "rotate-master-key"}, "master key rotated"},
 	} {
 		code, out, errOut := c.run(step.args...)
 		require.Equal(t, 0, code, "%v: %s %s", step.args, out, errOut)
@@ -119,11 +120,24 @@ func TestAccountCLI(t *testing.T) {
 	assert.Equal(t, 1, code, "delete of a deleted account")
 	assert.Contains(t, errOut, "Not Found")
 
-	for _, args := range [][]string{{"user", "bogus"}, {"user", "disable"}, {"user", "disable", "x"}, {"auth", "rotate-key", "now"}} {
-		code, _, _ := c.run(args...)
+	code, _, errOut = c.run("user", "disable", "x")
+	assert.Equal(t, 2, code, "a bad id is a usage error")
+	assert.Contains(t, errOut, `bad id "x"`)
+	for _, args := range [][]string{{"user", "bogus"}, {"user", "disable"}, {"session", "revoke"}, {"auth", "rotate-key", "now"}, {"auth", "rotate-master-key", "now"}} {
+		code, _, errOut := c.run(args...)
 		assert.Equal(t, 2, code, "%v is a usage error", args)
+		assert.Contains(t, errOut, "usage: ao3mirror "+args[0]+" <command>", "%v prints its group's usage", args)
 	}
-	code, out, _ = c.run("invite")
-	assert.Equal(t, 0, code, "bare invite prints help")
-	assert.Contains(t, out, "user reset ID --scope", "help lists the commands")
+	// A bare group prints its own commands, not the other groups'.
+	for group, want := range map[string]string{"invite": "invite create", "user": "user reset ID --scope",
+		"session": "session revoke ID", "auth": "auth rotate-master-key"} {
+		code, out, _ := c.run(group)
+		assert.Equal(t, 0, code, "bare %s prints help", group)
+		assert.Contains(t, out, want, "%s help lists its commands", group)
+		for other := range accountUsages {
+			if other != group {
+				assert.NotContains(t, out, "\n  "+other+" ", "%s help lists no %s commands", group, other)
+			}
+		}
+	}
 }

@@ -210,7 +210,7 @@ func TestKeyChecks(t *testing.T) {
 	keyring := mk.Keyring()
 	hasher, err := auth.NewHasher(keyring, auth.HasherOptions{})
 	require.NoError(t, err)
-	ctl, err := controllers.NewAuth(t.Context(), controllers.AuthOptions{Users: users, Keyring: keyring,
+	ctl, err := controllers.NewAuth(t.Context(), controllers.AuthOptions{Users: users, MasterKeys: mk,
 		Hasher: hasher, Logger: log, Now: now, PublicURL: "https://mirror.example.com",
 		SigningKeyRotation: 24 * time.Hour})
 	require.NoError(t, err)
