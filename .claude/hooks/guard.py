@@ -10,6 +10,9 @@ Allowed exceptions inside data/: data/logs/*.log* and data/debug/*.skel.html
 
 Part 2 API (docs/part2-api.md): blocks sending the reveal param from Bash, WebFetch or MCP
 tools, writing its literal outside docs, and starting `ao3mirror serve` without --no-reveal.
+
+Part 4 UI (docs/part4-ui.md): blocks starting `ao3mirror dev ui-server` (a revealing server over
+synthetic data); only Playwright starts it, under `make ui-e2e`.
 """
 import json
 import re
@@ -66,7 +69,8 @@ REVEAL_DOC_PATH = re.compile(
 # commands, and only commands that run ao3mirror (in command position, or via `go run`)
 # are checked. Quoted strings with spaces (bash -c "...") are checked recursively, so a
 # commit message that mentions serve is not a run, but `bash -c "ao3mirror serve"` is.
-AO3MIRROR_TOKEN = re.compile(r"^(\S*/)?ao3mirror$")
+# Also matches suffixed builds such as bin/ao3mirror-e2e (make ui-e2e).
+AO3MIRROR_TOKEN = re.compile(r"^(\S*/)?ao3mirror(-[A-Za-z0-9_.-]+)?$")
 NO_REVEAL = re.compile(r"^--?no-reveal(=(true|1))?$")
 CONTROL = set(";&|\n()`")
 PREFIX_CMDS = {"nohup", "exec", "env", "time", "sudo", "command", "setsid", "nice"}
@@ -95,28 +99,45 @@ def _runs_ao3mirror(words) -> bool:
     )
 
 
-def serve_without_no_reveal(cmd: str, depth: int = 0) -> bool:
+def _serve_without_no_reveal(words) -> bool:
+    return "serve" in words and not any(NO_REVEAL.match(w) for w in words)
+
+
+def _ui_server(words) -> bool:
+    # `ao3mirror dev ui-server` serves seeded synthetic data with reveal on, for the web UI's
+    # Playwright tests (docs/part4-ui.md stage 4). Only Playwright starts it (`make ui-e2e`,
+    # as its own subprocess); Claude never starts it directly, so never drives a browser at a
+    # revealing server.
+    return any(a == "dev" and b == "ui-server" for a, b in zip(words, words[1:]))
+
+
+def runs_ao3mirror_with(cmd: str, pred, depth: int = 0) -> bool:
+    """Whether any simple command in cmd runs ao3mirror with words matching pred."""
     try:
         toks = _shell_tokens(cmd)
     except ValueError:
         # Unbalanced quotes: fall back to a plain scan, failing closed.
         toks = cmd.split()
-        return "serve" in toks and any(AO3MIRROR_TOKEN.match(t) for t in toks) and not any(
-            NO_REVEAL.match(t) for t in toks
-        )
+        return any(AO3MIRROR_TOKEN.match(t) for t in toks) and pred(toks)
     words = []
     for t in toks + [";"]:
         if t and all(c in CONTROL for c in t):
-            if words and _runs_ao3mirror(words) and "serve" in words and not any(
-                NO_REVEAL.match(w) for w in words
-            ):
+            if words and _runs_ao3mirror(words) and pred(words):
                 return True
             words = []
             continue
-        if depth < 3 and (" " in t or "\n" in t) and serve_without_no_reveal(t, depth + 1):
+        if depth < 3 and (" " in t or "\n" in t) and runs_ao3mirror_with(t, pred, depth + 1):
             return True
         words.append(t)
     return False
+
+
+def serve_without_no_reveal(cmd: str) -> bool:
+    return runs_ao3mirror_with(cmd, _serve_without_no_reveal)
+
+
+def starts_ui_server(cmd: str) -> bool:
+    return runs_ao3mirror_with(cmd, _ui_server)
 
 
 def written_text(ti: dict) -> str:
@@ -166,6 +187,8 @@ def main() -> None:
             block("the API reveal param is user-only; Claude never sends it")
         if serve_without_no_reveal(cmd):
             block("Claude may only start `ao3mirror serve` with --no-reveal")
+        if starts_ui_server(cmd):
+            block("`ao3mirror dev ui-server` reveals; only Playwright starts it (make ui-e2e)")
         if touches_protected(cmd):
             block("shell command references the data dir, a .db/.zst file, or images/")
         return

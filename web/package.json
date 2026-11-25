@@ -16,10 +16,12 @@
     "generate:check": "svelte-kit sync && orval --config orval.config.ts --quiet --outdated",
     "check": "svelte-kit sync && node scripts/clear-check-cache.js && svelte-check --tsgo --tsconfig ./tsconfig.json --fail-on-warnings",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.1",
     "@sveltejs/adapter-static": "4.0.1",
     "@sveltejs/kit": "3.4.1",
     "@sveltejs/vite-plugin-svelte": "7.3.2",

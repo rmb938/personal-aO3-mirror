@@ -1,3 +1,6 @@
 /node_modules/
 /build/
 /.svelte-kit/
+# Playwright output (make ui-e2e)
+/test-results/
+/playwright-report/

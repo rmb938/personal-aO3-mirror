@@ -99,6 +99,16 @@ CASES = [
     (True, "Bash", {"command": "(./ao3mirror serve &) && sleep 1"}),
     (False, "Bash", {"command": "git commit -m 'plan the ao3mirror serve API\n\nmore about serve'"}),
     (False, "Bash", {"command": "echo ao3mirror serve"}),
+    # `dev ui-server` reveals (synthetic data); only Playwright starts it, under make ui-e2e.
+    (True, "Bash", {"command": "./bin/ao3mirror-e2e dev ui-server"}),
+    (True, "Bash", {"command": "go run ./cmd/ao3mirror dev ui-server --addr 127.0.0.1:9000"}),
+    (True, "Bash", {"command": "make build && ./ao3mirror --log-level debug dev ui-server &"}),
+    (True, "Bash", {"command": "bash -c 'ao3mirror dev ui-server'"}),
+    (True, "Bash", {"command": "./bin/ao3mirror-e2e serve"}),
+    (False, "Bash", {"command": "make ui-e2e"}),
+    (False, "Bash", {"command": "./ao3mirror dev fake-server"}),
+    (False, "Bash", {"command": "go test ./cmd/ao3mirror -run UIServer"}),
+    (False, "Bash", {"command": "git commit -m 'add ao3mirror dev ui-server'"}),
 ]
 
 

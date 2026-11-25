@@ -10,7 +10,7 @@ const trustedHtmlComponent = 'src/lib/html/TrustedHtml.svelte';
 const rawHtmlSinks = ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'setHTMLUnsafe', 'write', 'writeln'];
 
 export default defineConfig(
-	globalIgnores(['build/', '.svelte-kit/', 'node_modules/', 'src/lib/api/api.gen.ts']),
+	globalIgnores(['build/', '.svelte-kit/', 'node_modules/', 'test-results/', 'playwright-report/', 'src/lib/api/api.gen.ts']),
 	js.configs.recommended,
 	ts.configs.strictTypeChecked,
 	ts.configs.stylisticTypeChecked,
@@ -52,7 +52,9 @@ export default defineConfig(
 		rules: { 'svelte/no-at-html-tags': 'off' }
 	},
 	{
-		files: ['scripts/**', '*.js', '*.ts'],
+		// Playwright tests run in Node (their page.evaluate callbacks get the DOM types from
+		// tsconfig).
+		files: ['scripts/**', 'tests/**', '*.js', '*.ts'],
 		languageOptions: { globals: globals.node }
 	}
 );
