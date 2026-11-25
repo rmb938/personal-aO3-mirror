@@ -419,15 +419,22 @@ type Invoker interface {
 	// tries, then (like an unknown or expired one) it is 401 `invalid-credentials` and the login starts
 	// again. Rate limited per client by its own `api.rate.login_per_min` budget.
 	//
+	// `transport` (default `bearer`) picks how the tokens come back: `bearer` returns a TokenPair;
+	// `cookie` (the web UI) sets them as HttpOnly session cookies and returns a CookieSession without
+	// them. A cookie login must send `X-Ao3mirror-Csrf: 1` from a same-origin page
+	// (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host), else 403 `forbidden` before the
+	// factor is checked.
+	//
 	// POST /api/v1/auth/login/totp
-	LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*TokenPair, error)
+	LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*LoginResultHeaders, error)
 	// Logout invokes logout operation.
 	//
 	// The session's refresh token stops working, and so does its access token (every request checks the
-	// session). Needs a bearer access token.
+	// session). Needs a bearer access token, or the access cookie (which then clears both session
+	// cookies).
 	//
 	// POST /api/v1/auth/logout
-	Logout(ctx context.Context, options ...RequestOption) error
+	Logout(ctx context.Context, options ...RequestOption) (*LogoutNoContent, error)
 	// PauseSource invokes pauseSource operation.
 	//
 	// Its queued jobs stay queued but are not picked. Any other state is 409 `state-conflict`.
@@ -492,8 +499,14 @@ type Invoker interface {
 	// (unknown, used, expired or revoked session, disabled account) is 401 `invalid-credentials`; log in
 	// again. Rate limited per client by `api.rate.refresh_per_min`.
 	//
+	// With `transport: cookie` the body holds no token: the refresh cookie is traded, both cookies are
+	// replaced and the response is a CookieSession. It needs the same `X-Ao3mirror-Csrf` header and
+	// same-origin request as a cookie login (else 403 `forbidden`); without the refresh cookie it is 401
+	// `invalid-credentials`. Refresh once at a time per browser: a second refresh with the same cookie is
+	// a reuse and ends the session.
+	//
 	// POST /api/v1/auth/refresh
-	Refresh(ctx context.Context, request *RefreshRequest, options ...RequestOption) (*TokenPair, error)
+	Refresh(ctx context.Context, request *RefreshRequest, options ...RequestOption) (*LoginResultHeaders, error)
 	// RefreshSource invokes refreshSource operation.
 	//
 	// Its next update poll is due now and its failed work fetches are queued again. With `full`, the whole
@@ -5526,13 +5539,19 @@ func (c *Client) sendLogin(ctx context.Context, request *LoginRequest, requestOp
 // tries, then (like an unknown or expired one) it is 401 `invalid-credentials` and the login starts
 // again. Rate limited per client by its own `api.rate.login_per_min` budget.
 //
+// `transport` (default `bearer`) picks how the tokens come back: `bearer` returns a TokenPair;
+// `cookie` (the web UI) sets them as HttpOnly session cookies and returns a CookieSession without
+// them. A cookie login must send `X-Ao3mirror-Csrf: 1` from a same-origin page
+// (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host), else 403 `forbidden` before the
+// factor is checked.
+//
 // POST /api/v1/auth/login/totp
-func (c *Client) LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*TokenPair, error) {
+func (c *Client) LoginTOTP(ctx context.Context, request *LoginTOTPRequest, options ...RequestOption) (*LoginResultHeaders, error) {
 	res, err := c.sendLoginTOTP(ctx, request, options...)
 	return res, err
 }
 
-func (c *Client) sendLoginTOTP(ctx context.Context, request *LoginTOTPRequest, requestOptions ...RequestOption) (res *TokenPair, err error) {
+func (c *Client) sendLoginTOTP(ctx context.Context, request *LoginTOTPRequest, requestOptions ...RequestOption) (res *LoginResultHeaders, err error) {
 
 	var reqCfg requestConfig
 	reqCfg.setDefaults(c.baseClient)
@@ -5589,12 +5608,13 @@ func (c *Client) sendLoginTOTP(ctx context.Context, request *LoginTOTPRequest, r
 // Logout invokes logout operation.
 //
 // The session's refresh token stops working, and so does its access token (every request checks the
-// session). Needs a bearer access token.
+// session). Needs a bearer access token, or the access cookie (which then clears both session
+// cookies).
 //
 // POST /api/v1/auth/logout
-func (c *Client) Logout(ctx context.Context, options ...RequestOption) error {
-	_, err := c.sendLogout(ctx, options...)
-	return err
+func (c *Client) Logout(ctx context.Context, options ...RequestOption) (*LogoutNoContent, error) {
+	res, err := c.sendLogout(ctx, options...)
+	return res, err
 }
 
 func (c *Client) sendLogout(ctx context.Context, requestOptions ...RequestOption) (res *LogoutNoContent, err error) {
@@ -6656,13 +6676,19 @@ func (c *Client) sendQueryWorks(ctx context.Context, request *WorkQueryRequest, 
 // (unknown, used, expired or revoked session, disabled account) is 401 `invalid-credentials`; log in
 // again. Rate limited per client by `api.rate.refresh_per_min`.
 //
+// With `transport: cookie` the body holds no token: the refresh cookie is traded, both cookies are
+// replaced and the response is a CookieSession. It needs the same `X-Ao3mirror-Csrf` header and
+// same-origin request as a cookie login (else 403 `forbidden`); without the refresh cookie it is 401
+// `invalid-credentials`. Refresh once at a time per browser: a second refresh with the same cookie is
+// a reuse and ends the session.
+//
 // POST /api/v1/auth/refresh
-func (c *Client) Refresh(ctx context.Context, request *RefreshRequest, options ...RequestOption) (*TokenPair, error) {
+func (c *Client) Refresh(ctx context.Context, request *RefreshRequest, options ...RequestOption) (*LoginResultHeaders, error) {
 	res, err := c.sendRefresh(ctx, request, options...)
 	return res, err
 }
 
-func (c *Client) sendRefresh(ctx context.Context, request *RefreshRequest, requestOptions ...RequestOption) (res *TokenPair, err error) {
+func (c *Client) sendRefresh(ctx context.Context, request *RefreshRequest, requestOptions ...RequestOption) (res *LoginResultHeaders, err error) {
 
 	var reqCfg requestConfig
 	reqCfg.setDefaults(c.baseClient)

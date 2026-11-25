@@ -17,7 +17,8 @@ import (
 // socket these routes are always 401).
 
 // Logout is POST /api/v1/auth/logout (204): ends the access token's session; its refresh token
-// stops working and so does the access token.
+// stops working and so does the access token. Signed in by the access cookie, it also clears
+// both session cookies.
 func (a *Handlers) Logout(r *http.Request) (any, error) {
 	p, err := principalNoParams(r)
 	if err != nil {
@@ -26,7 +27,11 @@ func (a *Handlers) Logout(r *http.Request) (any, error) {
 	if err := a.ctl.Auth().Logout(r.Context(), p); err != nil {
 		return nil, err
 	}
-	return runtime.NoContent(), nil
+	res := runtime.NoContent()
+	if runtime.CookieAuth(r) {
+		res.Cookies = runtime.ClearSessionCookies()
+	}
+	return res, nil
 }
 
 // Account is GET /api/v1/account: the signed-in user's account.

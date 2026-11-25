@@ -88,7 +88,14 @@ var (
 	DetailResetPassword      = problem.NewDetail("is required when the reset link replaces the password, and must be omitted otherwise")
 
 	// Bearer access tokens (stage 16f): the account routes.
-	DetailNoAccessToken     = problem.NewDetail("this route needs an access token: send Authorization: Bearer with the login's access_token")
+	DetailNoAccessToken   = problem.NewDetail("this route needs an access token: send Authorization: Bearer with the login's access_token")
+	DetailBothCredentials = problem.NewDetail("send the access token either as Authorization: Bearer or as the access cookie, not both")
+
+	// The cookie transport (Part 4 stage 1).
+	DetailBadAccessCookie   = problem.NewDetail("the access cookie must be sent once, holding the access token the cookie login set")
+	DetailCSRFHeader        = problem.NewDetail("a request with session cookies, or asking for the cookie transport, must send " + HeaderCSRF + ": " + CSRFValue)
+	DetailCookieCrossOrigin = problem.NewDetail("a request with session cookies, or asking for the cookie transport, must come from this server's own pages")
+	DetailNoRefreshCookie   = problem.NewDetail("a cookie-transport refresh needs the refresh cookie a cookie-transport login set; log in again")
 	DetailBadAccessToken    = problem.NewDetail("the access token is not valid: expired, revoked or malformed; refresh it or log in again")
 	DetailBadAuthorization  = problem.NewDetail("the Authorization header must be sent once, as Bearer and then the access token")
 	DetailAdminNoAccount    = problem.NewDetail("the admin socket has no signed-in account; use the public listener with an access token")

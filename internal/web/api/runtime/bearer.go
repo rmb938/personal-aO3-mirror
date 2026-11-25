@@ -20,8 +20,9 @@ type authResult string
 
 const (
 	authOK        authResult = "ok"
-	authMissing   authResult = "missing"   // no bearer credentials (none, or another scheme)
-	authMalformed authResult = "malformed" // Authorization repeated, too long or not token68
+	authMissing   authResult = "missing"   // no credentials (none, or another scheme without the cookie)
+	authMalformed authResult = "malformed" // Authorization or the access cookie repeated, too long or not token68
+	authBoth      authResult = "both"      // Authorization and the access cookie: ambiguous
 	authInvalid   authResult = "invalid"   // the token or its session was refused
 	authAdmin     authResult = "admin"     // the admin socket, which never reads Authorization
 )
@@ -42,17 +43,33 @@ type bearerError struct {
 func (e *bearerError) Error() string { return e.err.Error() }
 func (e *bearerError) Unwrap() error { return e.err }
 
-// bearerToken is the one place a request's access token is read (a cookie transport for the
-// Part 4 UI is added here). It returns the token, or authMissing when the request carries no
-// bearer credentials (no Authorization, or another scheme) or authMalformed when Authorization
-// is sent more than once, is over MaxAuthorizationBytes or holds no single token68 (RFC 9110
-// §11.4; RFC 6750 §2.1's b64token).
-func bearerToken(r *http.Request) (string, authResult) {
+// bearerToken is the one place a request's access token is read: from Authorization (bearer)
+// or, when that header is absent, from the access cookie (the web UI's cookie transport). It
+// returns the token and its transport, or authBoth when the request carries Authorization and
+// the access cookie (ambiguous), authMissing when it carries neither (or Authorization with
+// another scheme), or authMalformed when either is sent more than once, is over
+// MaxAuthorizationBytes or holds no single token68 (RFC 9110 §11.4; RFC 6750 §2.1's b64token).
+func bearerToken(r *http.Request) (string, transport, authResult) {
 	vals := r.Header.Values("Authorization")
+	cookies := cookieValues(r, CookieAccess)
 	switch {
+	case len(vals) > 0 && len(cookies) > 0:
+		return "", "", authBoth
+	case len(vals) == 0 && len(cookies) == 0:
+		return "", "", authMissing
 	case len(vals) == 0:
-		return "", authMissing
-	case len(vals) > 1 || len(vals[0]) > MaxAuthorizationBytes:
+		if len(cookies) > 1 || len(cookies[0]) > MaxAuthorizationBytes || !validToken68(cookies[0]) {
+			return "", transportCookie, authMalformed
+		}
+		return cookies[0], transportCookie, authOK
+	}
+	token, res := authorizationToken(vals)
+	return token, transportBearer, res
+}
+
+// authorizationToken is the token of a request's Authorization values (at least one).
+func authorizationToken(vals []string) (string, authResult) {
+	if len(vals) > 1 || len(vals[0]) > MaxAuthorizationBytes {
 		return "", authMalformed
 	}
 	scheme, rest, _ := strings.Cut(vals[0], " ")
@@ -89,8 +106,9 @@ func validToken68(s string) bool {
 // hashed. A path whose route pattern (for any method, so a 405 stays a 405) is anonymous
 // passes untouched; every other path, including one that matches no route, needs a token.
 //
-// It refuses a request without a valid access token and gives the handler its Principal. No
-// bearer credentials is 401 unauthorized; a malformed Authorization 400 bad-request with
+// It refuses a request without a valid access token (bearer or access cookie, bearerToken) and
+// gives the handler its Principal. No credentials is 401 unauthorized; a malformed
+// Authorization or access cookie, or both at once, 400 bad-request with
 // error="invalid_request"; a refused token (bad JWT, revoked or expired session, disabled or
 // deleted account) 401 unauthorized with error="invalid_token" (RFC 6750 §3.1).
 func (a *API) authenticate(anonymous func(pattern string) bool) func(http.Handler) http.Handler {
@@ -101,16 +119,25 @@ func (a *API) authenticate(anonymous func(pattern string) bool) func(http.Handle
 				return
 			}
 			st := state(r.Context())
-			token, res := bearerToken(r)
+			token, tr, res := bearerToken(r)
+			st.transport = tr
 			switch res {
 			case authMissing:
 				st.auth = res
 				respondError(w, r, a.log, problem.WithDetail(dto.TypeUnauthorized, DetailNoAccessToken))
 				return
-			case authMalformed:
+			case authBoth:
 				st.auth = res
 				respondError(w, r, a.log, &bearerError{code: bearerInvalidRequest,
-					err: problem.WithDetail(dto.TypeBadRequest, DetailBadAuthorization)})
+					err: problem.WithDetail(dto.TypeBadRequest, DetailBothCredentials)})
+				return
+			case authMalformed:
+				st.auth = res
+				d := DetailBadAuthorization
+				if tr == transportCookie {
+					d = DetailBadAccessCookie
+				}
+				respondError(w, r, a.log, &bearerError{code: bearerInvalidRequest, err: problem.WithDetail(dto.TypeBadRequest, d)})
 				return
 			}
 			p, err := a.ctl.Auth().Authenticate(r.Context(), token)

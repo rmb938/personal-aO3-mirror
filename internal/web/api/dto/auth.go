@@ -50,3 +50,26 @@ type TokenPair struct {
 	RefreshToken     RefreshToken `json:"refresh_token"`
 	RefreshExpiresAt time.Time    `json:"refresh_expires_at"`
 }
+
+// Transport is how a login or refresh hands over the session's tokens: in the body (bearer,
+// the default, for the CLI and API clients) or as HttpOnly cookies (cookie, for the web UI).
+type Transport string
+
+const (
+	TransportBearer Transport = "bearer"
+	TransportCookie Transport = "cookie"
+)
+
+// EnumValues implements the enforcer's enum check.
+func (Transport) EnumValues() []string {
+	return []string{string(TransportBearer), string(TransportCookie)}
+}
+
+// CookieSession is a cookie-transport login or refresh (Part 4): the tokens are in the
+// response's Set-Cookie headers, never the body, so only the expiry times are here (when to
+// refresh, and when the session ends unless refreshed). Transport is always cookie.
+type CookieSession struct {
+	Transport        Transport `json:"transport"`
+	ExpiresIn        int64     `json:"expires_in"`
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
+}

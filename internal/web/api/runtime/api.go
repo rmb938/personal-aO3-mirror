@@ -219,10 +219,13 @@ func (a *API) router(admin bool, registerRoutes RouteBuilder, anonymous func(str
 		timeout(a.opts.RequestTimeout),
 		a.crossOrigin(),
 	)
-	if !admin {
+	if admin {
+		r.Use(dropCookies) // the socket never reads cookies: no cookie transport there
+	} else {
 		// Before reveal, so a request without a valid access token is always hashed. The
-		// socket's file permissions are its boundary; it never reads Authorization.
-		r.Use(a.authenticate(anonymous))
+		// socket's file permissions are its boundary; it never reads Authorization. The CSRF
+		// check comes first, so a cookie request without it never spends a token check.
+		r.Use(a.cookieCSRF, a.authenticate(anonymous))
 	}
 	r.Use(a.reveal)
 	r.NotFound(a.Handle(func(*http.Request) (any, error) { return nil, problem.WithDetail(dto.TypeNotFound, DetailNoRoute) }))

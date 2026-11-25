@@ -38,7 +38,10 @@ info:
     without a valid token never gets revealed content, and before routing, so an unknown path
     is also 401 without a token. The admin socket (a unix socket only its Linux user can open)
     never reads `Authorization` and needs no token; there the signed-in user's own operations
-    (`/api/v1/account`, logout) are always 401, since it has no user.
+    (`/api/v1/account`, logout) are always 401, since it has no user. The web UI logs in with
+    the cookie transport instead (see the Transport schema): the access token then comes from an
+    HttpOnly cookie, and every request carrying a session cookie except GET and HEAD needs
+    `X-Ao3mirror-Csrf: 1` from a same-origin page. API clients never need it.
 
     Limits: per client IP (IPv6 by /64; behind a trusted proxy, the rightmost untrusted
     `X-Forwarded-For` entry), `api.rate.general_per_min` requests a minute (default 120) on
@@ -1065,6 +1068,12 @@ paths:
         while it lasts); a challenge allows 5 tries, then (like an unknown or expired one) it is
         401 `invalid-credentials` and the login starts again. Rate limited per client by its own
         `api.rate.login_per_min` budget.
+
+        `transport` (default `bearer`) picks how the tokens come back: `bearer` returns a
+        TokenPair; `cookie` (the web UI) sets them as HttpOnly session cookies and returns a
+        CookieSession without them. A cookie login must send `X-Ao3mirror-Csrf: 1` from a
+        same-origin page (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host), else
+        403 `forbidden` before the factor is checked.
       x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
       requestBody:
         required: true
@@ -1073,10 +1082,12 @@ paths:
             schema: { $ref: "#/components/schemas/LoginTOTPRequest" }
       responses:
         "200":
-          description: Logged in; the session's tokens.
+          description: Logged in; the session's tokens (bearer), or their expiry times (cookie).
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SetCookie" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TokenPair" }
+              schema: { $ref: "#/components/schemas/LoginResult" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/auth/refresh:
     post:
@@ -1090,6 +1101,13 @@ paths:
         session is revoked. Any refusal (unknown, used, expired or revoked session, disabled
         account) is 401 `invalid-credentials`; log in again. Rate limited per client by
         `api.rate.refresh_per_min`.
+
+        With `transport: cookie` the body holds no token: the refresh cookie is traded, both
+        cookies are replaced and the response is a CookieSession. It needs the same
+        `X-Ao3mirror-Csrf` header and same-origin request as a cookie login (else 403
+        `forbidden`); without the refresh cookie it is 401 `invalid-credentials`. Refresh once
+        at a time per browser: a second refresh with the same cookie is a reuse and ends the
+        session.
       x-problems: [invalid-body, body-too-large, unsupported-media-type, forbidden, invalid-credentials]
       requestBody:
         required: true
@@ -1098,10 +1116,12 @@ paths:
             schema: { $ref: "#/components/schemas/RefreshRequest" }
       responses:
         "200":
-          description: The session's new tokens.
+          description: The session's new tokens (bearer), or their expiry times (cookie).
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SetCookie" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TokenPair" }
+              schema: { $ref: "#/components/schemas/LoginResult" }
         default: { $ref: "#/components/responses/Problem" }
   # The signed-in user's own account. Like every operation without `security: []`, each needs
   # a bearer access token; the admin socket has no user, so there they are always 401.
@@ -1111,10 +1131,14 @@ paths:
       summary: End the access token's session.
       description: |
         The session's refresh token stops working, and so does its access token (every request
-        checks the session). Needs a bearer access token.
+        checks the session). Needs a bearer access token, or the access cookie (which then
+        clears both session cookies).
       x-problems: [forbidden]
       responses:
-        "204": { description: The session is ended. }
+        "204":
+          description: The session is ended.
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SetCookie" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/account:
     get:
@@ -1467,6 +1491,11 @@ components:
         Seconds to wait. On 429 the limit's window (60 or 3600), or for a login backoff the
         seconds left (1 to 900); on a busy 503, 1.
       schema: { type: integer, minimum: 1 }
+    SetCookie:
+      description: |
+        Cookie transport only: a login or refresh sets both session cookies (see Transport); a
+        logout signed in by the access cookie clears them (`Max-Age=0`).
+      schema: { type: string }
     WWWAuthenticate:
       description: |
         On every 401, the accepted scheme (RFC 9110 §15.5.2, RFC 6750 §3). When the request
@@ -3574,15 +3603,30 @@ components:
           type: string
           description: An unused recovery code; case, dashes and spaces don't matter.
           pattern: "^[A-Za-z2-7 -]{24,96}$"
+        transport: { $ref: "#/components/schemas/Transport" }
     RefreshRequest:
       type: object
-      required: [refresh_token]
+      description: "`refresh_token` is required with the bearer transport and must be omitted with `cookie`."
       additionalProperties: false
       properties:
         refresh_token:
           type: string
           description: The session's current refresh token, from the login or the last refresh.
           pattern: "^rt_[A-Za-z0-9_-]{43}$"
+        transport: { $ref: "#/components/schemas/Transport" }
+    Transport:
+      type: string
+      enum: [bearer, cookie]
+      default: bearer
+      description: |
+        How a login or refresh hands over the session's tokens. `bearer` (the default, for API
+        clients) returns them in the body; `cookie` (for the web UI) sets them as HttpOnly
+        cookies JS can't read, `__Host-ao3mirror-access` (the access token, read when the
+        request has no `Authorization`) and `__Host-ao3mirror-refresh`. Both are `Secure`,
+        `SameSite=Strict`, `Path=/`. A request carrying a session cookie must send
+        `X-Ao3mirror-Csrf: 1` from a same-origin page on every method but GET and HEAD (else
+        403 `forbidden`); one carrying both `Authorization` and the access cookie is 400
+        `bad-request`. The admin socket ignores cookies.
     ChangePasswordRequest:
       type: object
       required: [current_password, password, code]
@@ -3640,3 +3684,24 @@ components:
         refresh_expires_at:
           allOf: [{ $ref: "#/components/schemas/Timestamp" }]
           description: The session ends then unless refreshed (and at `auth.max_session_age` after the login regardless).
+    CookieSession:
+      type: object
+      description: |
+        A cookie-transport login or refresh: the tokens are in the response's `Set-Cookie`
+        headers, never the body. Refresh before `expires_in`, or when a request is 401.
+      required: [transport, expires_in, refresh_expires_at]
+      additionalProperties: false
+      properties:
+        transport: { type: string, enum: [cookie] }
+        expires_in:
+          type: integer
+          description: Seconds until the access cookie (and its token) expires (`auth.access_ttl`).
+          minimum: 1
+        refresh_expires_at:
+          allOf: [{ $ref: "#/components/schemas/Timestamp" }]
+          description: The session ends then unless refreshed (and at `auth.max_session_age` after the login regardless).
+    LoginResult:
+      description: A TokenPair with the bearer transport, a CookieSession with `cookie`.
+      oneOf:
+        - { $ref: "#/components/schemas/TokenPair" }
+        - { $ref: "#/components/schemas/CookieSession" }

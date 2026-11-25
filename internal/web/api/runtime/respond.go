@@ -28,10 +28,11 @@ const (
 // It never sees the http.ResponseWriter, so it can't write anything respond doesn't check.
 type HandlerFunc func(r *http.Request) (any, error)
 
-// Response lets a handler pick a non-200 status or a Location header.
+// Response lets a handler pick a non-200 status, a Location header or Set-Cookie headers.
 type Response struct {
 	Status   int
-	Location string // a path built from IDs only
+	Location string         // a path built from IDs only
+	Cookies  []*http.Cookie // only SessionCookies or ClearSessionCookies
 	Body     any
 }
 
@@ -82,6 +83,9 @@ func Handle(log *slog.Logger, h HandlerFunc) http.HandlerFunc {
 			status = res.Status
 			if res.Location != "" {
 				w.Header().Set("Location", res.Location)
+			}
+			for _, c := range res.Cookies {
+				http.SetCookie(w, c)
 			}
 			v = res.Body
 			if status == http.StatusNoContent {
