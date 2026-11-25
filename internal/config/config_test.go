@@ -66,6 +66,7 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 		"request_timeout: 2m":            "request_timeout",
 		"hash_key_rotation: 30m":         "hash_key_rotation",
 		"rate: {general_per_min: 0}":     "api.rate",
+		"rate: {ui_per_min: 0}":          "api.rate",
 		"rate: {source_add_per_hour: 0}": "api.rate",
 		"rate: {signup_per_hour: 0}":     "api.rate",
 		"rate: {login_per_min: 0}":       "api.rate",

@@ -67,9 +67,11 @@ type API struct {
 
 // APIRate holds the per-client rate limits of the public listener (the admin socket's are
 // higher). SearchPerMin is shared by the QUERY search routes, SignupPerHour by the signup and
-// reset routes (both steps). LoginPerMin applies to each login step separately.
+// reset routes (both steps). LoginPerMin applies to each login step separately. UIPerMin is
+// the web UI's static files, a budget of their own: one page load fetches many of them.
 type APIRate struct {
 	GeneralPerMin    int `yaml:"general_per_min"`
+	UIPerMin         int `yaml:"ui_per_min"`
 	SearchPerMin     int `yaml:"search_per_min"`
 	SourceAddPerHour int `yaml:"source_add_per_hour"`
 	SignupPerHour    int `yaml:"signup_per_hour"`
@@ -205,8 +207,8 @@ func Default() Config {
 			RequestTimeout:  10 * time.Second,
 			HashKeyRotation: 24 * time.Hour,
 			PublicURL:       "http://localhost:8080",
-			Rate: APIRate{GeneralPerMin: 120, SearchPerMin: 30, SourceAddPerHour: 10, SignupPerHour: 5,
-				LoginPerMin: 10, RefreshPerMin: 30},
+			Rate: APIRate{GeneralPerMin: 120, UIPerMin: 600, SearchPerMin: 30, SourceAddPerHour: 10,
+				SignupPerHour: 5, LoginPerMin: 10, RefreshPerMin: 30},
 		},
 	}
 }
@@ -391,10 +393,10 @@ func (a API) validate() []error {
 	if a.HashKeyRotation < 0 || (a.HashKeyRotation > 0 && a.HashKeyRotation < redact.MinRotation) {
 		add("api.hash_key_rotation %s must be 0 (once per process) or >= %s", a.HashKeyRotation, redact.MinRotation)
 	}
-	if r := a.Rate; r.GeneralPerMin < 1 || r.SearchPerMin < 1 || r.SourceAddPerHour < 1 || r.SignupPerHour < 1 ||
-		r.LoginPerMin < 1 || r.RefreshPerMin < 1 {
-		add("api.rate.general_per_min, search_per_min, source_add_per_hour, signup_per_hour, login_per_min and " +
-			"refresh_per_min must be >= 1")
+	if r := a.Rate; r.GeneralPerMin < 1 || r.UIPerMin < 1 || r.SearchPerMin < 1 || r.SourceAddPerHour < 1 ||
+		r.SignupPerHour < 1 || r.LoginPerMin < 1 || r.RefreshPerMin < 1 {
+		add("api.rate.general_per_min, ui_per_min, search_per_min, source_add_per_hour, signup_per_hour, " +
+			"login_per_min and refresh_per_min must be >= 1")
 	}
 	if err := a.validatePublicURL(); err != nil {
 		errs = append(errs, err)

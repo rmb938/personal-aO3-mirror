@@ -40,7 +40,7 @@ readability in review and a mainstream ecosystem.
 |---|---|
 | Devices | Phone and desktop; mobile-first layouts. |
 | Framework | Svelte 5 + TypeScript, SvelteKit as a static SPA (`adapter-static`, fallback page), built by Vite. |
-| API client | TS types generated from `docs/api/openapi.yaml` (openapi-typescript) used with openapi-fetch. The reveal param's name is generated into a TS constant from `runtime.RevealParam` by `go generate`; its literal is never handwritten in UI code. |
+| API client | A typed client generated from `docs/api/openapi.yaml` by orval (changed in stage 3 from openapi-typescript + openapi-fetch, now unmaintained; see "Build"). The reveal param's name is generated into a TS constant from `runtime.RevealParam` by `go generate`; its literal is never handwritten in UI code. |
 | Look | AO3-inspired, not a clone: same layout ideas (blurbs, tag groups, chapter navigation), our own CSS tuned for phones. otwarchive's CSS is not reused. |
 | Styling | Plain component-scoped Svelte CSS plus a small set of CSS variables (colors, spacing, reading size/width). No Tailwind or CSS library. |
 | Serving | The built UI is embedded with `embed.FS` and served by `serve` on the public listener at `/`, same origin as `/api/v1` (no CORS). Non-API paths fall back to `index.html` so deep links work. A placeholder page is served when the UI wasn't built. The static files sit beside the enforcer as a narrow fixed-content exemption, which the user approves explicitly (stage 2). |
@@ -62,15 +62,91 @@ readability in review and a mainstream ecosystem.
 ### Layout
 
 ```
-web/                     SvelteKit app (package.json, lockfile, svelte.config.js, vite config)
-  src/lib/api/           generated schema types, the fetch wrapper (refresh/retry, CSRF header)
+web/                     SvelteKit app (package.json, lockfile, vite.config.ts, eslint, tsconfig)
+  go.mod                 not Go: keeps web/ (npm packages ship .go files) out of ./...
+  scripts/               build helpers (externalize-boot.js, see "Build" below)
+  orval.config.ts        generates src/lib/api/api.gen.ts from the OpenAPI spec
+  src/lib/api/           api.gen.ts (generated client), http.ts (apiFetch: refresh/retry, CSRF header)
   src/lib/reveal.gen.ts  generated from runtime.RevealParam (go generate)
+  src/lib/html/          TrustedHtml.svelte, the one component allowed to use {@html}
   src/lib/sanitize/      HTML and skin sanitizers (pure TS, no DOM state)
   src/routes/            pages
   tests/                 Playwright tests (run against the seeded fake server)
 internal/web/ui/         the static handler, the UI's CSP, placeholder.html
   dist/                  the SvelteKit build (embed.FS), written there by `make ui`
+  genreveal/             writes reveal.gen.ts (go generate; a test keeps it current)
+.node-version            the Node version used locally (fnm) and in CI: the latest LTS
 ```
+
+### Build (stage 3)
+
+- **Versions.** Every npm package is on its latest release, and Node is the latest LTS (26).
+- **TypeScript 7 type-checks; 6 is only a library for tools.** TypeScript 7.0 (the native
+  compiler) ships no JS API; a new, different one is planned for 7.1. Kit, svelte-check and
+  typescript-eslint call the old API, so they need 6.x installed.
+  Microsoft services 6.x (security, high-severity regressions, 6/7 compatibility) for exactly
+  this side-by-side use, and recommends TS 7 for checking with 6 for tooling. We do the same,
+  as Kit itself does: `typescript` is 6.0.3 (the last 6.x) and `@typescript/native` is an npm
+  alias of `typescript@7`, whose `tsc` is the one on the path. `svelte-check --tsgo` transpiles
+  the Svelte files and type-checks everything with TS 7. Its transpiled copies under
+  `.svelte-kit/.svelte-check` aren't removed when a component is deleted (a ghost keeps
+  reporting errors), so `npm run check` clears that directory first. Drop `typescript@6` once
+  these tools move to the 7.1 API.
+- **API client: orval** (replacing the planned openapi-typescript + openapi-fetch, which went
+  into maintenance mode with no further updates, security fixes included, on 2026-09-19:
+  openapi-ts/openapi-typescript#2874). Compared on 2026-11-25:
+  - orval 8.49.0: commits daily, 22 open issues, built with TypeScript 7 and needs no
+    TypeScript at run time, clean `npm audit`, and generates all 67 operations including the 6
+    OpenAPI 3.2 `QUERY` ones (openapi-typescript silently dropped them).
+  - hey-api: no commits since 2026-09-30, 681 open issues, and its latest release pulls in a
+    js-yaml with high-severity advisories (fails our `npm audit`).
+  - Kubb: active, but its TypeScript plugin needs the TypeScript 6 API (`@typescript/typescript6`).
+  - openapi-typesafe (an openapi-typescript drop-in): three weeks old, release candidates only,
+    and an unknown maintainer: too new to trust with the supply chain.
+
+  `orval.config.ts` generates `src/lib/api/api.gen.ts`: types plus one plain `fetch`-style
+  function per operation, each response typed as a union by status, and no runtime library.
+  Every call goes through `apiFetch` (`src/lib/api/http.ts`), where stage 5 adds refresh, the
+  CSRF header and the reveal param. orval reads `tsconfig.json`, which extends Kit's generated
+  `$app/tsconfig`, so the scripts run `svelte-kit sync` first. orval depends on esbuild, whose
+  postinstall script only checks the platform binary npm already installed;
+  `package.json` `allowScripts` denies it, so no install scripts run.
+- **SvelteKit 3** takes its config as the argument to the `sveltekit()` Vite plugin (in
+  `vite.config.ts`; there is no `svelte.config.js`), and `$lib` is gone: imports use `#lib/…`,
+  a Node subpath import declared in `package.json`. The generated base tsconfig is
+  `$app/tsconfig` (under `node_modules`).
+- **No inline script.** Kit always writes its start-up code as an inline `<script>` in the
+  page. `scripts/externalize-boot.js` wraps adapter-static: after the build it moves that script
+  to `_app/immutable/boot.<hash>.js` (a classic script in the same place, since it finds its
+  mount point with `document.currentScript`) and fails the build if the page still has an
+  inline script, `<style>`, style attribute or event handler. `paths.relative` is off, so the
+  one `index.html` works at any deep link. A Go test checks a real embedded build the same
+  way and that every file it references is served (`internal/web/ui`).
+- **Trusted Types work with `{@html}`** (checked in headless Chromium under the UI CSP):
+  Svelte 5 creates its own policy, `svelte-trusted-html`, for its compiled templates, and
+  `{@html}` passes a `TrustedHTML` through untouched, while a plain string is refused. So the
+  CSP allows exactly two policy names, `ao3mirror-html` (the sanitizer's, stage 7) and
+  `svelte-trusted-html`; a second policy with either name is refused.
+- **No inline styles: the console stays free of CSP violations.** Kit's route announcer
+  (`#svelte-announcer` in its `root.svelte`) hides itself with a style attribute, which
+  `style-src 'self'` blocks. The browser logged that on every page load. The Vite plugin
+  `scripts/no-inline-styles.js` removes that one attribute before Svelte compiles the component
+  (it fails if the attribute isn't where it expects; a test runs it on Kit's real file), and
+  `app.css` hides the announcer instead. The plugin also fails the client build if any compiled
+  template still has a style attribute. ESLint's `svelte/no-inline-styles` rejects `style=` and
+  `style:` in our components (dynamic ones too, which the build scan can't see) and transitions,
+  which inject `<style>` elements. Style with classes in component CSS. Allowing Kit's
+  attribute by hash (`'unsafe-hashes'`) would tie the Go CSP to Kit's markup, so we don't.
+  Checked in headless Chromium under the UI CSP: no console messages at all.
+- **`{@html}` rule.** ESLint's `svelte/no-at-html-tags` is on everywhere except
+  `src/lib/html/TrustedHtml.svelte`, whose prop is a `TrustedHTML` (`@types/trusted-types`;
+  TypeScript 6's DOM types lack it). `no-restricted-properties` also rejects `innerHTML`,
+  `outerHTML`, `insertAdjacentHTML`, `setHTMLUnsafe` and `document.write` in `src/`.
+- **Make.** `make ui` runs `npm ci` when the lockfile changes, builds, and copies `web/build`
+  into `internal/web/ui/dist` (keeping `.gitkeep`); `make build` runs it first. `make ui-check`
+  (part of `make check`) runs `orval --outdated` (fails on a stale `api.gen.ts`), svelte-check,
+  ESLint, Vitest, the build and `npm audit`. `make generate` also writes `reveal.gen.ts` and
+  `api.gen.ts`.
 
 `internal/web/ui/dist` is not committed except `dist/.gitkeep` (go:embed needs a file), and
 `make ui` writes the build into it (go:embed can't reach `web/build` from `internal/web/ui`).
@@ -83,7 +159,8 @@ On the public listener, a path that is exactly `/api` or under `/api/` (the deco
 escaped spelling still reaches the API) goes to the API router, unchanged. Every other path
 goes to a small separate chain: request ID, client IP, access log (route `/*`, never the raw
 path), recoverer, security headers, Host check, URL limits, its own rate-limit budget
-(`general_per_min`, since a page load fetches many files) and a throttle, then the
+(`api.rate.ui_per_min`, default 600; stage 3 split it from `general_per_min`, whose 120 a few
+hard refreshes used up, since each fetches the page and every asset) and a throttle, then the
 `internal/web/ui` handler. That chain has no enforcer, auth or reveal: it is the one approved
 exemption from the enforcer, limited to files embedded at build time, with no store access and
 nothing echoed from the request. The handler answers GET/HEAD only (else 405, plain text). An
@@ -91,8 +168,7 @@ existing file is served with an explicit content-type table and an ETag; a missi
 `/_app/` or whose last segment has a dot is 404; anything else gets `index.html` (SPA
 fallback). `/_app/immutable/` is cached a year (`immutable`), everything else `no-cache`. Every
 response carries the UI CSP, `nosniff`, `no-referrer`, and same-origin CORP and COOP. The admin
-socket has no UI. The trusted-types policy name in the CSP (`ao3mirror-html`) is a placeholder
-that stage 3 confirms.
+socket has no UI. The CSP's trusted-types policy names are settled in "Build" below.
 
 ### Fanwork protection in the UI
 
@@ -121,8 +197,9 @@ that stage 3 confirms.
 UI CSP (on `index.html` and the fallback, set by `internal/web/ui`):
 `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self';
 object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'self';
-require-trusted-types-for 'script'; trusted-types <policy names>`. The SvelteKit build must not
-emit inline scripts (configure it, and test the served headers and the built HTML).
+require-trusted-types-for 'script'; trusted-types ao3mirror-html svelte-trusted-html`. The
+SvelteKit build must not emit inline scripts (see "Build": the boot script is moved to a file,
+and both the build and a Go test check the HTML).
 
 ### Auth in the browser
 
@@ -178,7 +255,7 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
   listener only. The enforcer exemption is limited to these embedded files (fixed content, no
   store access) and needs the user's explicit approval. The all-routes leak test covers the
   UI routes.
-- [ ] **3. Frontend scaffold.** `web/` with SvelteKit static, TS strict, generated schema
+- [x] **3. Frontend scaffold.** As built: see "Build" under Design. `web/` with SvelteKit static, TS strict, generated schema
   types and `reveal.gen.ts` (`go generate`, so `make generate` also refreshes them), ESLint
   (with the `{@html}` rule), svelte-check, Vitest, `npm audit`. `make ui`, `make build` running
   it first, `make check` running the frontend checks. Node added to `check.yml` and

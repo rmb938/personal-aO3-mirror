@@ -3,6 +3,7 @@ package ui
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -165,6 +166,32 @@ func TestEmbedded(t *testing.T) {
 	assert.Equal(t, "text/html; charset=utf-8", w.Header().Get("Content-Type"))
 	if !h.Built {
 		assert.Contains(t, w.Body.String(), "UI not built")
+		return
+	}
+	assertBuiltIndex(t, h, w.Body.String())
+}
+
+var (
+	scriptTag = regexp.MustCompile(`(?is)<script\b([^>]*)>`)
+	assetRef  = regexp.MustCompile(`(?i)\b(?:src|href)="(/[^"]*)"`)
+)
+
+// assertBuiltIndex checks a real build (after `make ui`): the page needs nothing the CSP
+// blocks, and every file it references is embedded and served with a known type.
+func assertBuiltIndex(t *testing.T, h *Handler, page string) {
+	t.Helper()
+	for _, m := range scriptTag.FindAllStringSubmatch(page, -1) {
+		assert.Contains(t, m[1], "src=", "inline script in index.html: %s", m[0])
+	}
+	assert.NotRegexp(t, `(?i)<style\b|\sstyle\s*=|\son[a-z]+\s*=`, page)
+	refs := assetRef.FindAllStringSubmatch(page, -1)
+	require.NotEmpty(t, refs)
+	for _, m := range refs {
+		w := do(h, http.MethodGet, m[1])
+		if assert.Equal(t, http.StatusOK, w.Code, m[1]) {
+			assert.NotEqual(t, "application/octet-stream", w.Header().Get("Content-Type"), m[1])
+			assert.Equal(t, cacheImmutable, w.Header().Get("Cache-Control"), m[1])
+		}
 	}
 }
 

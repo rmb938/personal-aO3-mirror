@@ -130,6 +130,10 @@ input bounds) live in `internal/web/api/CLAUDE.md`. One applies beyond that dire
   set `contact.discord`. Run with `--config ao3mirror.local.yaml`.
 - Tests: `go test ./...` run against `internal/fakeao3` with synthetic fixtures; no network.
 - Pure Go only (no cgo).
+- The web UI (`web/`, Part 4) needs Node at the version in `.node-version` (fnm picks it up);
+  `make check` runs its checks too (`make ui-check`). Dependencies use the latest release (Node:
+  latest LTS), exact versions. TypeScript 7 type-checks; 6.x stays only as the API tools load
+  (`docs/part4-ui.md` "Build").
 - **Always run `make check` before committing, and only commit when it passes** (targets in the
   `Makefile`). Fix findings rather than silencing them; a
   `//nolint:<linter> // reason` is only for intentional cases and needs the reason.

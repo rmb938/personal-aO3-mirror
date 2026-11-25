@@ -1,0 +1,58 @@
+/* Global styles and the theme variables (docs/part4-ui.md, "Styling"). Components style
+   themselves with scoped <style> blocks; only page-wide rules belong here. */
+
+:root {
+	--color-text: #1f1f1f;
+	--color-background: #ffffff;
+	--color-muted: #5f5f5f;
+	--color-accent: #900;
+	--space-1: 0.25rem;
+	--space-2: 0.5rem;
+	--space-3: 1rem;
+	--space-4: 2rem;
+	--font-body: system-ui, sans-serif;
+	--font-reading: Georgia, 'Times New Roman', serif;
+	--reading-size: 1.125rem;
+	--reading-width: 40rem;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--color-text: #e6e6e6;
+		--color-background: #161616;
+		--color-muted: #a8a8a8;
+		--color-accent: #f07070;
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	color: var(--color-text);
+	background: var(--color-background);
+	font-family: var(--font-body);
+	line-height: 1.5;
+}
+
+.app {
+	display: contents;
+}
+
+/* SvelteKit's route announcer hides itself with a style attribute, which the CSP blocks, so
+   the build removes that attribute (scripts/no-inline-styles.js) and it is hidden here
+   instead: screen readers still hear "navigated to ...", but it never shows on screen. */
+#svelte-announcer {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}

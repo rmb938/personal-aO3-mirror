@@ -28,12 +28,14 @@ var dist embed.FS
 //go:embed placeholder.html
 var placeholder []byte
 
-// CSP is the UI's Content-Security-Policy (docs/part4-ui.md, "Security model"). The trusted
-// types policy name is the one the HTML sanitizer will create (stages 3 and 7).
+// CSP is the UI's Content-Security-Policy (docs/part4-ui.md, "Security model"). Two Trusted
+// Types policies may exist: ao3mirror-html, the HTML sanitizer's (stage 7), and
+// svelte-trusted-html, which Svelte's runtime creates for its own compiled templates. Without
+// 'allow-duplicates', each can be created only once per page.
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; " +
 	"connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; " +
 	"frame-ancestors 'none'; form-action 'self'; require-trusted-types-for 'script'; " +
-	"trusted-types ao3mirror-html"
+	"trusted-types ao3mirror-html svelte-trusted-html"
 
 const (
 	// immutableDir holds SvelteKit's content-hashed assets, cached for a year.

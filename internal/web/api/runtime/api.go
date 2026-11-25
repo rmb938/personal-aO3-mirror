@@ -37,6 +37,9 @@ type Options struct {
 	// GeneralPerMin is the general per-client rate limit on the public listener. The admin
 	// socket allows AdminRateFactor times as many.
 	GeneralPerMin int
+	// UIPerMin is the per-client limit on the UI's static files (public listener only), a
+	// budget separate from GeneralPerMin: one page load fetches the page and many assets.
+	UIPerMin int
 	// SourceAddPerHour is the per-client limit on POST /api/v1/sources (public listener; the
 	// admin socket allows AdminRateFactor times as many), on top of the general limit.
 	SourceAddPerHour int
@@ -116,7 +119,7 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 		return nil, errors.New("api: request timeout must be positive")
 	}
 	if opts.GeneralPerMin <= 0 || opts.SourceAddPerHour <= 0 || opts.SearchPerMin <= 0 || opts.SignupPerHour <= 0 ||
-		opts.LoginPerMin <= 0 || opts.RefreshPerMin <= 0 {
+		opts.LoginPerMin <= 0 || opts.RefreshPerMin <= 0 || (opts.UI != nil && opts.UIPerMin <= 0) {
 		return nil, errors.New("api: rate limits must be positive")
 	}
 	h, err := redact.NewHasher(opts.HashKeyRotation, opts.Now)
@@ -172,7 +175,7 @@ func (a *API) uiRouter(ui http.Handler) http.Handler {
 		securityHeaders,
 		a.hostCheck(a.opts.AllowedHosts),
 		a.urlLimits,
-		a.rateLimit(a.opts.GeneralPerMin, time.Minute, "ui"),
+		a.rateLimit(a.opts.UIPerMin, time.Minute, "ui"),
 		a.throttle(maxInFlight, maxBacklog, backlogWait),
 	)
 	r.Handle(UIRoute, ui)
