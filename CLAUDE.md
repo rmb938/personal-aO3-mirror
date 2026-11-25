@@ -61,6 +61,9 @@ Claude must NOT:
 - Probe the real data with guessed free text (search terms, tag/creator names). Hashed mode
   rejects free text anyway; test search with synthetic fixtures in Go tests.
 - Weaken the response enforcer (`internal/web/api/redact`), bypass it, or add a route outside it.
+  The one approved exception is the UI's embedded static files (`internal/web/ui`, paths
+  outside `/api/`; `docs/part4-ui.md` "Serving"); never let that handler read the store or
+  echo the request.
   Every route needs a sample request in the all-routes leak test.
 - Run live auth flows (invite, signup, login, token calls) against the real server, or create
   accounts in the real users DB. Auth is tested in Go tests with temp stores; manual checks are

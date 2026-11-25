@@ -11,3 +11,7 @@ ao3mirror.local.yaml
 
 # Claude local settings
 .claude/settings.local.json
+
+# Web UI build output (make ui); only the placeholder dir marker is committed
+/internal/web/ui/dist/*
+!/internal/web/ui/dist/.gitkeep

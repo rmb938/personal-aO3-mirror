@@ -205,6 +205,11 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
   12. `http.CrossOriginProtection` (Go 1.25+)
   13. reveal parser
   14. routes
+
+  With the web UI (Part 4 stage 2), the public listener first splits by path: `/api` and
+  `/api/...` take the chain above; every other path takes a short chain (1–5, 7–10, no
+  enforcer, auth or reveal) to the UI's embedded static files. See `docs/part4-ui.md`,
+  "Serving".
 - **Client IP:** use `middleware.ClientIPFromXFF(api.trusted_proxies...)` (default
   `127.0.0.1/32`, `::1/128`) and read the result with `middleware.GetClientIPAddr`. I checked
   that it matches what we need (chi v5.5.0 `middleware/client_ip.go`; Cloudflare's

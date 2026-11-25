@@ -22,6 +22,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/ui"
 )
 
 // HTTP server limits (docs/part2-api.md, "HTTP hardening").
@@ -113,6 +114,13 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 	}()
 	ctlOpts := controllerOptions(cfg, log, st, nil)
 	ctlOpts.Auth = acc.auth
+	uiFiles, err := ui.New()
+	if err != nil {
+		return nil, err
+	}
+	if !uiFiles.Built {
+		log.LogAttrs(ctx, slog.LevelWarn, "web UI not built: serving the placeholder page")
+	}
 	a, err := api.New(runtime.Options{
 		Version:          version,
 		NoReveal:         noReveal,
@@ -126,6 +134,7 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 		SignupPerHour:    cfg.API.Rate.SignupPerHour,
 		LoginPerMin:      cfg.API.Rate.LoginPerMin,
 		RefreshPerMin:    cfg.API.Rate.RefreshPerMin,
+		UI:               uiFiles,
 	}, log, controllers.New(ctlOpts))
 	if err != nil {
 		return nil, err

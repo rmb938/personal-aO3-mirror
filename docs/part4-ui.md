@@ -68,11 +68,31 @@ web/                     SvelteKit app (package.json, lockfile, svelte.config.js
   src/lib/sanitize/      HTML and skin sanitizers (pure TS, no DOM state)
   src/routes/            pages
   tests/                 Playwright tests (run against the seeded fake server)
-internal/web/ui/         embed.FS of web/build, the static handler, the UI's CSP
+internal/web/ui/         the static handler, the UI's CSP, placeholder.html
+  dist/                  the SvelteKit build (embed.FS), written there by `make ui`
 ```
 
-`web/build` is not committed; `make ui` produces it. The Go embed always has at least the
-placeholder page, so `go build` from a clean checkout works and serves "UI not built".
+`internal/web/ui/dist` is not committed except `dist/.gitkeep` (go:embed needs a file), and
+`make ui` writes the build into it (go:embed can't reach `web/build` from `internal/web/ui`).
+Without an `index.html` there the handler serves the placeholder page, so `go build` from a
+clean checkout works and serves "UI not built" (and `serve` logs a warning).
+
+### Serving (stage 2, approved by the user 2026-11-25)
+
+On the public listener, a path that is exactly `/api` or under `/api/` (the decoded path, so an
+escaped spelling still reaches the API) goes to the API router, unchanged. Every other path
+goes to a small separate chain: request ID, client IP, access log (route `/*`, never the raw
+path), recoverer, security headers, Host check, URL limits, its own rate-limit budget
+(`general_per_min`, since a page load fetches many files) and a throttle, then the
+`internal/web/ui` handler. That chain has no enforcer, auth or reveal: it is the one approved
+exemption from the enforcer, limited to files embedded at build time, with no store access and
+nothing echoed from the request. The handler answers GET/HEAD only (else 405, plain text). An
+existing file is served with an explicit content-type table and an ETag; a missing path under
+`/_app/` or whose last segment has a dot is 404; anything else gets `index.html` (SPA
+fallback). `/_app/immutable/` is cached a year (`immutable`), everything else `no-cache`. Every
+response carries the UI CSP, `nosniff`, `no-referrer`, and same-origin CORP and COOP. The admin
+socket has no UI. The trusted-types policy name in the CSP (`ao3mirror-html`) is a placeholder
+that stage 3 confirms.
 
 ### Fanwork protection in the UI
 
@@ -152,7 +172,7 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
   the CSRF check, problems for the new 403s, OpenAPI and `make generate`, tests in
   `internal/web/api` (cookie attributes, refresh rotation and reuse via cookie, logout clears,
   CSRF rejections, both-credentials rejection, bearer unchanged, admin socket ignores cookies).
-- [ ] **2. Static UI serving (Go).** `internal/web/ui`: embedded files, the placeholder, SPA
+- [x] **2. Static UI serving (Go).** See "Serving". `internal/web/ui`: embedded files, the placeholder, SPA
   fallback for non-`/api/` paths, correct content types, `nosniff`, the UI CSP, long cache
   headers for hashed asset names and `no-cache` for `index.html`. Mounted on the public
   listener only. The enforcer exemption is limited to these embedded files (fixed content, no
