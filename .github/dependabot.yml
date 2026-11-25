@@ -1,13 +1,32 @@
-# Weekly update PRs for the web UI's npm packages (docs/part4-ui.md, "npm deps"). Versions stay
-# exact (save-exact) and every update PR runs `make check`, including `npm audit`.
+# Weekly update PRs, so dependencies stay on their latest releases. Every update PR runs
+# `make check` (including govulncheck and `npm audit`). Routine updates come grouped in one PR
+# per ecosystem; a major version gets its own PR.
 version: 2
 updates:
+  # go.mod: modules and the `go tool` tools (govulncheck, deadcode, ogen).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The web UI (docs/part4-ui.md, "npm deps"). Versions stay exact (web/.npmrc save-exact).
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
     versioning-strategy: increase
     groups:
-      # One PR for routine updates; a major version gets its own PR.
       npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The workflows' actions, pinned by commit SHA: Dependabot updates the SHA and its comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
         update-types: [minor, patch]
