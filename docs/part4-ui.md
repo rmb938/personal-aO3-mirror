@@ -71,7 +71,9 @@ web/                     SvelteKit app (package.json, lockfile, vite.config.ts, 
   src/lib/html/          TrustedHtml.svelte, the one component allowed to use {@html}
   src/lib/sanitize/      HTML and skin sanitizers (pure TS, no DOM state)
   src/routes/            pages
-  tests/                 Playwright tests (run against the seeded fake server)
+  playwright.config.ts   end-to-end tests (make ui-e2e)
+  tests/                 Playwright tests (run against `ao3mirror dev ui-server`)
+internal/e2eseed/        the synthetic works and test account ui-server serves
 internal/web/ui/         the static handler, the UI's CSP, placeholder.html
   dist/                  the SvelteKit build (embed.FS), written there by `make ui`
   genreveal/             writes reveal.gen.ts (go generate; a test keeps it current)
@@ -152,6 +154,34 @@ internal/web/ui/         the static handler, the UI's CSP, placeholder.html
 `make ui` writes the build into it (go:embed can't reach `web/build` from `internal/web/ui`).
 Without an `index.html` there the handler serves the placeholder page, so `go build` from a
 clean checkout works and serves "UI not built" (and `serve` logs a warning).
+
+### E2E harness (stage 4)
+
+- **`ao3mirror dev ui-server`** (`cmd/ao3mirror/uiserver.go`) makes a new temp dir
+  (`os.MkdirTemp`; it takes no data dir, so it can never open a real one), seeds it, and runs
+  the real `serve` code (`newServerOn`) on it with reveal on, on a loopback address only
+  (default port 0, a free one; `public_url` is the bound address). Rate limits are raised so
+  one test run never meets them. It prints one JSON line (URL, account, seeded IDs), and stops
+  on SIGINT/SIGTERM or when its stdin closes, then deletes the dir.
+- **The seed** (`internal/e2eseed`) writes rows with store calls directly, like the Go tests'
+  seeds (test data, not business logic). Lorem and fixture names only. It refuses a non-empty
+  directory. Contents: work 1001 (3 of 4 chapters, notes and chapter notes, a skin, a mirrored
+  PNG and SVG (whose script must never run) and one still-queued image, series part 1); 1002
+  (one-shot, series part 3); 1003 (anonymous); 1004 (two creators, a collection, XSS payloads
+  in its summary, notes and chapter 2, and a hostile skin, for stages 7–8; a payload that runs
+  sets `window.__ao3mirrorXSS`). Series 2001 has 4 parts, 2 mirrored. The account
+  `e2e_reader` has a random TOTP secret and recovery codes, printed in the JSON line.
+- **Why not in-memory storage** (asked 2026-11-25): SQLite files opened by path in WAL mode,
+  the image files and the admin unix socket all need paths, and an in-memory variant would be
+  code production never runs. The temp dir is private (0700) and deleted at the end.
+- **Playwright** (`web/playwright.config.ts`, `web/tests/`): global setup spawns
+  `$AO3MIRROR_E2E_BIN dev ui-server` and passes its line to the tests in an environment
+  variable; `tests/fixtures.ts` sets `baseURL` from it and exposes it as the `server` fixture.
+  Teardown closes the server's stdin. Chromium only, headless shell. `make ui-e2e` builds the
+  UI, builds `bin/ao3mirror-e2e` with it embedded, installs Chromium if missing, and runs the
+  tests.
+- **Login in tests (stage 5):** a TOTP code is accepted once per 30 s step (replay check), so
+  tests that sign in repeatedly should use the recovery codes or reuse a stored session.
 
 ### Serving (stage 2, approved by the user 2026-11-25)
 
@@ -260,12 +290,12 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
   (with the `{@html}` rule), svelte-check, Vitest, `npm audit`. `make ui`, `make build` running
   it first, `make check` running the frontend checks. Node added to `check.yml` and
   Dependabot config for npm. Verifies no inline scripts and Trusted Types with `{@html}`.
-- [ ] **4. Seeded fake server + Playwright harness.** A test-only way to start `serve` on a
-  fresh temp data dir seeded with lorem fixtures (works with chapters, notes, a skin, images
-  including an SVG, a partial series, tags) and a test user, refusing any existing directory.
-  Playwright starts it, runs, and tears it down, under `make` (a `make ui-e2e` target, also run
-  by `make check`). First test: the placeholder-free app loads with the UI CSP. The guard and
-  CLAUDE.md are updated (user approves) only as far as this needs.
+- [x] **4. Seeded fake server + Playwright harness.** As built: see "E2E harness" under
+  Design. `ao3mirror dev ui-server` over `internal/e2eseed`, Playwright 1.65.1 starting it in
+  global setup, `make ui-e2e` (part of `make check`; CI installs Chromium with `--with-deps`).
+  First tests: the app (not the placeholder) loads with the UI CSP and no console messages, a
+  deep link reaches the client router, Trusted Types refuse a raw `innerHTML`, the API answers
+  same-origin. The guard blocks Claude starting `dev ui-server` (CLAUDE.md updated).
 - [ ] **5. Login UI.** Two-step login (password, then TOTP or a recovery code), the fetch
   wrapper (refresh and retry single-flighted across tabs, CSRF header), logout, the redirect to login on session loss, the
   lockout and rate-limit messages.

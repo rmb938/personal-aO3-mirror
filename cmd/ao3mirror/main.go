@@ -46,6 +46,8 @@ commands:
   backup DIR         copy users.db and keys.db into a new directory DIR
                      ('ao3mirror backup' for details and how to restore)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
+  dev ui-server      serve the API and web UI over a new, seeded synthetic data dir (the
+                     web UI's Playwright tests start it; see docs/part4-ui.md)
 
 source, status, jobs, debug, invite, user, session, auth and backup talk to the API's admin
 socket: 'ao3mirror serve' must be running.
@@ -74,7 +76,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if rest[0] == "dev" {
-		return runDev(rest[1:], stdout, stderr) // synthetic local AO3; makes no outside requests
+		// Synthetic data only: a local fake AO3, or the UI test server; no outside requests.
+		return runDev(rest[1:], os.Stdin, stdout, stderr)
 	}
 	// Help needs no config.
 	if rest[0] == "help" || rest[0] == "-h" || rest[0] == "--help" {

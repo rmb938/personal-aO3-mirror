@@ -149,9 +149,13 @@ func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut 
 }
 
 // runDev serves a synthetic AO3 for local end-to-end testing. Content is fake.
-func runDev(args []string, out, errOut io.Writer) int {
+func runDev(args []string, stdin io.Reader, out, errOut io.Writer) int {
+	if len(args) > 0 && args[0] == "ui-server" {
+		return runUIServer(args[1:], stdin, out, errOut)
+	}
 	if len(args) == 0 || args[0] != "fake-server" {
-		fmt.Fprint(errOut, "usage: ao3mirror dev fake-server [--addr 127.0.0.1:8099] [--works 45]\n")
+		fmt.Fprint(errOut, "usage: ao3mirror dev fake-server [--addr 127.0.0.1:8099] [--works 45]\n"+
+			"       ao3mirror dev ui-server [--addr 127.0.0.1:0] [--log-level warn]\n")
 		return 2
 	}
 	fs := flag.NewFlagSet("dev fake-server", flag.ContinueOnError)

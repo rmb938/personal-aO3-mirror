@@ -65,6 +65,10 @@ Claude must NOT:
   outside `/api/`; `docs/part4-ui.md` "Serving"); never let that handler read the store or
   echo the request.
   Every route needs a sample request in the all-routes leak test.
+- Start `ao3mirror dev ui-server` (any build, e.g. `bin/ao3mirror-e2e`) yourself. It serves a
+  new temp dir of synthetic works with reveal on, for the UI's Playwright tests; only Playwright
+  starts it, under `make ui-e2e` (the guard enforces this). `internal/e2eseed` fills it: lorem
+  and fixture names only, never real content, and it refuses a non-empty directory.
 - Run live auth flows (invite, signup, login, token calls) against the real server, or create
   accounts in the real users DB. Auth is tested in Go tests with temp stores; manual checks are
   commands the user runs. `data/api/keys.db` and the users DB are under `data/`, so the guard
@@ -131,7 +135,8 @@ input bounds) live in `internal/web/api/CLAUDE.md`. One applies beyond that dire
 - Tests: `go test ./...` run against `internal/fakeao3` with synthetic fixtures; no network.
 - Pure Go only (no cgo).
 - The web UI (`web/`, Part 4) needs Node at the version in `.node-version` (fnm picks it up);
-  `make check` runs its checks too (`make ui-check`). Dependencies use the latest release (Node:
+  `make check` runs its checks too (`make ui-check`, and `make ui-e2e` for the Playwright tests).
+  In a non-interactive shell, run make through `fnm exec --using=<.node-version> make ...`. Dependencies use the latest release (Node:
   latest LTS), exact versions. TypeScript 7 type-checks; 6.x stays only as the API tools load
   (`docs/part4-ui.md` "Build").
 - **Always run `make check` before committing, and only commit when it passes** (targets in the

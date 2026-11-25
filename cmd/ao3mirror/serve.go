@@ -89,11 +89,28 @@ type accounts struct {
 // Close closes users.db and keys.db.
 func (a accounts) Close() error { return errors.Join(a.users.Close(), a.keys.Close()) }
 
-// newServer opens the store and the accounts (users.db and keys.db, in the admin socket's
-// private directory), builds the API over offline controllers (no AO3 client) and binds both
-// listeners. ctx is every request's base context, so a signal cancels in-flight requests while
-// shutdown waits for them. On an error, everything opened so far is closed.
-func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool) (s *server, err error) {
+// newServer binds the public listener on api.listen, then builds the server on it
+// (newServerOn).
+func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool) (*server, error) {
+	var lc net.ListenConfig
+	tcp, err := lc.Listen(ctx, "tcp", cfg.API.Listen)
+	if err != nil {
+		return nil, fmt.Errorf("public listener: %w", err)
+	}
+	return newServerOn(ctx, cfg, log, noReveal, tcp)
+}
+
+// newServerOn opens the store and the accounts (users.db and keys.db, in the admin socket's
+// private directory), builds the API over offline controllers (no AO3 client) and binds the
+// admin socket; tcp is the public listener. ctx is every request's base context, so a signal
+// cancels in-flight requests while shutdown waits for them. On an error, everything opened so
+// far (tcp included) is closed.
+func newServerOn(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool, tcp net.Listener) (s *server, err error) {
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, tcp.Close())
+		}
+	}()
 	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
 	if err != nil {
 		return nil, err
@@ -140,14 +157,9 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 	if err != nil {
 		return nil, err
 	}
-	var lc net.ListenConfig
-	tcp, err := lc.Listen(ctx, "tcp", cfg.API.Listen)
-	if err != nil {
-		return nil, fmt.Errorf("public listener: %w", err)
-	}
 	sock, err := listenAdminSocket(ctx, cfg.Path(cfg.API.AdminSocket))
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("admin socket: %w", err), tcp.Close())
+		return nil, fmt.Errorf("admin socket: %w", err)
 	}
 	return &server{
 		log: log, cfg: cfg, noReveal: noReveal, store: st, accounts: acc, tcp: tcp, sock: sock,
