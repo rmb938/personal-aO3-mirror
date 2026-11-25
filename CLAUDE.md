@@ -1,9 +1,9 @@
 # CLAUDE.md — personal-aO3-mirror
 
 Personal offline mirror of selected AO3 works. Go, single binary, SQLite, no external services.
-Full plan: `docs/plan.md`. Part 1 (scraper) and Part 2 (API, `docs/part2-api.md`) are done.
-Part 3 (master key rotation, keys.db) is in progress, stage by stage, per
-`docs/part3-key-rotation.md`. Part 4 (UI) comes later.
+Full plan: `docs/plan.md`. Part 1 (scraper), Part 2 (API, `docs/part2-api.md`) and Part 3
+(master key rotation, `docs/part3-key-rotation.md`) are done. Part 4 (web UI) is in progress,
+stage by stage, per `docs/part4-ui.md`.
 
 ## HARD RULE: Claude never reads fanworks
 
