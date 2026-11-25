@@ -36,6 +36,7 @@ func testOptions(t *testing.T) runtime.Options {
 		AllowedHosts:     []string{"example.com"}, // httptest.NewRequest's default Host
 		RequestTimeout:   10 * time.Second,
 		GeneralPerMin:    1000,
+		UIPerMin:         1000,
 		SourceAddPerHour: 1000,
 		SearchPerMin:     1000,
 		SignupPerHour:    1000,
@@ -69,6 +70,7 @@ func TestNewValidatesOptions(t *testing.T) {
 		"no signup":     func(o *runtime.Options) { o.SignupPerHour = 0 },
 		"no login":      func(o *runtime.Options) { o.LoginPerMin = 0 },
 		"no refresh":    func(o *runtime.Options) { o.RefreshPerMin = 0 },
+		"no ui rate":    func(o *runtime.Options) { o.UIPerMin = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

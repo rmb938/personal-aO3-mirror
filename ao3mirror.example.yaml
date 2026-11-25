@@ -75,6 +75,7 @@ api:
   public_url: http://localhost:8080  # origin users reach the API at: token issuer, invite links; host must be in allowed_hosts
   rate:                         # per client IP, public listener (the admin socket allows 10x)
     general_per_min: 120
+    ui_per_min: 600             # web UI files (not /api/); a hard refresh fetches the page and ~15 files
     search_per_min: 30          # QUERY search routes together (QUERY /works, ...)
     source_add_per_hour: 10     # takes effect with POST /sources (stage 4)
     signup_per_hour: 5          # signup and reset routes together (both steps)

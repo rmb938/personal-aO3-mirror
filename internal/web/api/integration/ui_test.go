@@ -98,7 +98,7 @@ func TestUIWithoutOption(t *testing.T) {
 }
 
 func TestUIMiddleware(t *testing.T) {
-	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.GeneralPerMin = 2 })
+	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.UIPerMin = 2 })
 	h := a.Public()
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -120,6 +120,19 @@ func TestUIMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, w.Code, "the UI's own rate limit")
 	assert.Equal(t, dto.TypeRateLimited, testutil.DecodeProblem(t, w).Type)
 	assert.Equal(t, http.StatusOK, testutil.Get(t, h, route.Healthz).Code, "the API has its own budget")
+}
+
+// The UI's budget is UIPerMin, not GeneralPerMin: a page load's many files don't spend the
+// API's budget, and a small API budget doesn't limit them.
+func TestUIRateBudget(t *testing.T) {
+	a, _ := testutil.NewAPI(t, testOptions, testNew, func(o *runtime.Options) { o.GeneralPerMin, o.UIPerMin = 1, 5 })
+	h := a.Public()
+	for i := range 5 {
+		require.Equal(t, http.StatusOK, testutil.Get(t, h, "/").Code, "UI request %d", i+1)
+	}
+	assert.Equal(t, http.StatusTooManyRequests, testutil.Get(t, h, "/").Code, "the sixth is over UIPerMin")
+	assert.Equal(t, http.StatusOK, testutil.Get(t, h, route.Healthz).Code, "the API's budget of 1 is unspent")
+	assert.Equal(t, http.StatusTooManyRequests, testutil.Get(t, h, route.Healthz).Code, "and then spent")
 }
 
 // TestUILeak is the all-routes leak test's UI part: requests carrying sentinels in the path,
