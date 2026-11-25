@@ -17,8 +17,11 @@ import (
 )
 
 // RevealParam is the query parameter that asks for real fanwork content on one request. Its
-// only accepted value is "1". Go code always uses this constant, never the literal.
+// only accepted value is RevealValue. Go code always uses this constant, never the literal.
 const RevealParam = string(dto.ParamReveal)
+
+// RevealValue is RevealParam's only accepted value.
+const RevealValue = "1"
 
 const (
 	MaxBodyBytes = 16 << 10

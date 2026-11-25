@@ -1,24 +1,34 @@
 # Developer tasks. Run `make check` before every commit.
 #
 # Nothing here touches AO3 or the data dir: tests run against internal/fakeao3 with synthetic
-# fixtures. The only network use is the Go toolchain itself (module downloads, and govulncheck
-# reading the Go vulnerability database at vuln.go.dev).
+# fixtures. The only network use is the toolchains themselves: Go (module downloads, and
+# govulncheck reading the Go vulnerability database at vuln.go.dev) and npm (`npm ci` from the
+# registry, `npm audit` reading its advisories).
 
 GO       ?= go
 GOLANGCI_LINT ?= golangci-lint
 PYTHON   ?= python3
+NPM      ?= npm
 BIN      ?= ao3mirror
+# The web UI (docs/part4-ui.md): its sources, and where `make ui` puts the build for go:embed.
+WEB      := web
+UI_DIST  := internal/web/ui/dist
+# npm ci writes this file, so web deps are reinstalled only when the lockfile changes.
+WEB_DEPS := $(WEB)/node_modules/.package-lock.json
 # Per fuzz target. FUZZFLAGS passes extra flags, e.g. FUZZFLAGS='-parallel 4' to use fewer
 # cores (the default is one fuzz worker per core).
 FUZZTIME ?= 30s
 FUZZFLAGS ?=
 
-.PHONY: all build fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench fuzz clean help
+.PHONY: all build ui ui-check web-deps generate fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench fuzz clean help
 
 all: check build
 
 help:
-	@echo "make build       build ./$(BIN)"
+	@echo "make build       build the web UI, then ./$(BIN) with the UI embedded"
+	@echo "make ui          build the web UI into $(UI_DIST)"
+	@echo "make ui-check    web UI checks: svelte-check, eslint, vitest, build, npm audit"
+	@echo "make generate    regenerate the API client and the UI's generated TypeScript"
 	@echo "make fmt         gofmt + goimports (grouping) on all Go files"
 	@echo "make lint        fmt check + go vet + go mod tidy check + golangci-lint"
 	@echo "make vulncheck   govulncheck on the module and Go toolchain"
@@ -26,12 +36,33 @@ help:
 	@echo "make test        go test -race ./..."
 	@echo "make test-short  go test -short ./... (skips tests that use real pacing)"
 	@echo "make guard-test  test the Claude guard hook (.claude/hooks/guard.py)"
-	@echo "make check       lint + vulncheck + test + guard-test: run before every commit"
+	@echo "make check       lint + vulncheck + test + guard-test + ui-check: run before every commit"
 	@echo "make bench       content store layout benchmarks (synthetic data)"
 	@echo "make fuzz        run every Fuzz* target for FUZZTIME each (default 30s; uses all cores)"
 
-build:
+build: ui
 	$(GO) build -o $(BIN) ./cmd/ao3mirror
+
+$(WEB_DEPS): $(WEB)/package.json $(WEB)/package-lock.json
+	$(NPM) --prefix $(WEB) ci
+	@touch $@
+
+web-deps: $(WEB_DEPS)
+
+# The glob skips dotfiles, so dist/.gitkeep (needed by go:embed) stays.
+ui: web-deps
+	$(NPM) --prefix $(WEB) run build
+	rm -rf $(UI_DIST)/*
+	cp -R $(WEB)/build/. $(UI_DIST)/
+
+# The build runs here too: the adapter fails it if the page would need an inline script or style.
+ui-check: web-deps
+	$(NPM) --prefix $(WEB) run generate:check
+	$(NPM) --prefix $(WEB) run check
+	$(NPM) --prefix $(WEB) run lint
+	$(NPM) --prefix $(WEB) test
+	$(NPM) --prefix $(WEB) run build
+	$(NPM) --prefix $(WEB) audit
 
 # Formatters (gofmt, goimports) are configured in .golangci.yml.
 fmt:
@@ -50,7 +81,8 @@ tidy-check:
 lint: fmt-check vet tidy-check
 	$(GOLANGCI_LINT) run ./...
 
-generate:
+# internal/web/ui's go:generate runs orval (the UI's API client), so it needs the web deps.
+generate: web-deps
 	$(GO) generate ./...
 
 # Pinned version run via `go run`, so it needs no install and stays out of go.mod.
@@ -76,7 +108,7 @@ test-short:
 guard-test:
 	$(PYTHON) -I .claude/hooks/guard_test.py
 
-check: lint vulncheck test guard-test
+check: lint vulncheck test guard-test ui-check
 	@echo "check: all passed"
 
 bench:

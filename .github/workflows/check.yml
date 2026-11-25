@@ -1,4 +1,5 @@
-# Runs `make check` (lint, race tests, guard hook tests) on every push and pull request.
+# Runs `make check` (lint, race tests, guard hook tests, web UI checks) on every push and pull
+# request.
 # Tests use internal/fakeao3 with synthetic fixtures: nothing here talks to AO3.
 name: check
 
@@ -29,6 +30,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+
+      # The web UI's checks (make ui-check). The version comes from .node-version.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:

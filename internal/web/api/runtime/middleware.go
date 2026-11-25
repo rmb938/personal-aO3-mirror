@@ -498,7 +498,7 @@ func (a *API) reveal(next http.Handler) http.Handler {
 		switch {
 		case len(vs) != 1:
 			respondError(w, r, a.log, problem.ForParam(RevealParam, DetailDuplicate))
-		case vs[0] != "1":
+		case vs[0] != RevealValue:
 			respondError(w, r, a.log, problem.ForParam(RevealParam, DetailRevealValue))
 		case a.opts.NoReveal:
 			respondError(w, r, a.log, problem.WithDetail(dto.TypeRevealDisabled, DetailRevealDisabled))

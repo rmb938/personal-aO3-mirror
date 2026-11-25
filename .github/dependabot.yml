@@ -1,0 +1,13 @@
+# Weekly update PRs for the web UI's npm packages (docs/part4-ui.md, "npm deps"). Versions stay
+# exact (save-exact) and every update PR runs `make check`, including `npm audit`.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    groups:
+      # One PR for routine updates; a major version gets its own PR.
+      npm-minor-and-patch:
+        update-types: [minor, patch]
