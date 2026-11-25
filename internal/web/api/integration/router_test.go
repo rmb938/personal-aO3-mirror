@@ -41,6 +41,7 @@ func testOptions(t *testing.T) runtime.Options {
 		SignupPerHour:    1000,
 		LoginPerMin:      1000,
 		RefreshPerMin:    1000,
+		UI:               testUI(t),
 	}
 }
 
@@ -433,11 +434,11 @@ func TestAllRoutesLeak(t *testing.T) {
 // hashed by default and returns the sentinel only when revealed, so the harness can see a leak.
 func TestLeakHarnessDetectsContent(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
-	a.Router(false).Get("/leaktest", a.Handle(func(*http.Request) (any, error) {
+	a.Router(false).Get("/api/leaktest", a.Handle(func(*http.Request) (any, error) {
 		return dto.Health{Status: sentinel + "status"}, nil
 	}))
 
-	w := testutil.Get(t, signedIn(t, a), "/leaktest")
+	w := testutil.Get(t, signedIn(t, a), "/api/leaktest")
 	require.Equal(t, http.StatusOK, w.Code)
 	testutil.AssertNoSentinel(t, w, logs, sentinel)
 	var h dto.Health
@@ -445,7 +446,7 @@ func TestLeakHarnessDetectsContent(t *testing.T) {
 	assert.True(t, strings.HasPrefix(string(h.Status), "h_"), "hashed")
 	assert.Contains(t, logs.String(), "enum value outside its set", "off-set enum value is warned about")
 
-	w = testutil.Get(t, signedIn(t, a), "/leaktest"+revealQuery)
+	w = testutil.Get(t, signedIn(t, a), "/api/leaktest"+revealQuery)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "revealed", w.Header().Get(runtime.HeaderFanwork))
 	assert.Contains(t, w.Body.String(), sentinel+"status")
@@ -458,7 +459,7 @@ func TestLeakHarnessDetectsContent(t *testing.T) {
 func TestEnumScopedToField(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	var value string
-	a.Router(false).Get("/enum", a.Handle(func(*http.Request) (any, error) {
+	a.Router(false).Get("/api/enum", a.Handle(func(*http.Request) (any, error) {
 		return dto.Health{Status: dto.HealthStatus(value)}, nil
 	}))
 	others := slices.Concat(dto.WorkStatus("").EnumValues(), dto.ImageStatus("").EnumValues(),
@@ -469,7 +470,7 @@ func TestEnumScopedToField(t *testing.T) {
 			continue
 		}
 		value = v
-		w := testutil.Get(t, signedIn(t, a), "/enum")
+		w := testutil.Get(t, signedIn(t, a), "/api/enum")
 		require.Equal(t, http.StatusOK, w.Code)
 		var h dto.Health
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &h))
@@ -478,7 +479,7 @@ func TestEnumScopedToField(t *testing.T) {
 	assert.Contains(t, logs.String(), "dto.Health.Status", "off-set enum warning names the field")
 
 	value = string(dto.HealthOK)
-	assert.JSONEq(t, `{"status":"ok"}`, testutil.Get(t, signedIn(t, a), "/enum").Body.String())
+	assert.JSONEq(t, `{"status":"ok"}`, testutil.Get(t, signedIn(t, a), "/api/enum").Body.String())
 }
 
 // TestPathParamsDeclared: every route's path parameter is an id the access log records

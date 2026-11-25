@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +54,9 @@ type Options struct {
 	RefreshPerMin int
 	// Now is the hasher's clock (nil: time.Now). Tests use it to drive key rotation.
 	Now func() time.Time
+	// UI serves the web UI's embedded files (internal/web/ui) on the public listener, for every
+	// path outside /api/ (see uiRouter). nil: the API router serves every path.
+	UI http.Handler
 }
 
 type RouteBuilder func(*API, *controllers.Controllers, *chi.Mux, bool)
@@ -69,6 +73,8 @@ type API struct {
 	enf    *redact.Enforcer
 	public *chi.Mux
 	admin  *chi.Mux
+	// publicRoot is the public listener's handler: public, or public and the UI split by path.
+	publicRoot http.Handler
 }
 
 // New validates opts and builds both routers. anonymous reports the route patterns the public
@@ -124,11 +130,57 @@ func New(opts Options, log *slog.Logger, controllers *controllers.Controllers, r
 	a := &API{opts: opts, log: log, ctl: controllers, enf: enf}
 	a.public = a.router(false, registerRoutes, anonymous)
 	a.admin = a.router(true, registerRoutes, anonymous)
+	a.publicRoot = a.public
+	if opts.UI != nil {
+		a.publicRoot = splitAPI(a.public, a.uiRouter(opts.UI))
+	}
 	return a, nil
 }
 
-// Public is the handler for the public TCP listener (the one the Cloudflare Tunnel exposes).
-func (a *API) Public() http.Handler { return a.public }
+// Public is the handler for the public TCP listener (the one the Cloudflare Tunnel exposes):
+// the API, plus the UI when Options.UI is set.
+func (a *API) Public() http.Handler { return a.publicRoot }
+
+// IsAPIPath reports whether path is the API's: exactly /api, or under /api/. The public
+// listener sends these to the API router (and its enforcer) and every other path to the UI.
+// The decoded path decides, so an escaped spelling of /api/ still reaches the API.
+func IsAPIPath(path string) bool { return path == "/api" || strings.HasPrefix(path, "/api/") }
+
+func splitAPI(api, ui http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if IsAPIPath(r.URL.Path) {
+			api.ServeHTTP(w, r)
+			return
+		}
+		ui.ServeHTTP(w, r)
+	})
+}
+
+// uiRouter is the public listener's chain for the UI's static files: the API's request ID,
+// client IP, access log, recoverer, security headers (ui overrides the CSP and caching), Host
+// check, URL limits, a rate limit with its own budget (a page load fetches many files) and a
+// throttle. It is the one approved exemption from the enforcer (docs/part4-ui.md, stage 2):
+// ui serves only files embedded at build time, never the store, and echoes nothing. It has
+// no auth or reveal: the files hold no content and the login page must load signed out.
+func (a *API) uiRouter(ui http.Handler) http.Handler {
+	r := chi.NewRouter()
+	r.Use(
+		requestID,
+		middleware.ClientIPFromXFF(a.opts.TrustedProxies...),
+		a.accessLog("public"),
+		a.recoverer,
+		securityHeaders,
+		a.hostCheck(a.opts.AllowedHosts),
+		a.urlLimits,
+		a.rateLimit(a.opts.GeneralPerMin, time.Minute, "ui"),
+		a.throttle(maxInFlight, maxBacklog, backlogWait),
+	)
+	r.Handle(UIRoute, ui)
+	return r
+}
+
+// UIRoute is the UI's one route pattern, as the access log records it.
+const UIRoute = "/*"
 
 // Admin is the handler for the admin unix socket: every public route plus the admin routes.
 func (a *API) Admin() http.Handler { return a.admin }
