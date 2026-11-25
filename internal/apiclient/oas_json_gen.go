@@ -1595,6 +1595,170 @@ func (s *ConfirmEnrollmentRequest) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *CookieSession) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CookieSession) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("transport")
+		s.Transport.Encode(e)
+	}
+	{
+		e.FieldStart("expires_in")
+		e.Int(s.ExpiresIn)
+	}
+	{
+		e.FieldStart("refresh_expires_at")
+		s.RefreshExpiresAt.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfCookieSession = [3]string{
+	0: "transport",
+	1: "expires_in",
+	2: "refresh_expires_at",
+}
+
+// Decode decodes CookieSession from json.
+func (s *CookieSession) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CookieSession to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "transport":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Transport.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"transport\"")
+			}
+		case "expires_in":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Int()
+				s.ExpiresIn = int(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"expires_in\"")
+			}
+		case "refresh_expires_at":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.RefreshExpiresAt.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"refresh_expires_at\"")
+			}
+		default:
+			return errors.Errorf("unexpected field %q", k)
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CookieSession")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCookieSession) {
+					name = jsonFieldsNameOfCookieSession[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CookieSession) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CookieSession) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes CookieSessionTransport as json.
+func (s CookieSessionTransport) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes CookieSessionTransport from json.
+func (s *CookieSessionTransport) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CookieSessionTransport to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch CookieSessionTransport(v) {
+	case CookieSessionTransportCookie:
+		*s = CookieSessionTransportCookie
+	default:
+		*s = CookieSessionTransport(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s CookieSessionTransport) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CookieSessionTransport) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *CountRange) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -5460,6 +5624,128 @@ func (s *LoginRequest) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes LoginResult as json.
+func (s LoginResult) Encode(e *jx.Encoder) {
+	switch s.Type {
+	case TokenPairLoginResult:
+		s.TokenPair.Encode(e)
+	case CookieSessionLoginResult:
+		s.CookieSession.Encode(e)
+	}
+}
+
+func (s LoginResult) encodeFields(e *jx.Encoder) {
+	switch s.Type {
+	case TokenPairLoginResult:
+		s.TokenPair.encodeFields(e)
+	case CookieSessionLoginResult:
+		s.CookieSession.encodeFields(e)
+	}
+}
+
+// Decode decodes LoginResult from json.
+func (s *LoginResult) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode LoginResult to nil")
+	}
+	// Sum type fields.
+	if typ := d.Next(); typ != jx.Object {
+		return errors.Errorf("unexpected json type %q", typ)
+	}
+
+	var found bool
+	if err := d.Capture(func(d *jx.Decoder) error {
+		return d.ObjBytes(func(d *jx.Decoder, key []byte) error {
+			switch string(key) {
+			case "access_token":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.String {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := TokenPairLoginResult
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "refresh_token":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.String {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := TokenPairLoginResult
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "token_type":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.String {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := TokenPairLoginResult
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			case "transport":
+				// Type-based discrimination: check if field has expected JSON type
+				if typ := d.Next(); typ != jx.String {
+					// Field exists but has wrong type, not a match for this variant
+					return d.Skip()
+				}
+				match := CookieSessionLoginResult
+				if found && s.Type != match {
+					s.Type = ""
+					return errors.Errorf("multiple oneOf matches: (%v, %v)", s.Type, match)
+				}
+				found = true
+				s.Type = match
+			}
+			return d.Skip()
+		})
+	}); err != nil {
+		return errors.Wrap(err, "capture")
+	}
+	if !found {
+		return errors.New("unable to detect sum type variant")
+	}
+	switch s.Type {
+	case TokenPairLoginResult:
+		if err := s.TokenPair.Decode(d); err != nil {
+			return err
+		}
+	case CookieSessionLoginResult:
+		if err := s.CookieSession.Decode(d); err != nil {
+			return err
+		}
+	default:
+		return errors.Errorf("inferred invalid type: %s", s.Type)
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s LoginResult) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *LoginResult) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode implements json.Marshaler.
 func (s *LoginTOTPRequest) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -5485,12 +5771,19 @@ func (s *LoginTOTPRequest) encodeFields(e *jx.Encoder) {
 			s.RecoveryCode.Encode(e)
 		}
 	}
+	{
+		if s.Transport.Set {
+			e.FieldStart("transport")
+			s.Transport.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfLoginTOTPRequest = [3]string{
+var jsonFieldsNameOfLoginTOTPRequest = [4]string{
 	0: "challenge_token",
 	1: "code",
 	2: "recovery_code",
+	3: "transport",
 }
 
 // Decode decodes LoginTOTPRequest from json.
@@ -5499,6 +5792,7 @@ func (s *LoginTOTPRequest) Decode(d *jx.Decoder) error {
 		return errors.New("invalid: unable to decode LoginTOTPRequest to nil")
 	}
 	var requiredBitSet [1]uint8
+	s.setDefaults()
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -5533,6 +5827,16 @@ func (s *LoginTOTPRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"recovery_code\"")
+			}
+		case "transport":
+			if err := func() error {
+				s.Transport.Reset()
+				if err := s.Transport.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"transport\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -7579,6 +7883,39 @@ func (s *OptTimestamp) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes Transport as json.
+func (o OptTransport) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes Transport from json.
+func (o *OptTransport) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptTransport to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptTransport) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptTransport) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes WorkDetail as json.
 func (o OptWorkDetail) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -8395,13 +8732,22 @@ func (s *RefreshRequest) Encode(e *jx.Encoder) {
 // encodeFields encodes fields.
 func (s *RefreshRequest) encodeFields(e *jx.Encoder) {
 	{
-		e.FieldStart("refresh_token")
-		e.Str(s.RefreshToken)
+		if s.RefreshToken.Set {
+			e.FieldStart("refresh_token")
+			s.RefreshToken.Encode(e)
+		}
+	}
+	{
+		if s.Transport.Set {
+			e.FieldStart("transport")
+			s.Transport.Encode(e)
+		}
 	}
 }
 
-var jsonFieldsNameOfRefreshRequest = [1]string{
+var jsonFieldsNameOfRefreshRequest = [2]string{
 	0: "refresh_token",
+	1: "transport",
 }
 
 // Decode decodes RefreshRequest from json.
@@ -8409,21 +8755,29 @@ func (s *RefreshRequest) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode RefreshRequest to nil")
 	}
-	var requiredBitSet [1]uint8
+	s.setDefaults()
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
 		case "refresh_token":
-			requiredBitSet[0] |= 1 << 0
 			if err := func() error {
-				v, err := d.Str()
-				s.RefreshToken = string(v)
-				if err != nil {
+				s.RefreshToken.Reset()
+				if err := s.RefreshToken.Decode(d); err != nil {
 					return err
 				}
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"refresh_token\"")
+			}
+		case "transport":
+			if err := func() error {
+				s.Transport.Reset()
+				if err := s.Transport.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"transport\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
@@ -8431,38 +8785,6 @@ func (s *RefreshRequest) Decode(d *jx.Decoder) error {
 		return nil
 	}); err != nil {
 		return errors.Wrap(err, "decode RefreshRequest")
-	}
-	// Validate required fields.
-	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
-		0b00000001,
-	} {
-		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
-			// Mask only required fields and check equality to mask using XOR.
-			//
-			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
-			// Bits of fields which would be set are actually bits of missed fields.
-			missed := bits.OnesCount8(result)
-			for bitN := 0; bitN < missed; bitN++ {
-				bitIdx := bits.TrailingZeros8(result)
-				fieldIdx := i*8 + bitIdx
-				var name string
-				if fieldIdx < len(jsonFieldsNameOfRefreshRequest) {
-					name = jsonFieldsNameOfRefreshRequest[fieldIdx]
-				} else {
-					name = strconv.Itoa(fieldIdx)
-				}
-				failures = append(failures, validate.FieldError{
-					Name:  name,
-					Error: validate.ErrFieldRequired,
-				})
-				// Reset bit.
-				result &^= 1 << bitIdx
-			}
-		}
-	}
-	if len(failures) > 0 {
-		return &validate.Error{Fields: failures}
 	}
 
 	return nil
@@ -15632,6 +15954,46 @@ func (s TokenPairTokenType) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *TokenPairTokenType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes Transport as json.
+func (s Transport) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes Transport from json.
+func (s *Transport) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode Transport to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch Transport(v) {
+	case TransportBearer:
+		*s = TransportBearer
+	case TransportCookie:
+		*s = TransportCookie
+	default:
+		*s = Transport(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s Transport) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *Transport) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

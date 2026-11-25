@@ -9482,7 +9482,7 @@ func decodeLoginResponse(resp *http.Response) (res *LoginChallenge, _ error) {
 	return res, errors.Wrap(defRes, "error")
 }
 
-func decodeLoginTOTPResponse(resp *http.Response) (res *TokenPair, _ error) {
+func decodeLoginTOTPResponse(resp *http.Response) (res *LoginResultHeaders, _ error) {
 	switch resp.StatusCode {
 	case 200:
 		// Code 200.
@@ -9498,7 +9498,7 @@ func decodeLoginTOTPResponse(resp *http.Response) (res *TokenPair, _ error) {
 			}
 			d := jx.DecodeBytes(buf)
 
-			var response TokenPair
+			var response LoginResult
 			if err := func() error {
 				if err := response.Decode(d); err != nil {
 					return err
@@ -9524,7 +9524,47 @@ func decodeLoginTOTPResponse(resp *http.Response) (res *TokenPair, _ error) {
 			}(); err != nil {
 				return res, errors.Wrap(err, "validate")
 			}
-			return &response, nil
+			var wrapper LoginResultHeaders
+			wrapper.Response = response
+			h := uri.NewHeaderDecoder(resp.Header)
+			// Parse "Set-Cookie" header.
+			{
+				cfg := uri.HeaderParameterDecodingConfig{
+					Name:    "Set-Cookie",
+					Explode: false,
+				}
+				if err := func() error {
+					if err := h.HasParam(cfg); err == nil {
+						if err := h.DecodeParam(cfg, func(d uri.Decoder) error {
+							var wrapperDotSetCookieVal string
+							if err := func() error {
+								val, err := d.DecodeValue()
+								if err != nil {
+									return err
+								}
+
+								c, err := conv.ToString(val)
+								if err != nil {
+									return err
+								}
+
+								wrapperDotSetCookieVal = c
+								return nil
+							}(); err != nil {
+								return err
+							}
+							wrapper.SetCookie.SetTo(wrapperDotSetCookieVal)
+							return nil
+						}); err != nil {
+							return err
+						}
+					}
+					return nil
+				}(); err != nil {
+					return res, errors.Wrap(err, "parse Set-Cookie header")
+				}
+			}
+			return &wrapper, nil
 		default:
 			return res, validate.InvalidContentType(ct)
 		}
@@ -9693,7 +9733,46 @@ func decodeLogoutResponse(resp *http.Response) (res *LogoutNoContent, _ error) {
 	switch resp.StatusCode {
 	case 204:
 		// Code 204.
-		return &LogoutNoContent{}, nil
+		var wrapper LogoutNoContent
+		h := uri.NewHeaderDecoder(resp.Header)
+		// Parse "Set-Cookie" header.
+		{
+			cfg := uri.HeaderParameterDecodingConfig{
+				Name:    "Set-Cookie",
+				Explode: false,
+			}
+			if err := func() error {
+				if err := h.HasParam(cfg); err == nil {
+					if err := h.DecodeParam(cfg, func(d uri.Decoder) error {
+						var wrapperDotSetCookieVal string
+						if err := func() error {
+							val, err := d.DecodeValue()
+							if err != nil {
+								return err
+							}
+
+							c, err := conv.ToString(val)
+							if err != nil {
+								return err
+							}
+
+							wrapperDotSetCookieVal = c
+							return nil
+						}(); err != nil {
+							return err
+						}
+						wrapper.SetCookie.SetTo(wrapperDotSetCookieVal)
+						return nil
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}(); err != nil {
+				return res, errors.Wrap(err, "parse Set-Cookie header")
+			}
+		}
+		return &wrapper, nil
 	}
 	// Convenient error response.
 	defRes, err := func() (res *ProblemStatusCodeWithHeaders, err error) {
@@ -11593,7 +11672,7 @@ func decodeQueryWorksResponse(resp *http.Response) (res *WorkListHeaders, _ erro
 	return res, errors.Wrap(defRes, "error")
 }
 
-func decodeRefreshResponse(resp *http.Response) (res *TokenPair, _ error) {
+func decodeRefreshResponse(resp *http.Response) (res *LoginResultHeaders, _ error) {
 	switch resp.StatusCode {
 	case 200:
 		// Code 200.
@@ -11609,7 +11688,7 @@ func decodeRefreshResponse(resp *http.Response) (res *TokenPair, _ error) {
 			}
 			d := jx.DecodeBytes(buf)
 
-			var response TokenPair
+			var response LoginResult
 			if err := func() error {
 				if err := response.Decode(d); err != nil {
 					return err
@@ -11635,7 +11714,47 @@ func decodeRefreshResponse(resp *http.Response) (res *TokenPair, _ error) {
 			}(); err != nil {
 				return res, errors.Wrap(err, "validate")
 			}
-			return &response, nil
+			var wrapper LoginResultHeaders
+			wrapper.Response = response
+			h := uri.NewHeaderDecoder(resp.Header)
+			// Parse "Set-Cookie" header.
+			{
+				cfg := uri.HeaderParameterDecodingConfig{
+					Name:    "Set-Cookie",
+					Explode: false,
+				}
+				if err := func() error {
+					if err := h.HasParam(cfg); err == nil {
+						if err := h.DecodeParam(cfg, func(d uri.Decoder) error {
+							var wrapperDotSetCookieVal string
+							if err := func() error {
+								val, err := d.DecodeValue()
+								if err != nil {
+									return err
+								}
+
+								c, err := conv.ToString(val)
+								if err != nil {
+									return err
+								}
+
+								wrapperDotSetCookieVal = c
+								return nil
+							}(); err != nil {
+								return err
+							}
+							wrapper.SetCookie.SetTo(wrapperDotSetCookieVal)
+							return nil
+						}); err != nil {
+							return err
+						}
+					}
+					return nil
+				}(); err != nil {
+					return res, errors.Wrap(err, "parse Set-Cookie header")
+				}
+			}
+			return &wrapper, nil
 		default:
 			return res, validate.InvalidContentType(ct)
 		}

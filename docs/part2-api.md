@@ -1586,7 +1586,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
     steps. A logged-in user can do everything the public listener offers, reveal included
     (`--no-reveal` still wins). Everyone is equal: there are no roles, and admin work stays on
     the socket. A cookie transport for the Part 4 UI comes later; `bearerToken(r)` is the single
-    extraction point so it can be added there.
+    extraction point so it can be added there (done in Part 4 stage 1: `docs/part4-ui.md`
+    "Auth in the browser", `internal/web/api/runtime/cookie.go`).
   - **Decisions made with the user:**
 
     | Topic | Decision |

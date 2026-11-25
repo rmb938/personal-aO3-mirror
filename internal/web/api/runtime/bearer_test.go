@@ -47,7 +47,7 @@ func TestBearerToken(t *testing.T) {
 		for _, v := range c.header {
 			r.Header.Add("Authorization", v)
 		}
-		token, res := bearerToken(r)
+		token, _, res := bearerToken(r)
 		assert.Equal(t, c.res, res, name)
 		assert.Equal(t, c.token, token, name)
 	}

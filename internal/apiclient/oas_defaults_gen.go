@@ -3,6 +3,22 @@
 package apiclient
 
 // setDefaults set default value of fields.
+func (s *LoginTOTPRequest) setDefaults() {
+	{
+		val := Transport("bearer")
+		s.Transport.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
+func (s *RefreshRequest) setDefaults() {
+	{
+		val := Transport("bearer")
+		s.Transport.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
 func (s *SourceAddRequest) setDefaults() {
 	{
 		val := int(0)

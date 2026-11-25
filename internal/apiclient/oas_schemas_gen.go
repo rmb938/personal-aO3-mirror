@@ -745,6 +745,81 @@ func (s *ConfirmEnrollmentRequest) SetCode(val TOTPCode) {
 // ConfirmSourceNoContent is response for ConfirmSource operation.
 type ConfirmSourceNoContent struct{}
 
+// A cookie-transport login or refresh: the tokens are in the response's `Set-Cookie` headers, never
+// the body. Refresh before `expires_in`, or when a request is 401.
+// Ref: #/components/schemas/CookieSession
+type CookieSession struct {
+	Transport CookieSessionTransport `json:"transport"`
+	// Seconds until the access cookie (and its token) expires (`auth.access_ttl`).
+	ExpiresIn int `json:"expires_in"`
+	// The session ends then unless refreshed (and at `auth.max_session_age` after the login regardless).
+	RefreshExpiresAt Timestamp `json:"refresh_expires_at"`
+}
+
+// GetTransport returns the value of Transport.
+func (s *CookieSession) GetTransport() CookieSessionTransport {
+	return s.Transport
+}
+
+// GetExpiresIn returns the value of ExpiresIn.
+func (s *CookieSession) GetExpiresIn() int {
+	return s.ExpiresIn
+}
+
+// GetRefreshExpiresAt returns the value of RefreshExpiresAt.
+func (s *CookieSession) GetRefreshExpiresAt() Timestamp {
+	return s.RefreshExpiresAt
+}
+
+// SetTransport sets the value of Transport.
+func (s *CookieSession) SetTransport(val CookieSessionTransport) {
+	s.Transport = val
+}
+
+// SetExpiresIn sets the value of ExpiresIn.
+func (s *CookieSession) SetExpiresIn(val int) {
+	s.ExpiresIn = val
+}
+
+// SetRefreshExpiresAt sets the value of RefreshExpiresAt.
+func (s *CookieSession) SetRefreshExpiresAt(val Timestamp) {
+	s.RefreshExpiresAt = val
+}
+
+type CookieSessionTransport string
+
+const (
+	CookieSessionTransportCookie CookieSessionTransport = "cookie"
+)
+
+// AllValues returns all CookieSessionTransport values.
+func (CookieSessionTransport) AllValues() []CookieSessionTransport {
+	return []CookieSessionTransport{
+		CookieSessionTransportCookie,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CookieSessionTransport) MarshalText() ([]byte, error) {
+	switch s {
+	case CookieSessionTransportCookie:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CookieSessionTransport) UnmarshalText(data []byte) error {
+	switch CookieSessionTransport(data) {
+	case CookieSessionTransportCookie:
+		*s = CookieSessionTransportCookie
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // An inclusive counter range; an absent end is open, and min must not be above max.
 // Ref: #/components/schemas/CountRange
 type CountRange struct {
@@ -2657,6 +2732,99 @@ func (s *LoginRequest) SetPassword(val string) {
 	s.Password = val
 }
 
+// A TokenPair with the bearer transport, a CookieSession with `cookie`.
+// Ref: #/components/schemas/LoginResult
+// LoginResult represents sum type.
+type LoginResult struct {
+	// Type selects the active sum variant, switch on this field.
+	Type          LoginResultType
+	TokenPair     TokenPair
+	CookieSession CookieSession
+}
+
+// LoginResultType is oneOf type of LoginResult.
+type LoginResultType string
+
+// Possible values for LoginResultType.
+const (
+	TokenPairLoginResult     LoginResultType = "TokenPair"
+	CookieSessionLoginResult LoginResultType = "CookieSession"
+)
+
+// IsTokenPair reports whether LoginResult is TokenPair.
+func (s LoginResult) IsTokenPair() bool { return s.Type == TokenPairLoginResult }
+
+// IsCookieSession reports whether LoginResult is CookieSession.
+func (s LoginResult) IsCookieSession() bool { return s.Type == CookieSessionLoginResult }
+
+// SetTokenPair sets LoginResult to TokenPair.
+func (s *LoginResult) SetTokenPair(v TokenPair) {
+	s.Type = TokenPairLoginResult
+	s.TokenPair = v
+}
+
+// GetTokenPair returns TokenPair and true boolean if LoginResult is TokenPair.
+func (s LoginResult) GetTokenPair() (v TokenPair, ok bool) {
+	if !s.IsTokenPair() {
+		return v, false
+	}
+	return s.TokenPair, true
+}
+
+// NewTokenPairLoginResult returns new LoginResult from TokenPair.
+func NewTokenPairLoginResult(v TokenPair) LoginResult {
+	var s LoginResult
+	s.SetTokenPair(v)
+	return s
+}
+
+// SetCookieSession sets LoginResult to CookieSession.
+func (s *LoginResult) SetCookieSession(v CookieSession) {
+	s.Type = CookieSessionLoginResult
+	s.CookieSession = v
+}
+
+// GetCookieSession returns CookieSession and true boolean if LoginResult is CookieSession.
+func (s LoginResult) GetCookieSession() (v CookieSession, ok bool) {
+	if !s.IsCookieSession() {
+		return v, false
+	}
+	return s.CookieSession, true
+}
+
+// NewCookieSessionLoginResult returns new LoginResult from CookieSession.
+func NewCookieSessionLoginResult(v CookieSession) LoginResult {
+	var s LoginResult
+	s.SetCookieSession(v)
+	return s
+}
+
+// LoginResultHeaders wraps LoginResult with response headers.
+type LoginResultHeaders struct {
+	SetCookie OptString
+	Response  LoginResult
+}
+
+// GetSetCookie returns the value of SetCookie.
+func (s *LoginResultHeaders) GetSetCookie() OptString {
+	return s.SetCookie
+}
+
+// GetResponse returns the value of Response.
+func (s *LoginResultHeaders) GetResponse() LoginResult {
+	return s.Response
+}
+
+// SetSetCookie sets the value of SetCookie.
+func (s *LoginResultHeaders) SetSetCookie(val OptString) {
+	s.SetCookie = val
+}
+
+// SetResponse sets the value of Response.
+func (s *LoginResultHeaders) SetResponse(val LoginResult) {
+	s.Response = val
+}
+
 // Exactly one of `code` and `recovery_code`.
 // Ref: #/components/schemas/LoginTOTPRequest
 type LoginTOTPRequest struct {
@@ -2664,7 +2832,8 @@ type LoginTOTPRequest struct {
 	ChallengeToken string      `json:"challenge_token"`
 	Code           OptTOTPCode `json:"code"`
 	// An unused recovery code; case, dashes and spaces don't matter.
-	RecoveryCode OptString `json:"recovery_code"`
+	RecoveryCode OptString    `json:"recovery_code"`
+	Transport    OptTransport `json:"transport"`
 }
 
 // GetChallengeToken returns the value of ChallengeToken.
@@ -2682,6 +2851,11 @@ func (s *LoginTOTPRequest) GetRecoveryCode() OptString {
 	return s.RecoveryCode
 }
 
+// GetTransport returns the value of Transport.
+func (s *LoginTOTPRequest) GetTransport() OptTransport {
+	return s.Transport
+}
+
 // SetChallengeToken sets the value of ChallengeToken.
 func (s *LoginTOTPRequest) SetChallengeToken(val string) {
 	s.ChallengeToken = val
@@ -2697,8 +2871,25 @@ func (s *LoginTOTPRequest) SetRecoveryCode(val OptString) {
 	s.RecoveryCode = val
 }
 
+// SetTransport sets the value of Transport.
+func (s *LoginTOTPRequest) SetTransport(val OptTransport) {
+	s.Transport = val
+}
+
 // LogoutNoContent is response for Logout operation.
-type LogoutNoContent struct{}
+type LogoutNoContent struct {
+	SetCookie OptString
+}
+
+// GetSetCookie returns the value of SetCookie.
+func (s *LogoutNoContent) GetSetCookie() OptString {
+	return s.SetCookie
+}
+
+// SetSetCookie sets the value of SetCookie.
+func (s *LogoutNoContent) SetSetCookie(val OptString) {
+	s.SetCookie = val
+}
 
 // A stored media tag on the media page. Names are content, hashed unless revealed.
 // Ref: #/components/schemas/Medium
@@ -4889,6 +5080,52 @@ func (o OptTimestamp) Or(d Timestamp) Timestamp {
 	return d
 }
 
+// NewOptTransport returns new OptTransport with value set to v.
+func NewOptTransport(v Transport) OptTransport {
+	return OptTransport{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTransport is optional Transport.
+type OptTransport struct {
+	Value Transport
+	Set   bool
+}
+
+// IsSet returns true if OptTransport was set.
+func (o OptTransport) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTransport) Reset() {
+	var v Transport
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTransport) SetTo(v Transport) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTransport) Get() (v Transport, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTransport) Or(d Transport) Transport {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptWWWAuthenticate returns new OptWWWAuthenticate with value set to v.
 func NewOptWWWAuthenticate(v WWWAuthenticate) OptWWWAuthenticate {
 	return OptWWWAuthenticate{
@@ -5494,20 +5731,32 @@ func (s *RecoveryCodes) SetRecoveryCodes(val []string) {
 	s.RecoveryCodes = val
 }
 
+// `refresh_token` is required with the bearer transport and must be omitted with `cookie`.
 // Ref: #/components/schemas/RefreshRequest
 type RefreshRequest struct {
 	// The session's current refresh token, from the login or the last refresh.
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken OptString    `json:"refresh_token"`
+	Transport    OptTransport `json:"transport"`
 }
 
 // GetRefreshToken returns the value of RefreshToken.
-func (s *RefreshRequest) GetRefreshToken() string {
+func (s *RefreshRequest) GetRefreshToken() OptString {
 	return s.RefreshToken
 }
 
+// GetTransport returns the value of Transport.
+func (s *RefreshRequest) GetTransport() OptTransport {
+	return s.Transport
+}
+
 // SetRefreshToken sets the value of RefreshToken.
-func (s *RefreshRequest) SetRefreshToken(val string) {
+func (s *RefreshRequest) SetRefreshToken(val OptString) {
 	s.RefreshToken = val
+}
+
+// SetTransport sets the value of Transport.
+func (s *RefreshRequest) SetTransport(val OptTransport) {
+	s.Transport = val
 }
 
 // Ref: #/components/schemas/RegenerateRecoveryCodesRequest
@@ -8753,6 +9002,55 @@ func (s *TokenPairTokenType) UnmarshalText(data []byte) error {
 	switch TokenPairTokenType(data) {
 	case TokenPairTokenTypeBearer:
 		*s = TokenPairTokenTypeBearer
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// How a login or refresh hands over the session's tokens. `bearer` (the default, for API clients)
+// returns them in the body; `cookie` (for the web UI) sets them as HttpOnly cookies JS can't read,
+// `__Host-ao3mirror-access` (the access token, read when the request has no `Authorization`) and
+// `__Host-ao3mirror-refresh`. Both are `Secure`, `SameSite=Strict`, `Path=/`. A request carrying a
+// session cookie must send `X-Ao3mirror-Csrf: 1` from a same-origin page on every method but GET and
+// HEAD (else 403 `forbidden`); one carrying both `Authorization` and the access cookie is 400
+// `bad-request`. The admin socket ignores cookies.
+// Ref: #/components/schemas/Transport
+type Transport string
+
+const (
+	TransportBearer Transport = "bearer"
+	TransportCookie Transport = "cookie"
+)
+
+// AllValues returns all Transport values.
+func (Transport) AllValues() []Transport {
+	return []Transport{
+		TransportBearer,
+		TransportCookie,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s Transport) MarshalText() ([]byte, error) {
+	switch s {
+	case TransportBearer:
+		return []byte(s), nil
+	case TransportCookie:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *Transport) UnmarshalText(data []byte) error {
+	switch Transport(data) {
+	case TransportBearer:
+		*s = TransportBearer
+		return nil
+	case TransportCookie:
+		*s = TransportCookie
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

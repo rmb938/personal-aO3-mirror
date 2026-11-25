@@ -108,21 +108,37 @@ emit inline scripts (configure it, and test the served headers and the built HTM
 
 The cookie transport `bearerToken(r)` (`internal/web/api/runtime/bearer.go`) was left room for.
 
-- **Opt-in per login.** The routes that issue tokens (login TOTP step, signup and reset
-  confirm) accept `"transport": "cookie"`. Then the response sets the tokens as cookies and
-  leaves them out of the body. Without it, behaviour is unchanged (bearer, for the CLI and
-  `internal/apiclient`).
-- **Cookies.** `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`. Access
-  cookie lifetime = access TTL; refresh cookie = refresh TTL. The server is the only one that
-  sets or clears them: a cookie JS can write can't be HttpOnly.
-- **Refresh.** The UI calls `POST /api/v1/auth/refresh` with no token in the body (on a 401, or
-  shortly before expiry). The browser attaches the refresh cookie, the server rotates both
-  cookies, and the UI retries the request. Reuse detection works unchanged.
-- **Logout** revokes the session and clears both cookies.
-- **CSRF.** A request authenticated by cookie must carry the custom header on every method
-  except GET/HEAD, and its `Sec-Fetch-Site` (or `Origin`) must be same-origin; otherwise 403.
-  Bearer requests are unaffected. A request carrying both credentials is rejected (ambiguous).
-- **Logs** stay as they are: `auth` records the transport, never a token.
+- **Opt-in per login.** The two routes that issue tokens, `POST /api/v1/auth/login/totp` and
+  `/api/v1/auth/refresh`, take an optional `"transport"`: `bearer` (the default when omitted,
+  so the CLI, `internal/apiclient` and other API clients change nothing) or `cookie`. With
+  `cookie` the response sets the tokens as cookies and its body is a `CookieSession`
+  (`transport`, `expires_in`, `refresh_expires_at`) with no token; the spec's 200 is a
+  `oneOf` of it and `TokenPair`. Signup and reset confirm issue no tokens (the user logs in
+  afterwards), so they don't take it.
+- **Cookies.** `__Host-ao3mirror-access` and `__Host-ao3mirror-refresh`: `Secure`,
+  `HttpOnly`, `SameSite=Strict`, `Path=/`, no `Domain`. Lifetimes are `Max-Age` (not
+  `Expires`, so the client's clock doesn't matter): the access TTL, and until the session's
+  refresh expiry. The server is the only one that sets or clears them: a cookie JS can write
+  can't be HttpOnly. They are not an OpenAPI security scheme (that would change the generated
+  client's security source); the spec describes them in prose (the Transport schema).
+- **Refresh.** The UI calls `POST /api/v1/auth/refresh` with `{"transport":"cookie"}` and no
+  token (on a 401, or shortly before `expires_in`). The browser attaches the refresh cookie,
+  the server rotates both cookies, and the UI retries the request. Reuse detection works
+  unchanged and has no grace window, so **two refreshes with the same cookie end the
+  session**: stage 5 must single-flight refresh across tabs (Web Locks API,
+  `navigator.locks.request`), and after taking the lock first retry the request, since another
+  tab may already have refreshed (the cookies are shared).
+- **Logout** revokes the session and, when it was signed in by the access cookie, clears both
+  cookies (`Max-Age=0`).
+- **CSRF.** A request carrying either session cookie must send `X-Ao3mirror-Csrf: 1` on every
+  method except GET/HEAD, and be same-origin: `Sec-Fetch-Site: same-origin`, or without that
+  header an `Origin` naming the request's host; otherwise 403 `forbidden`. A cookie-transport
+  login or refresh needs the same, checked before anything is spent (a challenge try, a
+  refresh token). Go's CrossOriginProtection still runs first on every unsafe request. Bearer
+  requests (no cookies) are unaffected. `Authorization` together with the access cookie is 400
+  `bad-request` (ambiguous); the refresh cookie alone never signs a request in.
+- **Admin socket** drops the `Cookie` header, so there is no cookie transport there.
+- **Logs:** `auth` as before, plus `auth_transport` (`bearer` or `cookie`); never a token.
 - **Invite and reset links** (`{api.public_url}/signup#token=…`) land on UI pages that read the
   fragment, so the token never reaches the server's logs or Cloudflare.
 
@@ -130,8 +146,8 @@ The cookie transport `bearerToken(r)` (`internal/web/api/runtime/bearer.go`) was
 
 Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` green.
 
-- [ ] **0. This doc.** Plus the Part 4 row in `docs/plan.md` and the status line in CLAUDE.md.
-- [ ] **1. Cookie auth transport (Go).** "Auth in the browser": the `transport` member on the
+- [x] **0. This doc.** Plus the Part 4 row in `docs/plan.md` and the status line in CLAUDE.md.
+- [x] **1. Cookie auth transport (Go).** "Auth in the browser": the `transport` member on the
   token-issuing routes, cookie set/rotate/clear, `bearerToken(r)` reading the access cookie,
   the CSRF check, problems for the new 403s, OpenAPI and `make generate`, tests in
   `internal/web/api` (cookie attributes, refresh rotation and reuse via cookie, logout clears,
@@ -154,7 +170,7 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
   by `make check`). First test: the placeholder-free app loads with the UI CSP. The guard and
   CLAUDE.md are updated (user approves) only as far as this needs.
 - [ ] **5. Login UI.** Two-step login (password, then TOTP or a recovery code), the fetch
-  wrapper (refresh and retry, CSRF header), logout, the redirect to login on session loss, the
+  wrapper (refresh and retry single-flighted across tabs, CSRF header), logout, the redirect to login on session loss, the
   lockout and rate-limit messages.
 - [ ] **6. Signup and account pages.** Invite signup from the fragment link (password policy
   messages, TOTP QR + text secret, confirm code, recovery codes shown once with copy/download),

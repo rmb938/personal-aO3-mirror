@@ -1,9 +1,11 @@
 package request
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
 )
 
@@ -55,7 +57,15 @@ var (
 	detailRecoveryCode  = problem.NewDetail("must be a recovery code: " + strconv.Itoa(recoveryCodeChars) +
 		" characters of a-z and 2-7 (either case; dashes and spaces are ignored)")
 	detailSecondFactor = problem.NewDetail("exactly one of code and recovery_code is required")
+	detailTransport    = problem.OneOf(dto.Transport(""))
+	// detailCookieRefresh: with the cookie transport the refresh token is the refresh cookie.
+	detailCookieRefresh = problem.NewDetail("must be omitted when transport is cookie: the refresh cookie is used")
 )
+
+// validTransport reports whether t is omitted (bearer) or one of the dto.Transport values.
+func validTransport(t dto.Transport) bool {
+	return t == "" || slices.Contains(t.EnumValues(), string(t))
+}
 
 func tokenDetail(prefix, what string) problem.Detail {
 	return problem.NewDetail("must be " + what + ": " + prefix + " then " + strconv.Itoa(opaqueTokenLen) +
@@ -198,18 +208,23 @@ func (s *Login) Validate(v *problem.Validation) {
 	}
 }
 
-// LoginTOTP is the body of POST /api/v1/auth/login/totp: the login's challenge token and
-// exactly one of a TOTP code and a recovery code.
+// LoginTOTP is the body of POST /api/v1/auth/login/totp: the login's challenge token, exactly
+// one of a TOTP code and a recovery code, and how to hand over the tokens (omitted: bearer).
 type LoginTOTP struct {
-	ChallengeToken string `json:"challenge_token"`
-	Code           string `json:"code,omitzero"`
-	RecoveryCode   string `json:"recovery_code,omitzero"`
+	ChallengeToken string        `json:"challenge_token"`
+	Code           string        `json:"code,omitzero"`
+	RecoveryCode   string        `json:"recovery_code,omitzero"`
+	Transport      dto.Transport `json:"transport,omitzero"`
 }
 
-// Validate records a malformed challenge token, no or both second factors, or a malformed one.
+// Validate records a malformed challenge token, no or both second factors, a malformed one, or
+// an unknown transport.
 func (s *LoginTOTP) Validate(v *problem.Validation) {
 	if !validToken(s.ChallengeToken, prefixChallenge) {
 		v.Member(detailChallenge, "challenge_token")
+	}
+	if !validTransport(s.Transport) {
+		v.Member(detailTransport, "transport")
 	}
 	switch {
 	case s.Code == "" && s.RecoveryCode == "":
@@ -223,14 +238,25 @@ func (s *LoginTOTP) Validate(v *problem.Validation) {
 	}
 }
 
-// Refresh is the body of POST /api/v1/auth/refresh: the session's current refresh token.
+// Refresh is the body of POST /api/v1/auth/refresh: the session's current refresh token, or
+// with the cookie transport no token (the refresh cookie holds it).
 type Refresh struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string        `json:"refresh_token,omitzero"`
+	Transport    dto.Transport `json:"transport,omitzero"`
 }
 
-// Validate records a malformed refresh token.
+// Validate records an unknown transport, a missing or malformed refresh token (bearer), or one
+// sent with the cookie transport.
 func (s *Refresh) Validate(v *problem.Validation) {
-	if !validToken(s.RefreshToken, prefixRefresh) {
+	if !validTransport(s.Transport) {
+		v.Member(detailTransport, "transport")
+	}
+	switch {
+	case s.Transport == dto.TransportCookie:
+		if s.RefreshToken != "" {
+			v.Member(detailCookieRefresh, "refresh_token")
+		}
+	case !validToken(s.RefreshToken, prefixRefresh):
 		v.Member(detailRefreshToken, "refresh_token")
 	}
 }

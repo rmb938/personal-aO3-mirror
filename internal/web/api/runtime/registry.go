@@ -46,6 +46,7 @@ var responseTypes = []any{
 	dto.RecoveryCodes{},
 	dto.LoginChallenge{},
 	dto.TokenPair{},
+	dto.CookieSession{},
 	dto.Account{},
 }
 

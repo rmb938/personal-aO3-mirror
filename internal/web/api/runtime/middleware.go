@@ -57,6 +57,9 @@ type reqState struct {
 	auth        authResult
 	principal   controllers.Principal
 	tokenReason auth.TokenReason
+	// transport is how the session credentials came: authenticate's access token, or a
+	// login's or refresh's cookie transport ("" when none were read).
+	transport transport
 }
 
 type stateKey struct{}
@@ -191,6 +194,9 @@ func (a *API) accessLog(listener string) func(http.Handler) http.Handler {
 			}
 			if st.auth != "" {
 				attrs = append(attrs, slog.String("auth", string(st.auth)))
+			}
+			if st.transport != "" {
+				attrs = append(attrs, slog.String("auth_transport", string(st.transport)))
 			}
 			if st.tokenReason != "" {
 				attrs = append(attrs, slog.String("token_reason", string(st.tokenReason)))

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 )
 
 var (
@@ -98,6 +100,8 @@ func TestLoginTOTPValidation(t *testing.T) {
 		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "ABCDEFGHIJKLMNOPQRSTUV67"},
 		{ChallengeToken: fixtureChallengeToken, RecoveryCode: " abcd efgh-ijkl mnop-qrst uv23 "},
 		{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcdefghijklmnopqrstuv23" + strings.Repeat("-", 72)},
+		{ChallengeToken: fixtureChallengeToken, Code: "123456", Transport: dto.TransportBearer},
+		{ChallengeToken: fixtureChallengeToken, Code: "123456", Transport: dto.TransportCookie},
 	} {
 		assert.Empty(t, errorsOf(t, &s), "%+v", s)
 	}
@@ -109,6 +113,8 @@ func TestLoginTOTPValidation(t *testing.T) {
 		{LoginTOTP{ChallengeToken: fixtureEnrollmentToken, Code: "123456", RecoveryCode: "abcd-efgh-ijkl-mnop-qrst-uv23"},
 			map[string]string{"/challenge_token": detailChallenge.Message(), "/recovery_code": detailSecondFactor.Message()}},
 		{LoginTOTP{ChallengeToken: fixtureChallengeToken, Code: "12345"}, map[string]string{"/code": detailTOTPCode.Message()}},
+		{LoginTOTP{ChallengeToken: fixtureChallengeToken, Code: "123456", Transport: "cookies"},
+			map[string]string{"/transport": detailTransport.Message()}},
 		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mnop-qrst-uv2"},
 			map[string]string{"/recovery_code": detailRecoveryCode.Message()}},
 		{LoginTOTP{ChallengeToken: fixtureChallengeToken, RecoveryCode: "abcd-efgh-ijkl-mn23"}, // the old 16-character form
@@ -123,11 +129,22 @@ func TestLoginTOTPValidation(t *testing.T) {
 }
 
 func TestRefreshValidation(t *testing.T) {
-	assert.Empty(t, errorsOf(t, &Refresh{RefreshToken: fixtureRefreshToken}))
+	for _, s := range []Refresh{
+		{RefreshToken: fixtureRefreshToken},
+		{RefreshToken: fixtureRefreshToken, Transport: dto.TransportBearer},
+		{Transport: dto.TransportCookie},
+	} {
+		assert.Empty(t, errorsOf(t, &s), "%+v", s)
+	}
 	want := map[string]string{"/refresh_token": detailRefreshToken.Message()}
-	for _, s := range []Refresh{{}, {RefreshToken: fixtureChallengeToken}, {RefreshToken: fixtureRefreshToken + "A"}} {
+	for _, s := range []Refresh{{}, {RefreshToken: fixtureChallengeToken}, {RefreshToken: fixtureRefreshToken + "A"},
+		{Transport: dto.TransportBearer}} {
 		assert.Equal(t, want, errorsOf(t, &s), "%+v", s)
 	}
+	assert.Equal(t, map[string]string{"/refresh_token": detailCookieRefresh.Message()},
+		errorsOf(t, &Refresh{RefreshToken: fixtureRefreshToken, Transport: dto.TransportCookie}))
+	assert.Equal(t, map[string]string{"/transport": detailTransport.Message(), "/refresh_token": detailRefreshToken.Message()},
+		errorsOf(t, &Refresh{Transport: "Cookie"}), "every invalid member at once")
 }
 
 func TestChangePasswordValidation(t *testing.T) {

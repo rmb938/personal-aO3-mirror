@@ -41,7 +41,8 @@ header identifies the request.
 **400 Bad Request.** The request could not be read at all: a malformed query string (bad
 percent-encoding, `;` separators) or more than 32 query parameters, or on a route that needs an
 access token, an `Authorization` header that is repeated, over 2048 bytes, or `Bearer` without
-a single token (that 400 carries `WWW-Authenticate: Bearer realm="ao3mirror",
+a single token, an access cookie that is repeated, over 2048 bytes or not a single token, or
+both `Authorization` and the access cookie (that 400 carries `WWW-Authenticate: Bearer realm="ao3mirror",
 error="invalid_request"`, RFC 6750 §3.1).
 
 ## validation-error
@@ -81,7 +82,10 @@ or a response that is not JSON (e.g. an image), which is only served revealed.
 
 ## forbidden
 
-**403 Forbidden.** A cross-origin browser request with an unsafe method was refused, or a
+**403 Forbidden.** A cross-origin browser request with an unsafe method was refused; a request
+carrying a session cookie (any method but GET and HEAD), or a login or refresh asking for the
+cookie transport, came without `X-Ao3mirror-Csrf: 1` or not from a same-origin page
+(`Sec-Fetch-Site: same-origin`, or without it an `Origin` naming this host); or a
 signed-in change (`PUT /api/v1/account/password`, `POST /api/v1/account/recovery-codes`) was
 sent with a wrong current password or TOTP code. The access token itself was fine, so this is
 not a 401; the failure counts against the account like a failed login.
@@ -136,7 +140,8 @@ passed (`openapi.yaml` lists the limits).
 
 **401 Unauthorized.** On the public listener every route but `/api/v1/healthz` and the auth
 entry points (signup, reset, login, refresh) needs an access token (`Authorization: Bearer
-<access_token>` from `/api/v1/auth/login/totp` or `/api/v1/auth/refresh`), and so does a path
+<access_token>` from `/api/v1/auth/login/totp` or `/api/v1/auth/refresh`, or for the web UI
+the access cookie a cookie-transport login set), and so does a path
 that matches no route (so it is 401, not 404, without one). The request had none, or the
 token was refused: malformed, badly signed, expired, or its session revoked or expired, or its
 account disabled or deleted. A refused token's 401 carries `WWW-Authenticate: Bearer
@@ -149,8 +154,9 @@ signed-in account.
 ## invalid-credentials
 
 **401 Invalid Credentials.** An auth step was refused: a wrong password, TOTP code or recovery
-code, or a token from the body (invite, enrollment, login challenge, refresh) that is unknown,
-expired, already used or revoked. The detail says only which of the two it was; it never says
+code, or a token from the body (invite, enrollment, login challenge, refresh) or the refresh
+cookie that is unknown, expired, already used or revoked, or a cookie-transport refresh without
+the refresh cookie. The detail says only which of the two it was; it never says
 whether an account exists. Start the flow again (a new invite or reset link if that one is
 spent). Like every 401, it carries `WWW-Authenticate: Bearer realm="ao3mirror"`.
 

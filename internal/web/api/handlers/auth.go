@@ -5,6 +5,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/convert"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 )
@@ -99,30 +100,58 @@ func (a *Handlers) Login(r *http.Request) (any, error) {
 }
 
 // LoginSecondFactor is POST /api/v1/auth/login/totp, body {challenge_token, code |
-// recovery_code}: starts a session and returns its access and refresh tokens.
+// recovery_code, transport?}: starts a session and returns its access and refresh tokens (in
+// the body, or with transport cookie as cookies).
 func (a *Handlers) LoginSecondFactor(r *http.Request) (any, error) {
 	var req request.LoginTOTP
 	if err := decodeBody(r, &req); err != nil {
 		return nil, err
+	}
+	cookie := req.Transport == dto.TransportCookie
+	if cookie {
+		if err := runtime.CheckCSRF(r); err != nil { // before the challenge spends a try
+			return nil, err
+		}
+		runtime.UseCookieTransport(r)
 	}
 	p, err := a.ctl.Auth().LoginSecondFactor(r.Context(), req.ChallengeToken,
 		controllers.SecondFactor{Code: req.Code, RecoveryCode: req.RecoveryCode})
 	if err != nil {
 		return nil, err
 	}
-	return convert.TokenPair(p), nil
+	return tokens(p, cookie), nil
 }
 
-// Refresh is POST /api/v1/auth/refresh, body {refresh_token}: a new token pair; the old
-// refresh token stops working.
+// Refresh is POST /api/v1/auth/refresh, body {refresh_token} or {transport: cookie} (the
+// refresh cookie then holds the token): a new token pair, in the body or as cookies like the
+// login's; the old refresh token stops working.
 func (a *Handlers) Refresh(r *http.Request) (any, error) {
 	var req request.Refresh
 	if err := decodeBody(r, &req); err != nil {
 		return nil, err
 	}
-	p, err := a.ctl.Auth().Refresh(r.Context(), req.RefreshToken)
+	token, cookie := req.RefreshToken, req.Transport == dto.TransportCookie
+	if cookie {
+		if err := runtime.CheckCSRF(r); err != nil {
+			return nil, err
+		}
+		var err error
+		if token, err = runtime.RefreshCookie(r); err != nil {
+			return nil, err
+		}
+	}
+	p, err := a.ctl.Auth().Refresh(r.Context(), token)
 	if err != nil {
 		return nil, err
 	}
-	return convert.TokenPair(p), nil
+	return tokens(p, cookie), nil
+}
+
+// tokens is a login's or refresh's response: the token pair in the body, or with the cookie
+// transport the tokens as cookies and only their expiry times in the body.
+func tokens(p controllers.TokenPair, cookie bool) any {
+	if !cookie {
+		return convert.TokenPair(p)
+	}
+	return &runtime.Response{Status: http.StatusOK, Cookies: runtime.SessionCookies(p), Body: convert.CookieSession(p)}
 }

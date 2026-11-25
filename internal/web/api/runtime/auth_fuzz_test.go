@@ -51,7 +51,7 @@ func FuzzBearerToken(f *testing.F) {
 		if two {
 			r.Header["Authorization"] = append(r.Header["Authorization"], b)
 		}
-		token, res := bearerToken(r)
+		token, _, res := bearerToken(r)
 
 		wantRes, wantToken := authMalformed, ""
 		scheme, _, _ := strings.Cut(a, " ")
