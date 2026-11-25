@@ -9,7 +9,7 @@ require (
 	github.com/go-faster/errors v0.8.0
 	github.com/go-faster/jx v1.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/ogen-go/ogen v1.25.0
 	github.com/stretchr/testify v1.12.1
 	github.com/temoto/robotstxt v1.1.2
@@ -18,7 +18,7 @@ require (
 	golang.org/x/sync v0.25.0
 	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
