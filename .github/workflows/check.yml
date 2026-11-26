@@ -49,3 +49,13 @@ jobs:
         run: make check
         env:
           PLAYWRIGHT_INSTALL_FLAGS: --with-deps
+
+      # The UI screenshots make ui-e2e took (web/tests/screenshots.spec.ts), synthetic content
+      # only, for reviewing UI changes. Also kept when a later step failed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ui-screenshots
+          path: web/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14

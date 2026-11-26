@@ -24,7 +24,7 @@ export interface Account {
 // The seeded accounts (internal/e2eseed.Accounts), one per group of tests, so a test that
 // changes an account (password, recovery codes, sessions, backoff, last TOTP step) never
 // disturbs another group.
-export type AccountKey = 'reader' | 'sessions' | 'password' | 'recovery';
+export type AccountKey = 'reader' | 'sessions' | 'password' | 'recovery' | 'screenshots';
 
 // What `ao3mirror dev ui-server` prints once listening (cmd/ao3mirror/uiserver.go). All of it
 // is synthetic: the accounts exist only in that run's temporary data dir.

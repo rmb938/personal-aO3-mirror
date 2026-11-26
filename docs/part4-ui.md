@@ -175,7 +175,7 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
   (`e2eseed.Accounts`, stage 6a) are one per group of tests, since a test that changes an
   account (password, recovery codes, sessions, backoff, last TOTP step) would disturb any other
   test using it: `e2e_reader` (login), `e2e_sessions`, `e2e_password` and `e2e_recovery` (the
-  account page). Each has its own random TOTP secret and recovery codes, printed in the JSON
+  account page), and `e2e_screenshots` (the screenshots below). Each has its own random TOTP secret and recovery codes, printed in the JSON
   line under `accounts`, keyed by the part after `e2e_`.
 - **Why not in-memory storage** (asked 2026-11-25): SQLite files opened by path in WAL mode,
   the image files and the admin unix socket all need paths, and an in-memory variant would be
@@ -189,6 +189,14 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
 - **Login in tests (stage 5):** a TOTP code is accepted once per 30 s step per account
   (replay check), so tests that sign in repeatedly should use the recovery codes or reuse a
   stored session. `tests/signin.ts` holds the sign-in steps the test files share.
+- **Screenshots for pull requests** (asked 2026-11-26): `tests/screenshots.spec.ts` runs with
+  the other tests and saves every page and notable state at desktop (1280 px) and phone
+  (390 px) width, each in light and dark mode (the UI follows the system's scheme), to
+  `web/screenshots/` (gitignored, emptied first), as `<page>-<state>-<viewport>-<scheme>.png`.
+  CI uploads them as the `ui-screenshots` artifact. A stage
+  that adds a page or state adds its shots there, and its PR gets the changed ones attached as
+  a comment (`gh pr comment --attach`; CLAUDE.md "Dev workflow"). They show only the seed's
+  synthetic content.
 
 ### Serving (stage 2, approved by the user 2026-11-25)
 

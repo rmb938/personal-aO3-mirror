@@ -147,3 +147,8 @@ input bounds) live in `internal/web/api/CLAUDE.md`. One applies beyond that dire
   advisory: delete what is unreachable even from tests; the production-only list also holds test
   helpers and store reads kept for Part 2, so triage that one.
 - Commit only when the user asks.
+- **A pull request that changes the UI gets screenshots of what changed.** `make ui-e2e` (part
+  of `make check`) writes them to `web/screenshots/` (`web/tests/screenshots.spec.ts`;
+  synthetic seed content only). Add a shot there for any new page or state, look at the
+  changed ones, then attach them to the PR as a comment:
+  `gh pr comment <n> --attach "web/screenshots/<file>.png#<alt text>"` (repeat `--attach`).
