@@ -59,23 +59,21 @@ type Options struct {
 	Now    func() time.Time // for tests
 }
 
-// Open opens (creating if needed) both databases under dir and applies migrations.
-func Open(ctx context.Context, dir string, o Options) (*Store, error) {
+// Open opens (creating if needed) both databases in dir, the data directory opened as an
+// os.Root, and applies migrations. The caller keeps dir open while the store is.
+func Open(ctx context.Context, dir *os.Root, o Options) (*Store, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, fmt.Errorf("store: create data dir: %w", err)
-	}
 	log := o.Logger.With("component", "store")
-	meta, err := openDB(ctx, filepath.Join(dir, MetaFile), dbOptions{})
+	meta, err := openDB(ctx, dir, MetaFile, dbOptions{})
 	if err != nil {
 		return nil, err
 	}
-	content, err := openDB(ctx, filepath.Join(dir, ContentFile), dbOptions{pageSize: ContentPageSize})
+	content, err := openDB(ctx, dir, ContentFile, dbOptions{pageSize: ContentPageSize})
 	if err != nil {
 		return nil, errors.Join(err, meta.Close())
 	}
@@ -113,13 +111,15 @@ type dbOptions struct {
 	pragmas  []string // more per-connection pragmas, e.g. "secure_delete(ON)"
 }
 
-// openDB opens a database with o's journal mode, page size and pragmas.
-func openDB(ctx context.Context, path string, o dbOptions) (*sql.DB, error) {
+// openDB opens database file name in dir with o's journal mode, page size and pragmas. SQLite
+// opens it by path, dir's name joined with name (a plain file name, never input).
+func openDB(ctx context.Context, dir *os.Root, name string, o dbOptions) (*sql.DB, error) {
 	if o.pageSize > 0 {
-		if err := initPageSize(ctx, path, o.pageSize); err != nil {
-			return nil, fmt.Errorf("store: init %s: %w", filepath.Base(path), err)
+		if err := initPageSize(ctx, dir, name, o.pageSize); err != nil {
+			return nil, fmt.Errorf("store: init %s: %w", name, err)
 		}
 	}
+	path := filepath.Join(dir.Name(), name)
 	journal := []string{"journal_mode(WAL)", "synchronous(NORMAL)"}
 	if o.rollback {
 		journal = []string{"journal_mode(DELETE)", "synchronous(FULL)"}
@@ -143,13 +143,13 @@ func openDB(ctx context.Context, path string, o dbOptions) (*sql.DB, error) {
 // initPageSize creates a new database file with the given page size. It must run before
 // anything else touches the file: page_size only applies before the file is initialized and
 // cannot change once it is in WAL mode (a page_size _pragma in the DSN is ignored for that reason).
-func initPageSize(ctx context.Context, path string, pageSize int) (err error) {
-	if _, err := os.Stat(path); err == nil {
+func initPageSize(ctx context.Context, dir *os.Root, name string, pageSize int) (err error) {
+	if _, err := dir.Stat(name); err == nil {
 		return nil // existing file: keep its page size
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	db, err := sql.Open("sqlite", "file:"+path)
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir.Name(), name))
 	if err != nil {
 		return err
 	}

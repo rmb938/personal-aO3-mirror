@@ -106,9 +106,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if *logLevel != "" {
 		cfg.Log.Level = *logLevel
 	}
+	// The data dir must exist (the user creates it once): it is opened here, by its configured
+	// path, and everything under it is reached through it.
+	data, err := openDataDirs(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	defer data.Close()
 	logger, closer, err := logx.New(logx.Options{
 		Level:    cfg.Log.Level,
-		File:     cfg.Path(cfg.Log.File),
+		Dir:      data.root,
+		File:     cfg.Log.File,
 		MaxBytes: int64(cfg.Log.MaxSizeMB) << 20,
 		MaxFiles: cfg.Log.MaxFiles,
 		Stderr:   stderr,
@@ -134,28 +143,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 		logger.Debug("config checked", "path", *cfgPath, "interval", cfg.Rate.Interval.String())
 		return 0
 	case "serve":
-		return runServe(ctx, cfg, logger, rest[1:], stderr)
+		return runServe(ctx, cfg, data, logger, rest[1:], stderr)
 	case "run":
 		if len(rest) > 1 {
 			fs.Usage()
 			return 2
 		}
-		return runDaemon(ctx, cfg, logger, stderr)
+		return runDaemon(ctx, cfg, data, logger, stderr)
 	case "fetch-work":
-		return runFetchWork(ctx, cfg, logger, rest[1:], stdout, stderr)
+		return runFetchWork(ctx, cfg, data, logger, rest[1:], stdout, stderr)
 	case "reparse":
 		// Offline: opens the store only; no HTTP client is built.
-		st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: logger})
+		st, err := store.Open(ctx, data.root, store.Options{Logger: logger})
 		if err != nil {
 			fmt.Fprintf(stderr, "open: %v\n", err)
 			return 1
 		}
 		defer st.Close()
-		ctl := newControllers(cfg, logger, st, nil)
+		ctl := newControllers(cfg, data, logger, st, nil)
 		return runReparse(ctx, ctl, rest[1:], stdout, stderr)
 	case "source", "status", "jobs", "debug", "invite", "user", "session", "auth", "backup":
 		// API clients: they talk to the admin socket of a running serve, never to the store.
-		a, err := openApp(cfg)
+		a, err := openApp(cfg, data)
 		if err != nil {
 			fmt.Fprintf(stderr, "open: %v\n", err)
 			return 1

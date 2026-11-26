@@ -1,8 +1,10 @@
 # ao3mirror example config. Copy to ao3mirror.local.yaml and fill in contact.discord.
 #   cp ao3mirror.example.yaml ao3mirror.local.yaml
+#   mkdir -m 750 data
 #   ./ao3mirror --config ao3mirror.local.yaml config check
 
-# Where meta.db, content.db, images/, logs/ and debug/ live.
+# Where meta.db, content.db, images/, logs/ and debug/ live. It must exist: ao3mirror never
+# creates it, and keeps every file it makes inside it.
 # Keep it at ./data so the Claude guard hook covers it.
 data_dir: ./data
 

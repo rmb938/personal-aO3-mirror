@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -34,26 +33,23 @@ type UsersTx struct {
 	UsersReadTx
 }
 
-// OpenUsers opens (creating if needed) dir/users.db and applies its migrations. dir is made
-// 0700 when missing; the database and its -wal/-shm files are created 0600, and an existing
-// one readable by group or others is refused (it holds password hashes and signing keys).
-func OpenUsers(ctx context.Context, dir string, o Options) (*Users, error) {
+// OpenUsers opens (creating if needed) users.db in dir, the API's private directory opened as
+// an os.Root (dirs.PrivateSub), and applies its migrations. The database and its -wal/-shm
+// files are created 0600, and an existing one readable by group or others is refused (it holds
+// password hashes and signing keys).
+func OpenUsers(ctx context.Context, dir *os.Root, o Options) (*Users, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("store: create users dir: %w", err)
-	}
-	path := filepath.Join(dir, UsersFile)
-	for _, p := range []string{path, path + "-wal", path + "-shm"} {
-		if err := createPrivate(p); err != nil {
+	for _, name := range []string{UsersFile, UsersFile + "-wal", UsersFile + "-shm"} {
+		if err := createPrivate(dir, name); err != nil {
 			return nil, err
 		}
 	}
-	db, err := openDB(ctx, path, dbOptions{})
+	db, err := openDB(ctx, dir, UsersFile, dbOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -64,20 +60,20 @@ func OpenUsers(ctx context.Context, dir string, o Options) (*Users, error) {
 	return u, nil
 }
 
-// createPrivate creates path 0600 if it doesn't exist, and refuses it if it does with group or
-// other permission bits.
-func createPrivate(path string) error {
-	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
+// createPrivate creates file name in dir 0600 if it doesn't exist, and refuses it if it does
+// with group or other permission bits.
+func createPrivate(dir *os.Root, name string) error {
+	f, err := dir.OpenFile(name, os.O_RDONLY|os.O_CREATE, 0o600)
 	if err != nil {
-		return fmt.Errorf("store: create %s: %w", filepath.Base(path), err)
+		return fmt.Errorf("store: create %s: %w", name, err)
 	}
 	fi, err := f.Stat()
 	if err = errors.Join(err, f.Close()); err != nil {
-		return fmt.Errorf("store: stat %s: %w", filepath.Base(path), err)
+		return fmt.Errorf("store: stat %s: %w", name, err)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("store: %s has mode %04o; it must not be readable by group or others (chmod 600)",
-			filepath.Base(path), fi.Mode().Perm())
+			name, fi.Mode().Perm())
 	}
 	return nil
 }

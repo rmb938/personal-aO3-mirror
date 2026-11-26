@@ -201,7 +201,7 @@ func TestMigrateWorkCrossover(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, old.meta.Close())
 
-	s, err := Open(ctx, dir, Options{})
+	s, err := Open(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	got, err := queryInt64s(ctx, s.meta, `SELECT id FROM works WHERE crossover ORDER BY id`)

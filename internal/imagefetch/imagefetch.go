@@ -106,7 +106,7 @@ func isAO3(host string) bool {
 type Options struct {
 	Store           *store.Store
 	UserAgent       string
-	Dir             string // the mirror's image directory
+	Dir             *os.Root // the mirror's image directory, opened as a root
 	PerHostInterval time.Duration
 	MaxBytes        int64
 	Logger          *slog.Logger
@@ -559,9 +559,11 @@ func (i imageStore) ImageDone(ctx context.Context, id int64, sha, contentType st
 	return i.write(ctx, func(ctx context.Context, tx *store.Tx) error { return tx.ImageDone(ctx, id, sha, contentType, bytes) })
 }
 
-// Path returns where an image with this hash and content type is stored.
-func Path(dir, sha, contentType string) string {
-	return filepath.Join(dir, sha[:2], sha[2:4], sha+ext(contentType))
+// File returns where an image with this hash and content type is stored, relative to the image
+// directory. sha must be 64 lowercase hex characters (the worker's own hash, or one checked
+// with controllers.ValidSHA256).
+func File(sha, contentType string) string {
+	return filepath.Join(sha[:2], sha[2:4], sha+ext(contentType))
 }
 
 func ext(ct string) string {
@@ -584,18 +586,18 @@ func ext(ct string) string {
 }
 
 func (w *Worker) write(sha, ct string, body []byte) error {
-	p := Path(w.o.Dir, sha, ct)
-	if _, err := os.Stat(p); err == nil {
+	p := File(sha, ct)
+	if _, err := w.o.Dir.Stat(p); err == nil {
 		return nil // content-addressed: already have it
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+	if err := w.o.Dir.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		return err
 	}
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+	if err := w.o.Dir.WriteFile(tmp, body, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, p)
+	return w.o.Dir.Rename(tmp, p)
 }
 
 func (w *Worker) backoff(attempts int) time.Duration {

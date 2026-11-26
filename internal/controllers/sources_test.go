@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
@@ -56,7 +57,7 @@ func newEnv(t *testing.T, autoMax int) *env {
 	clk := &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
 	c, err := httpx.New(httpx.Options{BaseURL: srv.URL, UserAgent: testUA, Interval: 10 * time.Second, Clock: clk, Rand: rand.NewPCG(1, 1)})
 	require.NoError(t, err)
-	st, err := store.Open(context.Background(), t.TempDir(), store.Options{Now: clk.Now})
+	st, err := store.Open(context.Background(), dirstest.Temp(t), store.Options{Now: clk.Now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	cfg := config.Default().Sources

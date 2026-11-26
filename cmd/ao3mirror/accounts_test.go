@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -23,8 +23,7 @@ func (c *cli) seedAccounts() {
 	c.t.Helper()
 	ctx := context.Background()
 	cfg := c.config()
-	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
-	require.NoError(c.t, os.MkdirAll(dir, 0o700))
+	dir := dirstest.At(c.t, filepath.Dir(cfg.Path(cfg.API.AdminSocket)), 0o700)
 	users, err := store.OpenUsers(ctx, dir, store.Options{})
 	require.NoError(c.t, err)
 	defer func() { require.NoError(c.t, users.Close()) }()

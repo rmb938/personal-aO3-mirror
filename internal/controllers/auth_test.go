@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -42,16 +43,17 @@ func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	t.Helper()
 	dir := t.TempDir()
 	clk := &fakeClock{now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)} // on a TOTP step boundary
-	users, err := store.OpenUsers(context.Background(), filepath.Join(dir, "api"), store.Options{Now: clk.Now})
+	api := dirstest.At(t, filepath.Join(dir, "api"), 0o700)
+	users, err := store.OpenUsers(context.Background(), api, store.Options{Now: clk.Now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
-	keys, err := store.OpenKeys(context.Background(), filepath.Join(dir, "api"), store.Options{Now: clk.Now})
+	keys, err := store.OpenKeys(context.Background(), api, store.Options{Now: clk.Now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	mk, err := NewMasterKeys(context.Background(), MasterKeysOptions{Keys: keys, Users: users, Now: clk.Now, Logger: log,
-		BackupDir: filepath.Join(dir, "backups")})
+		BackupDir: dirstest.At(t, filepath.Join(dir, "backups"), 0o700)})
 	require.NoError(t, err)
 	hasher, err := auth.NewHasher(mk.Keyring(), auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(t, err)

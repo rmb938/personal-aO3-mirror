@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -87,7 +88,7 @@ func newHost(t *testing.T) *hostServer {
 
 func openStore(t *testing.T, dir string, now func() time.Time) *store.Store {
 	t.Helper()
-	st, err := store.Open(context.Background(), dir, store.Options{Now: now})
+	st, err := store.Open(context.Background(), dirstest.At(t, dir, 0o750), store.Options{Now: now})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	_, err = st.AutoCommitForTestOnly().UpsertWork(context.Background(), model.Work{ID: 1}, model.FromBlurb, 0)
@@ -117,7 +118,7 @@ func TestWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "re-queue must not duplicate")
 
-	w, err := New(Options{Store: st, UserAgent: testUA, Dir: filepath.Join(dir, "img"), PerHostInterval: 3 * time.Second,
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: dirstest.At(t, filepath.Join(dir, "img"), 0o750), PerHostInterval: 3 * time.Second,
 		MaxBytes: 1000, Logger: log, Now: now, AllowLoopback: true})
 	require.NoError(t, err)
 	var lastFetch time.Time
@@ -172,7 +173,7 @@ func TestBlocksNonPublicAddresses(t *testing.T) {
 	h := newHost(t)
 	_, err := st.AutoCommitForTestOnly().QueueImages(ctx, 1, []string{h.URL + "/a.png"})
 	require.NoError(t, err)
-	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), MaxBytes: 1000})
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: dirstest.Temp(t), MaxBytes: 1000})
 	require.NoError(t, err)
 	ran, _, err := w.Step(ctx)
 	require.NoError(t, err)
@@ -215,7 +216,7 @@ func TestRedirectChecksTargetHostRobots(t *testing.T) {
 	db := st.AutoCommitForTestOnly()
 	_, err := db.QueueImages(ctx, 1, []string{a.URL + "/to-private.png", a.URL + "/to-ok.png", a.URL + "/loop.png"})
 	require.NoError(t, err)
-	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), PerHostInterval: 3 * time.Second,
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: dirstest.Temp(t), PerHostInterval: 3 * time.Second,
 		MaxBytes: 1000, Now: now, Sleep: fakeSleep, AllowLoopback: true})
 	require.NoError(t, err)
 	for range 50 {
@@ -259,7 +260,7 @@ func fakeWorker(t *testing.T, urls []string) (*store.Tx, func(steps int)) {
 	db := st.AutoCommitForTestOnly()
 	_, err := db.QueueImages(ctx, 1, urls)
 	require.NoError(t, err)
-	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), PerHostInterval: 3 * time.Second,
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: dirstest.Temp(t), PerHostInterval: 3 * time.Second,
 		MaxBytes: 1000, Now: now, Sleep: advance, AllowLoopback: true})
 	require.NoError(t, err)
 	run := func(steps int) {
@@ -507,7 +508,7 @@ func TestIdleAfterLastImage(t *testing.T) {
 	st := openStore(t, t.TempDir(), now)
 	_, err := st.AutoCommitForTestOnly().QueueImages(ctx, 1, []string{h.URL + "/a.png"})
 	require.NoError(t, err)
-	w, err := New(Options{Store: st, UserAgent: testUA, Dir: t.TempDir(), PerHostInterval: 3 * time.Second,
+	w, err := New(Options{Store: st, UserAgent: testUA, Dir: dirstest.Temp(t), PerHostInterval: 3 * time.Second,
 		MaxBytes: 1000, Now: now, AllowLoopback: true, Idle: time.Minute})
 	require.NoError(t, err)
 	for range 2 { // robots.txt, then the image

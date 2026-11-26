@@ -16,6 +16,10 @@ hand-written test fixtures. See [`CLAUDE.md`](CLAUDE.md) and
 
 ## Data at rest
 
+`data_dir` (default `./data`) must exist before the first run: create it once
+(`mkdir -m 750 data`). ao3mirror never creates it, and opens it as an `os.Root`, so every file
+it writes, reads or removes stays inside it (no `..` or symlink leads out).
+
 The mirrored works in `data/` are stored unencrypted (search needs them in the clear). If you
 mirror works that aren't public any more (restricted to logged-in users, or since deleted by
 their authors), keep `data/` and its backups on an encrypted disk (LUKS, FileVault, BitLocker).

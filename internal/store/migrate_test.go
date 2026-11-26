@@ -3,19 +3,27 @@ package store
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 )
+
+// rootAt creates dir (0700) when missing and opens it as a root for the test.
+func rootAt(tb testing.TB, dir string) *os.Root {
+	tb.Helper()
+	return dirstest.At(tb, dir, 0o700)
+}
 
 // openAt creates a meta.db under dir migrated only up to version upTo, for upgrade tests.
 // The caller closes s.meta.
 func openAt(t *testing.T, dir string, upTo int) *Store {
 	t.Helper()
 	ctx := context.Background()
-	db, err := openDB(ctx, filepath.Join(dir, MetaFile), dbOptions{})
+	db, err := openDB(ctx, rootAt(t, dir), MetaFile, dbOptions{})
 	require.NoError(t, err)
 	s := &Store{core: &core{log: slog.Default(), now: time.Now}, meta: db}
 	require.NoError(t, s.migrateTo(ctx, db, "meta", upTo))
@@ -46,7 +54,7 @@ func TestMigrateJobTargetInt(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, old.meta.Close())
 
-	s, err := Open(ctx, dir, Options{})
+	s, err := Open(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	tx := s.AutoCommitForTestOnly()
@@ -90,7 +98,7 @@ func TestMigrateMediaParents(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, old.meta.Close())
 
-	s, err := Open(ctx, dir, Options{})
+	s, err := Open(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	got := map[int64]string{}
@@ -118,7 +126,7 @@ func TestMigrateJobTargetIntRefusesText(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, old.meta.Close())
 
-	_, err = Open(ctx, dir, Options{})
+	_, err = Open(ctx, rootAt(t, dir), Options{})
 	require.ErrorContains(t, err, "0003_job_target_int.sql")
 	require.ErrorContains(t, err, "CHECK constraint failed")
 }

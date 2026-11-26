@@ -499,21 +499,20 @@ func (s *Skeletonizer) Pattern(raw string) string {
 	return b.String()
 }
 
-// SaveDebug writes a skeleton of page to <dataDir>/debug/<kind>-<id>-<ts>.skel.html and returns
-// the path relative to dataDir. Used when a page fails to parse, so the structure can be
-// inspected safely.
-func SaveDebug(dataDir, kind, id string, page []byte, now time.Time) (string, error) {
+// SaveDebug writes a skeleton of page to debug/<kind>-<id>-<ts>.skel.html in dataDir (the data
+// directory, opened as a root) and returns that path, relative to dataDir. Used when a page
+// fails to parse, so the structure can be inspected safely.
+func SaveDebug(dataDir *os.Root, kind, id string, page []byte, now time.Time) (string, error) {
 	skel, err := Skeletonize(bytes.NewReader(page))
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(dataDir, "debug")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := dataDir.MkdirAll("debug", 0o750); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("%s-%s-%s.skel.html", kind, id, now.UTC().Format("20060102T150405"))
-	if err := os.WriteFile(filepath.Join(dir, name), skel, 0o600); err != nil {
+	rel := filepath.Join("debug", fmt.Sprintf("%s-%s-%s.skel.html", kind, id, now.UTC().Format("20060102T150405")))
+	if err := dataDir.WriteFile(rel, skel, 0o600); err != nil {
 		return "", err
 	}
-	return filepath.Join("debug", name), nil
+	return rel, nil
 }

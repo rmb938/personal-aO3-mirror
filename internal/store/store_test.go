@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 )
 
@@ -34,7 +35,7 @@ func openTest(tb testing.TB) (*testStore, *tclock, *bytes.Buffer) {
 	tb.Helper()
 	clk := &tclock{t: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
 	logs := &bytes.Buffer{}
-	s, err := Open(context.Background(), tb.TempDir(), Options{
+	s, err := Open(context.Background(), dirstest.Temp(tb), Options{
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Now:    clk.now,
 	})
@@ -66,7 +67,7 @@ func TestMigrationsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 	for i := range 2 {
-		s, err := Open(ctx, dir, Options{})
+		s, err := Open(ctx, rootAt(t, dir), Options{})
 		require.NoError(t, err, "open %d", i)
 		for db, want := range map[string]int{"meta": 12, "content": 1} {
 			v, err := s.schemaVersion(ctx, db)
@@ -81,7 +82,7 @@ func TestPageSizes(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 	for i := range 2 { // new files, then reopened existing files
-		s, err := Open(ctx, dir, Options{})
+		s, err := Open(ctx, rootAt(t, dir), Options{})
 		require.NoError(t, err)
 		n, err := s.pageSize(ctx, "content")
 		require.NoError(t, err)
@@ -99,13 +100,13 @@ func TestPageSizes(t *testing.T) {
 func TestOpenRefusesUnknownMigrations(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
-	s, err := Open(ctx, dir, Options{})
+	s, err := Open(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	// Simulate a store created by an older build that had a migration this build lacks.
 	_, err = s.meta.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (99, '0099_tags_images.sql', 0)`)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
-	_, err = Open(ctx, dir, Options{})
+	_, err = Open(ctx, rootAt(t, dir), Options{})
 	require.ErrorContains(t, err, "0099_tags_images.sql", "open should refuse an unknown applied migration")
 }
 

@@ -10,19 +10,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
-func testDirs(t *testing.T) Dirs {
+func testDirs(t *testing.T) (Dirs, string) {
 	t.Helper()
-	root := t.TempDir()
-	return Dirs{Data: filepath.Join(root, "data"), Images: filepath.Join(root, "data", "images"),
-		Accounts: filepath.Join(root, "data", "api")}
+	data := filepath.Join(t.TempDir(), "data")
+	return Dirs{Data: dirstest.At(t, data, 0o700), Images: "images", Accounts: "api"}, data
 }
 
 func TestSeed(t *testing.T) {
 	ctx := context.Background()
-	dirs := testDirs(t)
+	dirs, _ := testDirs(t)
 	seeded, err := Seed(ctx, dirs, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	assert.Equal(t, Username, seeded.Account.Username)
@@ -48,9 +48,8 @@ func TestSeed(t *testing.T) {
 
 // TestSeedRefusesUsedDir: Seed never writes into a directory that holds anything.
 func TestSeedRefusesUsedDir(t *testing.T) {
-	dirs := testDirs(t)
-	require.NoError(t, os.MkdirAll(dirs.Data, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dirs.Data, "existing"), nil, 0o600))
+	dirs, data := testDirs(t)
+	require.NoError(t, os.WriteFile(filepath.Join(data, "existing"), nil, 0o600))
 	_, err := Seed(context.Background(), dirs, slog.New(slog.DiscardHandler))
 	require.ErrorContains(t, err, "not empty")
 }
