@@ -39,28 +39,42 @@ const (
 // SessionCookies are a cookie-transport login's or refresh's Set-Cookie values: the access
 // cookie lives as long as the access token, the refresh cookie until the session ends unless
 // refreshed. Both lifetimes are relative (Max-Age), so the client's clock doesn't matter.
-func SessionCookies(p controllers.TokenPair) []*http.Cookie {
+func SessionCookies(p controllers.TokenPair) []SessionCookie {
 	issued := p.AccessExpiresAt.Add(-p.AccessTTL)
-	return []*http.Cookie{
+	return []SessionCookie{
 		sessionCookie(CookieAccess, p.AccessToken, p.AccessTTL),
 		sessionCookie(CookieRefresh, p.RefreshToken, p.RefreshExpiresAt.Sub(issued)),
 	}
 }
 
 // ClearSessionCookies are logout's Set-Cookie values: both cookies, expired.
-func ClearSessionCookies() []*http.Cookie {
-	return []*http.Cookie{sessionCookie(CookieAccess, "", 0), sessionCookie(CookieRefresh, "", 0)}
+func ClearSessionCookies() []SessionCookie {
+	return []SessionCookie{sessionCookie(CookieAccess, "", 0), sessionCookie(CookieRefresh, "", 0)}
 }
 
-// sessionCookie is a __Host- cookie (Secure, Path=/, no Domain) that JS can't read and other
-// sites can't send. A ttl under a second (0: clear) is Max-Age=0.
-func sessionCookie(name, value string, ttl time.Duration) *http.Cookie {
+// SessionCookie is one session cookie to set. Its fields are unexported, so only
+// SessionCookies and ClearSessionCookies make one, and only setCookie writes it, always with the
+// same attributes: a handler can't set any other cookie or weaken one.
+type SessionCookie struct {
+	name, value string
+	maxAge      int
+}
+
+// sessionCookie is the cookie name with value for ttl. A ttl under a second (0: clear) is
+// Max-Age=0.
+func sessionCookie(name, value string, ttl time.Duration) SessionCookie {
 	maxAge := int((ttl + time.Second - 1) / time.Second)
 	if maxAge <= 0 {
 		maxAge = -1 // net/http writes Max-Age=0
 	}
-	return &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: maxAge, Secure: true, HttpOnly: true,
-		SameSite: http.SameSiteStrictMode}
+	return SessionCookie{name: name, value: value, maxAge: maxAge}
+}
+
+// setCookie writes c as a __Host- cookie (Secure, Path=/, no Domain) that JS can't read and
+// other sites can't send.
+func setCookie(w http.ResponseWriter, c SessionCookie) {
+	http.SetCookie(w, &http.Cookie{Name: c.name, Value: c.value, Path: "/", MaxAge: c.maxAge,
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 }
 
 // cookieValues are the values of every cookie named name in r (a Cookie header may repeat one).

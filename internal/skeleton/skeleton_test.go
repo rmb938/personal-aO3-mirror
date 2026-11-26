@@ -55,6 +55,23 @@ func TestPatternConsistentWithText(t *testing.T) {
 	assert.Equal(t, "work_"+s.number("123"), s.maskID("work_123"), "id")
 }
 
+func TestPatternSchemes(t *testing.T) {
+	s := testKey()
+	for raw, want := range map[string]string{
+		"javascript:alert(1)":            "javascript:x",
+		"JavaScript:alert(1)":            "javascript:x",
+		"vbscript:msgbox(1)":             "vbscript:x",
+		"VBScript:msgbox(1)":             "vbscript:x",
+		"data:text/html,lorem":           "data:x",
+		"mailto:fixture@example.invalid": "mailto:x",
+		"tel:+15550100":                  "tel:x",
+		"fixturescheme:lorem":            "other:x",
+		"ftp://example.invalid/a":        "other:x",
+	} {
+		assert.Equal(t, want, s.Pattern(raw), raw)
+	}
+}
+
 func TestSkeletonizeDropsContent(t *testing.T) {
 	in := `<html><head><title>Secret Title</title><style>.secret{}</style><script>var secret=1</script></head>
 <body><div id="main" class="works-show" title="secret tooltip" data-x="secret">

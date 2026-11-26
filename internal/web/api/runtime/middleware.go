@@ -100,8 +100,10 @@ func validClientReqID(s string) bool { return validHeaderID(s, MaxClientReqIDByt
 // cfRay is the request's Cf-Ray header when it is sent once and is 1..64 bytes of
 // [A-Za-z0-9-] (Cloudflare's "<hex>-<colo>"), else "". Any client can send one, so it only
 // ties a log line to Cloudflare's; it proves nothing about where the request came from.
+// It indexes the header map by the constant canonical key (the same values Header.Values
+// returns), so the read names a non-secret header that is safe to log.
 func cfRay(r *http.Request) string {
-	if vals := r.Header.Values(HeaderCFRay); len(vals) == 1 && validHeaderID(vals[0], MaxCFRayBytes, "-") {
+	if vals := r.Header[HeaderCFRay]; len(vals) == 1 && validHeaderID(vals[0], MaxCFRayBytes, "-") {
 		return vals[0]
 	}
 	return ""
