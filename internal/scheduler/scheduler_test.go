@@ -190,7 +190,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 func TestDetailAttrs(t *testing.T) {
 	require.Empty(t, detailAttrs(nil))
 	require.Empty(t, detailAttrs((*controllers.WorkDetail)(nil)), "a handler's nil detail")
-	require.Equal(t, []any{"chapters", float64(0), "class", "ok", "work_id", float64(7)},
+	require.Equal(t, []any{slog.Any("chapters", float64(0)), slog.Any("class", "ok"), slog.Any("work_id", float64(7))},
 		detailAttrs(&controllers.WorkDetail{WorkID: new(int64(7)), Class: new("ok"), Chapters: new(0)}),
 		"set fields only, zeros kept, sorted by key")
 }

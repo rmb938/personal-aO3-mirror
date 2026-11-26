@@ -430,8 +430,12 @@ func (s *Skeletonizer) Pattern(raw string) string {
 	if err != nil {
 		return "x"
 	}
-	if u.Scheme == "javascript" || u.Scheme == "data" || u.Scheme == "mailto" {
+	switch u.Scheme { // url.Parse lowercases the scheme
+	case "", "http", "https": // structure kept below
+	case "javascript", "vbscript", "data", "mailto", "tel":
 		return u.Scheme + ":x"
+	default: // the scheme's name is page text too, so an unknown one isn't kept
+		return "other:x"
 	}
 	var b strings.Builder
 	external := false

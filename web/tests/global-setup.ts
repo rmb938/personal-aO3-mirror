@@ -1,7 +1,13 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 import { serverEnv } from './fixtures';
+
+// The binary `make ui-e2e` builds (Makefile E2E_BIN), at a fixed path in the repository: the
+// command line never comes from the environment.
+const bin = fileURLToPath(new URL('../../bin/ao3mirror-e2e', import.meta.url));
 
 // How long the server may take to seed and start listening.
 const startTimeoutMs = 60_000;
@@ -13,9 +19,8 @@ const stopTimeoutMs = 15_000;
 // environment variable, which Playwright's workers inherit. The server stops when its stdin
 // closes, so it also goes away if this process dies.
 export default async function globalSetup(): Promise<() => Promise<void>> {
-	const bin = process.env['AO3MIRROR_E2E_BIN'];
-	if (!bin) {
-		throw new Error('AO3MIRROR_E2E_BIN is not set: run the end-to-end tests with `make ui-e2e`');
+	if (!existsSync(bin)) {
+		throw new Error(`${bin} is missing: run the end-to-end tests with \`make ui-e2e\``);
 	}
 	const server = spawn(bin, ['dev', 'ui-server'], { stdio: ['pipe', 'pipe', 'inherit'] });
 	const exited = new Promise<number | null>((resolve) => server.once('exit', resolve));

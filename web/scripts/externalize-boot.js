@@ -10,7 +10,10 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+// A script element. Its end tag is matched as the HTML tokenizer ends script data: `</script`
+// (any case) followed by whitespace, `/` or `>`, then anything up to the next `>`, so
+// `</script >`, `</script\n x>` and `</SCRIPT/>` all end it and none is missed.
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script(?=[\t\n\f\r />])[^>]*>/gi;
 
 /**
  * Moves the page's one inline script out to `${urlDir}/boot.<hash>.js`.

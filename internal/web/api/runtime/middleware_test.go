@@ -71,6 +71,8 @@ func TestClientRequestID(t *testing.T) {
 // A well-formed Cf-Ray is logged as cf_ray; anything else is dropped without a trace, and it
 // is never echoed.
 func TestCFRay(t *testing.T) {
+	// cfRay indexes the header map directly, which only works with the canonical key.
+	require.Equal(t, HeaderCFRay, http.CanonicalHeaderKey(HeaderCFRay))
 	cases := []struct {
 		name  string
 		vals  []string

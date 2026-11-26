@@ -262,20 +262,20 @@ func errCode(err error) string {
 	return msg
 }
 
-// detailAttrs returns a job detail's set fields as log key/value pairs, keyed as stored and
-// sorted by key (none for a nil detail).
+// detailAttrs returns a job detail's set fields as log attributes (slog.Attr, one per field),
+// keyed as stored and sorted by key (none for a nil detail).
 func detailAttrs(d controllers.JobDetail) []any {
 	b, err := store.JobDetailJSON(d)
 	if err != nil {
-		return []any{"detail_error", err.Error()}
+		return []any{slog.String("detail_error", err.Error())}
 	}
 	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
-		return []any{"detail_error", err.Error()}
+		return []any{slog.String("detail_error", err.Error())}
 	}
-	out := make([]any, 0, 2*len(m))
+	out := make([]any, 0, len(m))
 	for _, k := range slices.Sorted(maps.Keys(m)) {
-		out = append(out, k, m[k])
+		out = append(out, slog.Any(k, m[k]))
 	}
 	return out
 }

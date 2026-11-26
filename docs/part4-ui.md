@@ -177,7 +177,7 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
   the image files and the admin unix socket all need paths, and an in-memory variant would be
   code production never runs. The temp dir is private (0700) and deleted at the end.
 - **Playwright** (`web/playwright.config.ts`, `web/tests/`): global setup spawns
-  `$AO3MIRROR_E2E_BIN dev ui-server` and passes its line to the tests in an environment
+  `bin/ao3mirror-e2e dev ui-server` (a fixed path, never from the environment) and passes its line to the tests in an environment
   variable; `tests/fixtures.ts` sets `baseURL` from it and exposes it as the `server` fixture.
   Teardown closes the server's stdin. Chromium only, headless shell. `make ui-e2e` builds the
   UI, builds `bin/ao3mirror-e2e` with it embedded, installs Chromium if missing, and runs the
