@@ -59,10 +59,11 @@ type Seeded struct {
 // test that changes an account (its password, recovery codes, sessions, login backoff, last
 // TOTP step) never disturbs another group. Each username is "e2e_" plus the key.
 var Accounts = []string{
-	"reader",   // signing in and out (web/tests/login.spec.ts)
-	"sessions", // the account page's sessions list
-	"password", // changing the password
-	"recovery", // replacing the recovery codes
+	"reader",      // signing in and out (web/tests/login.spec.ts)
+	"sessions",    // the account page's sessions list
+	"password",    // changing the password
+	"recovery",    // replacing the recovery codes
+	"screenshots", // the UI screenshots for pull requests (web/tests/screenshots.spec.ts)
 }
 
 // The seeded IDs. Tests read them from Seeded rather than repeating them.

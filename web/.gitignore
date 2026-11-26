@@ -4,3 +4,5 @@
 # Playwright output (make ui-e2e)
 /test-results/
 /playwright-report/
+# UI screenshots for pull requests (make ui-e2e, tests/screenshots.spec.ts)
+/screenshots/
