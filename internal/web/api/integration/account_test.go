@@ -74,6 +74,7 @@ func TestAccount(t *testing.T) {
 	sessions := authedJSON[dto.Items[dto.Session]](t, h, route.AccountSessions, token).Items
 	require.Len(t, sessions, 1)
 	assert.Equal(t, seedSession, sessions[0].ID)
+	assert.True(t, sessions[0].Current, "the caller's own session")
 	testutil.RequireParamProblem(t, authed(t, h, http.MethodGet, route.Account+"?page=1", token, ""), dto.ParamPage,
 		"not taken here")
 
@@ -264,6 +265,15 @@ func TestRevokeAccountSession(t *testing.T) {
 	}
 	assert.Equal(t, []int64{2, 1}, ids(token), "newest first")
 	assert.Equal(t, []int64{3}, ids(theirs))
+	current := func(tok string) []bool {
+		var out []bool
+		for _, s := range authedJSON[dto.Items[dto.Session]](t, h, route.AccountSessions, tok).Items {
+			out = append(out, s.Current)
+		}
+		return out
+	}
+	assert.Equal(t, []bool{false, true}, current(token), "session 1 is the caller's")
+	assert.Equal(t, []bool{true, false}, current(second), "session 2 is the caller's")
 
 	// Another account's session is 404, like a missing one, and is left alone (OWASP API1).
 	for _, id := range []string{"3", "999"} {

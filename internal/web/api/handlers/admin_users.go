@@ -89,7 +89,7 @@ func (a *Handlers) UserSessions(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return convert.SessionList(items), nil
+	return convert.SessionList(items, 0), nil // the admin socket has no session of its own
 }
 
 // RotateSigningKey is POST /api/v1/admin/signing-keys/rotate (204): a new access-token signing

@@ -25,7 +25,15 @@ func TestSeed(t *testing.T) {
 	dirs, _ := testDirs(t)
 	seeded, err := Seed(ctx, dirs, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
-	assert.Equal(t, Username, seeded.Account.Username)
+	require.Len(t, seeded.Accounts, len(Accounts))
+	secrets := map[string]bool{}
+	for _, key := range Accounts {
+		acc := seeded.Accounts[key]
+		assert.Equal(t, Username(key), acc.Username)
+		assert.Len(t, acc.RecoveryCodes, 10, key)
+		secrets[acc.TOTPSecret] = true
+	}
+	assert.Len(t, secrets, len(Accounts), "each account has its own TOTP secret")
 	assert.Len(t, seeded.Works, 4)
 
 	st, err := store.Open(ctx, dirs.Data, store.Options{})

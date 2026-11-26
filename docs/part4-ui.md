@@ -171,8 +171,12 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
   PNG and SVG (whose script must never run) and one still-queued image, series part 1); 1002
   (one-shot, series part 3); 1003 (anonymous); 1004 (two creators, a collection, XSS payloads
   in its summary, notes and chapter 2, and a hostile skin, for stages 7–8; a payload that runs
-  sets `window.__ao3mirrorXSS`). Series 2001 has 4 parts, 2 mirrored. The account
-  `e2e_reader` has a random TOTP secret and recovery codes, printed in the JSON line.
+  sets `window.__ao3mirrorXSS`). Series 2001 has 4 parts, 2 mirrored. The accounts
+  (`e2eseed.Accounts`, stage 6a) are one per group of tests, since a test that changes an
+  account (password, recovery codes, sessions, backoff, last TOTP step) would disturb any other
+  test using it: `e2e_reader` (login), `e2e_sessions`, `e2e_password` and `e2e_recovery` (the
+  account page). Each has its own random TOTP secret and recovery codes, printed in the JSON
+  line under `accounts`, keyed by the part after `e2e_`.
 - **Why not in-memory storage** (asked 2026-11-25): SQLite files opened by path in WAL mode,
   the image files and the admin unix socket all need paths, and an in-memory variant would be
   code production never runs. The temp dir is private (0700) and deleted at the end.
@@ -182,8 +186,9 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
   Teardown closes the server's stdin. Chromium only, headless shell. `make ui-e2e` builds the
   UI, builds `bin/ao3mirror-e2e` with it embedded, installs Chromium if missing, and runs the
   tests.
-- **Login in tests (stage 5):** a TOTP code is accepted once per 30 s step (replay check), so
-  tests that sign in repeatedly should use the recovery codes or reuse a stored session.
+- **Login in tests (stage 5):** a TOTP code is accepted once per 30 s step per account
+  (replay check), so tests that sign in repeatedly should use the recovery codes or reuse a
+  stored session. `tests/signin.ts` holds the sign-in steps the test files share.
 
 ### Serving (stage 2, approved by the user 2026-11-25)
 
@@ -330,10 +335,27 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     step) and otherwise with a recovery code each, by index (`tests/login.spec.ts`); the
     two-tab test holds each refresh back 500 ms and asserts only one is sent, so it fails
     without the Web Lock (checked by removing it).
-- [ ] **6. Signup and account pages.** Invite signup from the fragment link (password policy
-  messages, TOTP QR + text secret, confirm code, recovery codes shown once with copy/download),
-  reset from link, account page: password change, regenerate recovery codes, sessions list
-  with revoke.
+- **6. Signup and account pages**, split in two PRs (agreed with the user 2026-11-26):
+  - [x] **6a. Account page.** Password change, regenerate recovery codes, sessions list with
+    revoke, and the recovery-codes display 6b reuses (shown once, copy/download). As built:
+    `/account` in the `(app)` group, linked from the header; its sections are components in
+    `#lib/account/`. The API's `Session` gained `current` (the caller's own session; always
+    false on the admin socket), so the list marks "This device", which has no sign-out button
+    (Log out in the header ends it and clears its cookies). A password change remounts the list
+    (`{#key}`), since it ends the other sessions. `#lib/auth/RecoveryCodes.svelte` lists the
+    codes with Copy (`navigator.clipboard`) and Download (a `blob:` URL of a text file, built in
+    memory and revoked when the codes go away); the codes are never stored. Messages: a
+    signed-in change's 403 `forbidden` means a wrong current password or code
+    (`describeFailure`'s `forbidden` text), and a 422 at `/password` shows the password policy
+    (`passwordRefused`; the pointer is read, never the detail). `#lib/auth/cooldown.svelte.ts`
+    is the Retry-After countdown, shared with the login page. Playwright
+    (`tests/account.spec.ts`, one seeded account per test): signing another device out, a
+    password change (mismatch, policy, wrong current password and its backoff, other devices
+    signed out, the new password signs in), new recovery codes (copy, download, no console
+    messages, an old code refused and a new one accepted).
+  - [ ] **6b. Signup and reset pages.** Invite signup from the fragment link (password policy
+    messages, TOTP QR + text secret, confirm code, recovery codes shown once with
+    copy/download), reset from link. The seed adds invite and reset links to the JSON line.
 - [ ] **7. Sanitizers.** HTML sanitizer (otwarchive allowlist, image references rewritten to
   our route, external images dropped) and skin sanitizer (parse, scope, drop). Pure TS with
   heavy unit tests, including known XSS and CSS-injection payloads.

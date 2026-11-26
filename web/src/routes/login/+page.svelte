@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 
 	import { type LoginChallenge, login, loginTOTP } from '#lib/api/api.gen.ts';
+	import { Cooldown } from '#lib/auth/cooldown.svelte.ts';
 	import { describeFailure, plural, unreachable } from '#lib/auth/messages.ts';
 	import { nextParam, safeNext } from '#lib/auth/next.ts';
 
@@ -25,28 +26,16 @@
 	let error = $state('');
 	let busy = $state(false);
 
-	// A rate limit or backoff: the submit buttons stay off until waitUntil.
-	let waitUntil = $state(0);
-	let now = $state(Date.now());
-	let waitLeft = $derived(Math.max(0, Math.ceil((waitUntil - now) / 1000)));
-
-	$effect(() => {
-		if (waitUntil <= Date.now()) {
-			return;
-		}
-		const timer = setInterval(() => {
-			now = Date.now();
-		}, 250);
-		return () => {
-			clearInterval(timer);
-		};
+	// A rate limit or backoff: the submit buttons stay off until it passes.
+	const cooldown = new Cooldown();
+	$effect(() => () => {
+		cooldown.stop();
 	});
 
 	function fail(text: string, retryAfter?: number): void {
 		error = text;
 		if (retryAfter !== undefined) {
-			now = Date.now();
-			waitUntil = now + retryAfter * 1000;
+			cooldown.start(retryAfter);
 		}
 	}
 
@@ -143,8 +132,8 @@
 				Password
 				<input name="password" type="password" autocomplete="current-password" required bind:value={password} />
 			</label>
-			<button type="submit" disabled={busy || waitLeft > 0}>
-				{waitLeft > 0 ? `Wait ${plural(waitLeft, 'second')}` : 'Continue'}
+			<button type="submit" disabled={busy || cooldown.left > 0}>
+				{cooldown.left > 0 ? `Wait ${plural(cooldown.left, 'second')}` : 'Continue'}
 			</button>
 		</form>
 	{:else}
@@ -176,8 +165,8 @@
 					/>
 				</label>
 			{/if}
-			<button type="submit" disabled={busy || waitLeft > 0}>
-				{waitLeft > 0 ? `Wait ${plural(waitLeft, 'second')}` : 'Sign in'}
+			<button type="submit" disabled={busy || cooldown.left > 0}>
+				{cooldown.left > 0 ? `Wait ${plural(cooldown.left, 'second')}` : 'Sign in'}
 			</button>
 		</form>
 		<div class="alternatives">

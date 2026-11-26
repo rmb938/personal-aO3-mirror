@@ -38,9 +38,10 @@ func TestUIServer(t *testing.T) {
 	var info uiServerInfo
 	require.NoError(t, json.Unmarshal(line, &info))
 	go func() { _, _ = io.Copy(io.Discard, stdoutR) }()
-	assert.Equal(t, e2eseed.Username, info.Account.Username)
-	assert.NotEmpty(t, info.Account.TOTPSecret)
-	require.NotEmpty(t, info.Account.RecoveryCodes)
+	acc := info.Accounts["reader"]
+	assert.Equal(t, e2eseed.Username("reader"), acc.Username)
+	assert.NotEmpty(t, acc.TOTPSecret)
+	require.NotEmpty(t, acc.RecoveryCodes)
 	assert.Contains(t, info.Works, e2eseed.WorkChaptered)
 
 	post := func(path string, body any) map[string]any {
@@ -58,10 +59,10 @@ func TestUIServer(t *testing.T) {
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 		return out
 	}
-	challenge := post("/api/v1/auth/login", map[string]string{"username": info.Account.Username,
-		"password": info.Account.Password})
+	challenge := post("/api/v1/auth/login", map[string]string{"username": acc.Username,
+		"password": acc.Password})
 	tokens := post("/api/v1/auth/login/totp", map[string]any{"challenge_token": challenge["challenge_token"],
-		"recovery_code": info.Account.RecoveryCodes[0]})
+		"recovery_code": acc.RecoveryCodes[0]})
 
 	url := info.URL + "/api/v1/works/" + strconv.FormatInt(e2eseed.WorkChaptered, 10) + "?" + runtime.RevealParam + "=1"
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)

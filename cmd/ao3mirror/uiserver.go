@@ -23,10 +23,10 @@ import (
 const uiServerUsage = `usage: ao3mirror dev ui-server [--addr 127.0.0.1:0] [--log-level warn]
 
 Serves the API and the embedded web UI over a new temporary data dir seeded with synthetic
-works and a test account, for the web UI's Playwright tests (docs/part4-ui.md stage 4).
+works and test accounts, for the web UI's Playwright tests (docs/part4-ui.md stage 4).
 Reveal is on: everything in it is lorem ipsum. It never opens an existing data dir.
 
-Prints one JSON line on stdout once listening: the URL, the account's credentials and the
+Prints one JSON line on stdout once listening: the URL, the accounts' credentials and the
 seeded IDs. Stops on Ctrl+C, SIGTERM or when stdin closes, then deletes the directory.
 `
 

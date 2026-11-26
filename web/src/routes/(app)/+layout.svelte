@@ -85,7 +85,8 @@
 		<!-- The home page's route ID: its group, (app), is not part of the path ("/"). -->
 		<a class="home" href={resolve('/(app)')}>ao3mirror</a>
 		<span class="account">
-			Signed in as <strong>{status.account.username}</strong>
+			<span>Signed in as <strong>{status.account.username}</strong></span>
+			<a href={resolve('/(app)/account')}>Account</a>
 			<button type="button" onclick={signOut} disabled={loggingOut}>Log out</button>
 		</span>
 	</header>
@@ -115,10 +116,16 @@
 		text-decoration: none;
 	}
 
+	/* On a narrow screen the items wrap as wholes: "Signed in as <name>", Account, Log out. */
 	.account {
 		display: flex;
-		gap: var(--space-2);
+		flex-wrap: wrap;
+		gap: var(--space-1) var(--space-2);
 		align-items: baseline;
+	}
+
+	.account > * {
+		white-space: nowrap;
 	}
 
 	.muted {

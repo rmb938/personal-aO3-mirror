@@ -3482,7 +3482,7 @@ components:
         recovery_codes_left: { type: integer, minimum: 0, maximum: 10 }
     Session:
       type: object
-      required: [id, created_at, last_used_at, expires_at]
+      required: [id, created_at, last_used_at, expires_at, current]
       additionalProperties: false
       properties:
         id: { $ref: "#/components/schemas/ID" }
@@ -3493,6 +3493,9 @@ components:
         expires_at:
           allOf: [{ $ref: "#/components/schemas/Timestamp" }]
           description: When the session ends unless refreshed (never past the login plus `auth.max_session_age`).
+        current:
+          type: boolean
+          description: True for the session this request was signed in with; always false on the admin socket, which has none.
     SessionList:
       type: object
       required: [items]

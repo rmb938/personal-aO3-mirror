@@ -1729,6 +1729,8 @@ export interface Session {
   last_used_at: Timestamp;
   /** When the session ends unless refreshed (never past the login plus `auth.max_session_age`). */
   expires_at: Timestamp;
+  /** True for the session this request was signed in with; always false on the admin socket, which has none. */
+  current: boolean;
 }
 
 export interface SessionList {

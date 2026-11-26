@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeFailure, retryAfterSeconds, revealDisabled } from './messages';
+import { describeFailure, invalidPointers, passwordRefused, retryAfterSeconds, revealDisabled } from './messages';
 
 const base = 'https://github.com/rmb938/personal-aO3-mirror/blob/main/docs/api/problems.md#';
 
@@ -13,7 +13,7 @@ function failure(status: number, slug: string | undefined, headers: Record<strin
 }
 
 describe('describeFailure', () => {
-	it('uses the step’s own text for invalid credentials', () => {
+	it("uses the step's own text for invalid credentials", () => {
 		expect(describeFailure(failure(401, 'invalid-credentials'), 'wrong password')).toEqual({
 			text: 'wrong password'
 		});
@@ -47,10 +47,36 @@ describe('describeFailure', () => {
 		expect(msg.text).toBe('Something went wrong (HTTP 500). Try again.');
 	});
 
+	it("uses the step's own text for forbidden, else calls it cross-site", () => {
+		expect(describeFailure(failure(403, 'forbidden'), { forbidden: 'wrong current password' }).text).toBe(
+			'wrong current password'
+		);
+		expect(describeFailure(failure(403, 'forbidden'), 'wrong password').text).toMatch(/cross-site/);
+	});
+
+	it('explains the password policy when the new password is refused', () => {
+		const res = failure(422, 'validation-error');
+		(res.data as Record<string, unknown>)['errors'] = [{ detail: 'DETAIL-SENTINEL', pointer: '/password' }];
+		expect(describeFailure(res, '').text).toBe(passwordRefused);
+
+		(res.data as Record<string, unknown>)['errors'] = [{ detail: 'DETAIL-SENTINEL', pointer: '/code' }];
+		expect(describeFailure(res, '').text).toBe('Check what you entered: it is not in the expected form.');
+	});
+
 	it('falls back on the status when the body is no problem', () => {
 		expect(describeFailure(failure(502, undefined), '').text).toBe(
 			'Something went wrong (HTTP 502). Try again.'
 		);
+	});
+});
+
+describe('invalidPointers', () => {
+	it('lists the pointers and skips everything else', () => {
+		expect(
+			invalidPointers({ errors: [{ pointer: '/password' }, { parameter: 'page' }, 'junk', null, { pointer: 3 }] })
+		).toEqual(['/password']);
+		expect(invalidPointers({ errors: 'no' })).toEqual([]);
+		expect(invalidPointers(undefined)).toEqual([]);
 	});
 });
 
