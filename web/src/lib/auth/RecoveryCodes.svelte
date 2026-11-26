@@ -77,13 +77,16 @@
 
 	ol {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+		/* One column on a phone, two or more once a code fits beside another. */
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
 		gap: var(--space-1) var(--space-3);
 		padding-left: var(--space-4);
 	}
 
 	code {
 		font-size: 1rem;
+		/* A code is copied by eye: never break it across lines. */
+		white-space: nowrap;
 	}
 
 	.actions {
@@ -98,10 +101,12 @@
 		padding: var(--space-2) var(--space-3);
 	}
 
+	/* The download link, made to look like the buttons beside it (the browser's own button colors). */
 	.button {
-		border: 1px solid var(--color-muted);
+		border: 1px solid ButtonBorder;
 		border-radius: 2px;
-		color: inherit;
+		background: ButtonFace;
+		color: ButtonText;
 		text-decoration: none;
 	}
 
