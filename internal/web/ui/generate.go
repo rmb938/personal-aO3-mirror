@@ -4,5 +4,5 @@ package ui
 // runtime.RevealParam, and the API client from the OpenAPI spec (orval, web/orval.config.ts).
 // The second needs the web/ dependencies installed (`make generate` installs them first).
 //
-//go:generate go run ./genreveal ../../../web/src/lib/reveal.gen.ts
+//go:generate go run ./genreveal
 //go:generate npm --prefix ../../../web run --silent generate
