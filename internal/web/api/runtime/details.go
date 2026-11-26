@@ -102,6 +102,5 @@ var (
 	DetailReauthCredentials = problem.NewDetail("the current password or the TOTP code is not valid")
 
 	// Backup (Part 3 stage 7).
-	DetailBackupExists   = problem.NewDetail("the backup directory already exists; name a new one")
-	DetailNoBackupParent = problem.NewDetail("the backup directory's parent directory does not exist")
+	DetailBackupExists = problem.NewDetail("a backup with this name already exists; name a new one")
 )

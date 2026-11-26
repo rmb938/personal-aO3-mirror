@@ -14,21 +14,46 @@ import (
 )
 
 var (
-	// ErrBackupExists is a backup directory that already exists: a backup never writes into
-	// or over an existing one.
+	// ErrBackupExists is a backup name already taken: a backup never writes into or over an
+	// existing one.
 	ErrBackupExists = errors.New("controllers: the backup directory already exists")
-	// ErrNoBackupParent is a backup directory whose parent doesn't exist.
-	ErrNoBackupParent = errors.New("controllers: the backup directory's parent does not exist")
+	// ErrBadBackupName is a backup name that is not one plain path component (ValidBackupName).
+	ErrBadBackupName = errors.New("controllers: the backup name must be one plain path component")
 )
 
-// BackupDatabases snapshots users.db and keys.db into dir (docs/part3-key-rotation.md
-// "Backup"). It holds the rotation mutex, so keys.db can't change between the two copies:
-// every value in the users.db copy is under a key the keys.db copy holds. dir must be absolute
-// and not exist, and its parent must exist. It is created 0700 with both copies 0600 in it; on
-// failure it is removed again.
-func (m *MasterKeys) BackupDatabases(ctx context.Context, dir string) (err error) {
-	if !filepath.IsAbs(dir) {
-		return errors.New("controllers: the backup directory must be an absolute path")
+// MaxBackupNameBytes bounds a backup name.
+const MaxBackupNameBytes = 128
+
+// ValidBackupName reports whether name may name a backup: 1..MaxBackupNameBytes bytes of
+// [A-Za-z0-9._-], not starting with '.', so one plain component of the backup directory (no
+// separator, no "." or "..", no hidden file).
+func ValidBackupName(name string) bool {
+	if name == "" || len(name) > MaxBackupNameBytes || name[0] == '.' {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// BackupDatabases snapshots users.db and keys.db into <backup dir>/name
+// (docs/part3-key-rotation.md "Backup"). It holds the rotation mutex, so keys.db can't change
+// between the two copies: every value in the users.db copy is under a key the keys.db copy
+// holds. name must pass ValidBackupName and not exist yet. The backup directory
+// (api.backup_dir) is created 0700 when missing and refused when group or others can reach it;
+// the new directory is created 0700 with both copies 0600 in it, and removed again on failure.
+func (m *MasterKeys) BackupDatabases(ctx context.Context, name string) (err error) {
+	// filepath.IsLocal as well as ValidBackupName: the name comes from a request, and this is
+	// where it becomes a path.
+	if !ValidBackupName(name) || !filepath.IsLocal(name) || filepath.Base(name) != name {
+		return ErrBadBackupName
+	}
+	if m.backupDir == "" {
+		return errors.New("controllers: no backup directory configured")
 	}
 	if err := store.NotInTx(ctx, "backup"); err != nil {
 		return err
@@ -36,12 +61,13 @@ func (m *MasterKeys) BackupDatabases(ctx context.Context, dir string) (err error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	start := time.Now()
+	if err := privateBackupDir(m.backupDir); err != nil {
+		return err
+	}
+	dir := filepath.Join(m.backupDir, name)
 	if err := os.Mkdir(dir, 0o700); err != nil {
-		switch {
-		case errors.Is(err, fs.ErrExist):
+		if errors.Is(err, fs.ErrExist) {
 			return ErrBackupExists
-		case errors.Is(err, fs.ErrNotExist):
-			return ErrNoBackupParent
 		}
 		return fmt.Errorf("controllers: create the backup directory: %w", err)
 	}
@@ -64,6 +90,23 @@ func (m *MasterKeys) BackupDatabases(ctx context.Context, dir string) (err error
 	// No path in the log: it comes from the request body (CLAUDE.md "Logging rules").
 	m.event(ctx, slog.LevelInfo, "backup_created", "users_bytes", usersBytes, "keys_bytes", keysBytes,
 		"ms", time.Since(start).Milliseconds())
+	return nil
+}
+
+// privateBackupDir creates dir 0700 when missing and refuses it when group or others can reach
+// it: every backup in it holds users.db and keys.db.
+func privateBackupDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("controllers: create the backup directory: %w", err)
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("controllers: stat the backup directory: %w", err)
+	}
+	if !st.IsDir() || st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("controllers: the backup directory must be a directory private to this user (mode 700), not %s",
+			st.Mode())
+	}
 	return nil
 }
 

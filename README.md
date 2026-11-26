@@ -28,9 +28,10 @@ under master keys kept beside it in `keys.db`.
 The two only work as a pair: users.db without its keys.db can't log anyone in, and every
 account then needs an admin reset link.
 
-With `ao3mirror serve` running, `ao3mirror backup DIR` writes a consistent copy of both into
-`DIR`, a new directory (mode 0700, files 0600). Serve pauses master key rotation while it
-copies, so the pair always matches.
+With `ao3mirror serve` running, `ao3mirror backup NAME` writes a consistent copy of both into
+`NAME`, a new directory (mode 0700, files 0600) under `api.backup_dir` (`data/backups/` by
+default; copy it elsewhere yourself for an off-site copy). Serve pauses master key rotation
+while it copies, so the pair always matches.
 
 - **Contents:** users.db and keys.db only. The mirror itself (`meta.db`, `content.db`,
   images) is not included: copy `data/` with `run` and `serve` stopped for that.

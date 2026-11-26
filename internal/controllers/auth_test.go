@@ -50,7 +50,8 @@ func newAuthEnv(t *testing.T, tweaks ...func(*AuthOptions)) *authEnv {
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	mk, err := NewMasterKeys(context.Background(), MasterKeysOptions{Keys: keys, Users: users, Now: clk.Now, Logger: log})
+	mk, err := NewMasterKeys(context.Background(), MasterKeysOptions{Keys: keys, Users: users, Now: clk.Now, Logger: log,
+		BackupDir: filepath.Join(dir, "backups")})
 	require.NoError(t, err)
 	hasher, err := auth.NewHasher(mk.Keyring(), auth.HasherOptions{Params: cheapArgon2})
 	require.NoError(t, err)

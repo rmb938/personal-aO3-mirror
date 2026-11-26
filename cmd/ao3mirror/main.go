@@ -43,7 +43,7 @@ commands:
   session revoke ID  end one session
   auth ...           rotate the access-token signing key or the master key
                      ('ao3mirror auth' for details)
-  backup DIR         copy users.db and keys.db into a new directory DIR
+  backup NAME        copy users.db and keys.db into a new backup NAME (under api.backup_dir)
                      ('ao3mirror backup' for details and how to restore)
   dev fake-server    serve a synthetic AO3 on 127.0.0.1 for local testing
   dev ui-server      serve the API and web UI over a new, seeded synthetic data dir (the

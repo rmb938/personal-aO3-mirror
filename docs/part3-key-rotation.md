@@ -159,8 +159,11 @@ database.
 
 ### Backup (stage 7)
 
-`ao3mirror backup <dir>` (an admin socket client) asks `serve` to snapshot both databases while
-holding the rotation mutex. `serve` creates `<dir>` (0700; it must not exist), pre-creates
+`ao3mirror backup <name>` (an admin socket client) asks `serve` to snapshot both databases while
+holding the rotation mutex. `<name>` is one plain path component (`[A-Za-z0-9._-]`, not starting
+with `.`, checked again with `filepath.IsLocal` where it becomes a path), so a request can only
+write inside `api.backup_dir` (relative to data_dir, default `backups`; created 0700, refused if
+group or others can reach it). `serve` creates `<backup_dir>/<name>` (0700; it must not exist), pre-creates
 `users.db` and `keys.db` there 0600, and runs `VACUUM INTO` for each (into an empty file). The
 copies are consistent with each other and carry no free pages. Restore is documented: stop
 `serve`, copy both files into `data/api/`, start. The startup check catches a mismatched pair.

@@ -42,6 +42,7 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "127.0.0.1:8080", cfg.API.Listen)
 	assert.Equal(t, "api/admin.sock", cfg.API.AdminSocket)
+	assert.Equal(t, "backups", cfg.API.BackupDir)
 	assert.Equal(t, []string{"127.0.0.1/32", "::1/128"}, cfg.API.TrustedProxies)
 	assert.Equal(t, []string{"127.0.0.1", "::1", "localhost"}, cfg.API.AllowedHosts)
 	assert.Equal(t, 24*time.Hour, cfg.API.HashKeyRotation)
@@ -56,6 +57,9 @@ func TestAPIDefaultsAndValidation(t *testing.T) {
 		"admin_socket: /tmp/a.sock":      "relative path inside data_dir",
 		"admin_socket: ../a.sock":        "relative path inside data_dir",
 		"admin_socket: \"\"":             "relative path inside data_dir",
+		"backup_dir: /srv/backups":       "relative path inside data_dir",
+		"backup_dir: ../backups":         "relative path inside data_dir",
+		"backup_dir: \"\"":               "relative path inside data_dir",
 		"trusted_proxies: []":            "must not be empty",
 		"trusted_proxies: [10.0.0.1]":    "not a CIDR prefix",
 		"allowed_hosts: []":              "allowed_hosts must not be empty",

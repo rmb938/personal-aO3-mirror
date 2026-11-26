@@ -95,10 +95,11 @@ type Invoker interface {
 	AddSource(ctx context.Context, request *SourceAddRequest, options ...RequestOption) (AddSourceRes, error)
 	// Backup invokes backup operation.
 	//
-	// `serve` creates `dir` (0700) and writes `users.db` and `keys.db` into it (0600), as one consistent
-	// pair: no master key rotation or deletion runs in between. The copies are as sensitive as the live
-	// files. To restore, stop `serve`, copy both into `data/api/` and start it. `dir` must not exist (409
-	// already-exists); its parent must (404).
+	// `serve` creates `name` (0700) under `api.backup_dir` (default `data/backups/`, created 0700 and
+	// refused if group or others can reach it) and writes `users.db` and `keys.db` into it (0600), as one
+	// consistent pair: no master key rotation or deletion runs in between. The copies are as sensitive as
+	// the live files. To restore, stop `serve`, copy both into `data/api/` and start it. `name` must not
+	// exist yet (409 already-exists).
 	//
 	// POST /api/v1/admin/backup
 	Backup(ctx context.Context, request *BackupRequest, options ...RequestOption) error
@@ -733,10 +734,11 @@ func (c *Client) sendAddSource(ctx context.Context, request *SourceAddRequest, r
 
 // Backup invokes backup operation.
 //
-// `serve` creates `dir` (0700) and writes `users.db` and `keys.db` into it (0600), as one consistent
-// pair: no master key rotation or deletion runs in between. The copies are as sensitive as the live
-// files. To restore, stop `serve`, copy both into `data/api/` and start it. `dir` must not exist (409
-// already-exists); its parent must (404).
+// `serve` creates `name` (0700) under `api.backup_dir` (default `data/backups/`, created 0700 and
+// refused if group or others can reach it) and writes `users.db` and `keys.db` into it (0600), as one
+// consistent pair: no master key rotation or deletion runs in between. The copies are as sensitive as
+// the live files. To restore, stop `serve`, copy both into `data/api/` and start it. `name` must not
+// exist yet (409 already-exists).
 //
 // POST /api/v1/admin/backup
 func (c *Client) Backup(ctx context.Context, request *BackupRequest, options ...RequestOption) error {

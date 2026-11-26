@@ -749,13 +749,13 @@ func (s *BackupRequest) Encode(e *jx.Encoder) {
 // encodeFields encodes fields.
 func (s *BackupRequest) encodeFields(e *jx.Encoder) {
 	{
-		e.FieldStart("dir")
-		e.Str(s.Dir)
+		e.FieldStart("name")
+		e.Str(s.Name)
 	}
 }
 
 var jsonFieldsNameOfBackupRequest = [1]string{
-	0: "dir",
+	0: "name",
 }
 
 // Decode decodes BackupRequest from json.
@@ -767,17 +767,17 @@ func (s *BackupRequest) Decode(d *jx.Decoder) error {
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
-		case "dir":
+		case "name":
 			requiredBitSet[0] |= 1 << 0
 			if err := func() error {
 				v, err := d.Str()
-				s.Dir = string(v)
+				s.Name = string(v)
 				if err != nil {
 					return err
 				}
 				return nil
 			}(); err != nil {
-				return errors.Wrap(err, "decode field \"dir\"")
+				return errors.Wrap(err, "decode field \"name\"")
 			}
 		default:
 			return errors.Errorf("unexpected field %q", k)

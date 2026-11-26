@@ -117,9 +117,9 @@ func (a *Handlers) RotateMasterKey(r *http.Request) (any, error) {
 	return runtime.NoContent(), nil
 }
 
-// Backup is POST /api/v1/admin/backup, body {dir} (204): copies of users.db and keys.db,
-// consistent with each other, in a new directory dir (docs/part3-key-rotation.md "Backup").
-// An existing dir is 409 already-exists; a missing parent is 404.
+// Backup is POST /api/v1/admin/backup, body {name} (204): copies of users.db and keys.db,
+// consistent with each other, in a new directory name under api.backup_dir
+// (docs/part3-key-rotation.md "Backup"). A name already taken is 409 already-exists.
 func (a *Handlers) Backup(r *http.Request) (any, error) {
 	q, err := runtime.ParseParams(r)
 	if err != nil {
@@ -132,7 +132,7 @@ func (a *Handlers) Backup(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	if err := a.ctl.Auth().MasterKeys().BackupDatabases(r.Context(), req.Dir); err != nil {
+	if err := a.ctl.Auth().MasterKeys().BackupDatabases(r.Context(), req.Name); err != nil {
 		return nil, err
 	}
 	return runtime.NoContent(), nil

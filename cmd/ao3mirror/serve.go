@@ -196,7 +196,7 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc acc
 		}
 	}()
 	master, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users,
-		Logger: log, Now: time.Now, Rotation: cfg.Auth.MasterKeyRotation})
+		Logger: log, Now: time.Now, Rotation: cfg.Auth.MasterKeyRotation, BackupDir: cfg.Path(cfg.API.BackupDir)})
 	if err != nil {
 		return accounts{}, err
 	}

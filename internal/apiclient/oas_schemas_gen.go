@@ -420,19 +420,19 @@ type BackupNoContent struct{}
 
 // Ref: #/components/schemas/BackupRequest
 type BackupRequest struct {
-	// The new backup directory: an absolute, clean path (no trailing slash, `.` or `..` segments), at most
-	// 1024 bytes.
-	Dir string `json:"dir"`
+	// The new backup's directory under `api.backup_dir`: one plain path component of letters, digits, `.`,
+	// `_` and `-`, not starting with `.`.
+	Name string `json:"name"`
 }
 
-// GetDir returns the value of Dir.
-func (s *BackupRequest) GetDir() string {
-	return s.Dir
+// GetName returns the value of Name.
+func (s *BackupRequest) GetName() string {
+	return s.Name
 }
 
-// SetDir sets the value of Dir.
-func (s *BackupRequest) SetDir(val string) {
-	s.Dir = val
+// SetName sets the value of Name.
+func (s *BackupRequest) SetName(val string) {
+	s.Name = val
 }
 
 type BearerAuth struct {
