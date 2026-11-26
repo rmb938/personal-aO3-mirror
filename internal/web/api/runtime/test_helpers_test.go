@@ -11,6 +11,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
@@ -44,7 +45,7 @@ func testNew(t *testing.T, opts Options, log *slog.Logger) (*API, error) {
 func testNewAnonymous(t *testing.T, opts Options, log *slog.Logger, anonymous func(string) bool) (*API, error) {
 	t.Helper()
 	cfg := config.Default()
-	st, err := store.Open(t.Context(), t.TempDir(), store.Options{Logger: log})
+	st, err := store.Open(t.Context(), dirstest.Temp(t), store.Options{Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	ctrls := controllers.New(controllers.Options{Store: st, Logger: log,

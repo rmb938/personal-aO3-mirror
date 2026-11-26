@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -47,10 +48,10 @@ type Options struct {
 	Logger *slog.Logger
 	Now    func() time.Time
 
-	DataDir      string // for data/debug skeletons
-	KeepVersions int    // content.keep_versions
-	QueueImages  bool   // queue embedded images of stored works for the image worker
-	ImageDir     string // the image worker's directory, which GetImage reads
+	DataDir      *os.Root // the data directory, for debug/ skeletons (nil: none saved)
+	KeepVersions int      // content.keep_versions
+	QueueImages  bool     // queue embedded images of stored works for the image worker
+	ImageDir     *os.Root // the image worker's directory, which GetImage reads
 
 	Sources  config.Sources // add defaults and auto-confirm gate
 	Interval time.Duration  // current request interval, for add estimates
@@ -279,7 +280,7 @@ func IsParseFailure(err error) bool {
 
 // saveSkeleton writes a structure-only copy of an unexpected page to data/debug for diagnosis.
 func (c *Controllers) saveSkeleton(ctx context.Context, kind string, id string, page []byte) {
-	if len(page) == 0 || c.options.DataDir == "" {
+	if len(page) == 0 || c.options.DataDir == nil {
 		return
 	}
 	log := c.logger(ctx)

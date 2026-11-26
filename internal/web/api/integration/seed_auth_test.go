@@ -12,6 +12,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -79,14 +80,15 @@ func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	base := tb.TempDir()
 	dir := filepath.Join(base, "api")
 	lastBackupDir = filepath.Join(base, "backups")
-	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
+	api := dirstest.At(tb, dir, 0o700)
+	users, err := store.OpenUsers(ctx, api, store.Options{Logger: log})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, users.Close()) })
-	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
+	keys, err := store.OpenKeys(ctx, api, store.Options{Logger: log})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, keys.Close()) })
 	mk, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users, Logger: log,
-		Now: func() time.Time { return seedTime }, BackupDir: lastBackupDir})
+		Now: func() time.Time { return seedTime }, BackupDir: dirstest.At(tb, lastBackupDir, 0o700)})
 	require.NoError(tb, err)
 	secrets := mk.Keyring()
 	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})

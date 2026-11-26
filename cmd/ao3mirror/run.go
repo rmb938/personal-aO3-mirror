@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -28,13 +27,10 @@ var errDaemonLocked = errors.New("another ao3mirror run is already using this da
 // daemon starting during a probe (e.g. `source add`) would refuse to run.
 const lockRetry = 20 * time.Millisecond
 
-// flockDaemon makes up to attempts tries at the exclusive daemon lock for dataDir and returns
+// flockDaemon makes up to attempts tries at the exclusive daemon lock in dataDir and returns
 // the locked file, or errDaemonLocked if another process still holds it.
-func flockDaemon(dataDir string, attempts int) (f *os.File, err error) {
-	if err := os.MkdirAll(dataDir, 0o750); err != nil {
-		return nil, err
-	}
-	f, err = os.OpenFile(filepath.Join(dataDir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+func flockDaemon(dataDir *os.Root, attempts int) (f *os.File, err error) {
+	f, err = dataDir.OpenFile("daemon.lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +56,7 @@ func unlockDaemon(f *os.File) error {
 
 // lockDaemon takes an exclusive lock so only one daemon runs per data dir, retrying for up to
 // a second past a probe. The returned unlock releases it and reports any error.
-func lockDaemon(dataDir string) (unlock func() error, err error) {
+func lockDaemon(dataDir *os.Root) (unlock func() error, err error) {
 	f, err := flockDaemon(dataDir, 50)
 	if err != nil {
 		return nil, err
@@ -78,7 +74,7 @@ func lockDaemon(dataDir string) (unlock func() error, err error) {
 // daemonRunning reports whether a process (normally `ao3mirror run`) holds the daemon lock for
 // dataDir. It takes no lock that lingers and leaves the pid in the lock file alone. A lock held
 // only by another probe is released within the few retries.
-func daemonRunning(dataDir string) (bool, error) {
+func daemonRunning(dataDir *os.Root) (bool, error) {
 	f, err := flockDaemon(dataDir, 5)
 	if errors.Is(err, errDaemonLocked) {
 		return true, nil
@@ -91,8 +87,8 @@ func daemonRunning(dataDir string) (bool, error) {
 
 // runDaemon is `ao3mirror run`: the scheduler (and the image worker) until ctx ends. It is the
 // only process that talks to AO3, and it holds the daemon lock while it runs.
-func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut io.Writer) int {
-	unlock, err := lockDaemon(cfg.DataDir)
+func runDaemon(ctx context.Context, cfg config.Config, data *dataDirs, log *slog.Logger, errOut io.Writer) int {
+	unlock, err := lockDaemon(data.root)
 	if err != nil {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
@@ -103,7 +99,7 @@ func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut 
 		}
 	}()
 
-	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
+	st, err := store.Open(ctx, data.root, store.Options{Logger: log})
 	if err != nil {
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
@@ -115,7 +111,7 @@ func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut 
 		fmt.Fprintf(errOut, "run: %v\n", err)
 		return 1
 	}
-	ctl := newControllers(cfg, log, st, client)
+	ctl := newControllers(cfg, data, log, st, client)
 	s := scheduler.New(scheduler.Options{Store: st, Controllers: ctl, Pacer: client, Logger: log})
 	log.Info("daemon starting", "interval", cfg.Rate.Interval.String(), "daily_budget", cfg.Rate.DailyBudget,
 		"user_agent_contact_set", cfg.Contact.Discord != "", "images", cfg.Images.Enabled,
@@ -126,7 +122,7 @@ func runDaemon(ctx context.Context, cfg config.Config, log *slog.Logger, errOut 
 	var wg sync.WaitGroup
 	if cfg.Images.Enabled {
 		w, err := imagefetch.New(imagefetch.Options{
-			Store: st, UserAgent: client.UserAgent(), Dir: cfg.Path(imageDir),
+			Store: st, UserAgent: client.UserAgent(), Dir: data.images,
 			PerHostInterval: cfg.Images.PerHostInterval, MaxBytes: cfg.Images.MaxBytes, Logger: log,
 		})
 		if err != nil {

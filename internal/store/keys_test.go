@@ -14,7 +14,7 @@ import (
 
 func openKeysTest(t *testing.T) (*Keys, *KeysTx) {
 	t.Helper()
-	k, err := OpenKeys(context.Background(), filepath.Join(t.TempDir(), "api"), Options{})
+	k, err := OpenKeys(context.Background(), rootAt(t, filepath.Join(t.TempDir(), "api")), Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, k.Close()) })
 	return k, k.AutoCommitForTestOnly()
@@ -23,12 +23,9 @@ func openKeysTest(t *testing.T) (*Keys, *KeysTx) {
 func TestOpenKeysFileIsPrivate(t *testing.T) {
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "api")
-	k, err := OpenKeys(ctx, dir, Options{})
+	k, err := OpenKeys(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
-	fi, err := os.Stat(dir)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
-	fi, err = os.Stat(filepath.Join(dir, KeysFile))
+	fi, err := os.Stat(filepath.Join(dir, KeysFile))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
 	// Rollback-journal mode: no -wal or -shm, and the journal is gone between transactions.
@@ -38,11 +35,11 @@ func TestOpenKeysFileIsPrivate(t *testing.T) {
 	}
 	require.NoError(t, k.Close())
 
-	k, err = OpenKeys(ctx, dir, Options{})
+	k, err = OpenKeys(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	require.NoError(t, k.Close())
 	require.NoError(t, os.Chmod(filepath.Join(dir, KeysFile), 0o644)) //nolint:gosec // G302: the test needs a world-readable db
-	_, err = OpenKeys(ctx, dir, Options{})
+	_, err = OpenKeys(ctx, rootAt(t, dir), Options{})
 	require.ErrorContains(t, err, "chmod 600")
 }
 
@@ -74,7 +71,7 @@ func TestOpenKeysPragmas(t *testing.T) {
 func TestKeysSecureDelete(t *testing.T) {
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "api")
-	k, err := OpenKeys(ctx, dir, Options{})
+	k, err := OpenKeys(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	key := bytes.Repeat([]byte{0xA5, 0x5A, 0xC3, 0x3C}, 8)
 	_, err = k.AutoCommitForTestOnly().InsertMasterKey(ctx, key, usersT0)

@@ -120,7 +120,7 @@ func waitSourceAdd(ctx context.Context, a *app, q apiclient.SourceAddQueued, wai
 		verb = "already queued"
 	}
 	fmt.Fprintf(out, "source add %s as job %d (see: ao3mirror debug job %d)\n", verb, q.JobID, q.JobID)
-	running, err := daemonRunning(a.cfg.DataDir)
+	running, err := daemonRunning(a.data.root)
 	if err != nil {
 		fmt.Fprintf(errOut, "source add: checking for a running daemon: %v\n", err)
 		return 1

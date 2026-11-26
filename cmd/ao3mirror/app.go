@@ -20,17 +20,16 @@ import (
 // apiTimeout bounds one CLI call to the admin socket, from dial to the end of the response.
 const apiTimeout = time.Minute
 
-// imageDir is the image worker's directory under data_dir, which `serve` reads images from.
-const imageDir = "images"
-
-// app bundles what the API commands (source, jobs, status, debug) need: the config and a
-// client for the admin socket of a running `ao3mirror serve`. They never open the store.
+// app bundles what the API commands (source, jobs, status, debug) need: the config, the data
+// directory (for the daemon lock probe) and a client for the admin socket of a running
+// `ao3mirror serve`. They never open the store.
 type app struct {
 	cfg    config.Config
+	data   *dataDirs
 	client *apiclient.Client
 }
 
-func openApp(cfg config.Config) (*app, error) {
+func openApp(cfg config.Config, data *dataDirs) (*app, error) {
 	sock := cfg.Path(cfg.API.AdminSocket)
 	var d net.Dialer
 	hc := &http.Client{
@@ -47,7 +46,7 @@ func openApp(cfg config.Config) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &app{cfg: cfg, client: c}, nil
+	return &app{cfg: cfg, data: data, client: c}, nil
 }
 
 // adminSocketToken is the CLI's apiclient.SecuritySource: a fixed placeholder bearer token.
@@ -62,16 +61,16 @@ func (adminSocketToken) BearerAuth(context.Context, apiclient.OperationName) (ap
 
 // newControllers builds the business layer. client is nil for offline commands (reparse, serve):
 // no HTTP client is ever built for them, and any AO3 fetch fails with controllers.ErrOffline.
-func newControllers(cfg config.Config, log *slog.Logger, st *store.Store, client *httpx.Client) *controllers.Controllers {
-	return controllers.New(controllerOptions(cfg, log, st, client))
+func newControllers(cfg config.Config, data *dataDirs, log *slog.Logger, st *store.Store, client *httpx.Client) *controllers.Controllers {
+	return controllers.New(controllerOptions(cfg, data, log, st, client))
 }
 
 // controllerOptions are newControllers' options, for a caller that adds to them (serve's Auth).
-func controllerOptions(cfg config.Config, log *slog.Logger, st *store.Store, client *httpx.Client) controllers.Options {
+func controllerOptions(cfg config.Config, data *dataDirs, log *slog.Logger, st *store.Store, client *httpx.Client) controllers.Options {
 	o := controllers.Options{
 		Store: st, Logger: log, Now: time.Now,
-		DataDir: cfg.DataDir, KeepVersions: cfg.Content.KeepVersions, QueueImages: cfg.Images.Enabled,
-		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: cfg.Path(imageDir),
+		DataDir: data.root, KeepVersions: cfg.Content.KeepVersions, QueueImages: cfg.Images.Enabled,
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: data.images,
 		TagInfoTypes: cfg.Tags.InfoTypes, TagInfoTTL: cfg.Tags.InfoTTL,
 		SeriesInfo: cfg.Series.Info, SeriesInfoTTL: cfg.Series.InfoTTL,
 	}

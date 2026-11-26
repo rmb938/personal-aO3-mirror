@@ -16,6 +16,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	rootdirs "github.com/rmb938/personal-aO3-mirror/internal/dirs" // "dirs" is the Dirs parameter
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
@@ -32,9 +34,9 @@ import (
 
 // Dirs are where serve reads each part of the data dir.
 type Dirs struct {
-	Data     string // data_dir: meta.db and content.db
-	Images   string // the image worker's directory
-	Accounts string // users.db and keys.db (the admin socket's directory)
+	Data     *os.Root // data_dir, opened as a root: meta.db and content.db
+	Images   string   // the image worker's directory, relative to Data
+	Accounts string   // users.db and keys.db (the admin socket's directory), relative to Data
 }
 
 // Account is the seeded user's credentials. They are fixtures, not secrets: the server they
@@ -86,19 +88,18 @@ const fixtureSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="6
 // cheapArgon2 keeps seeding fast. The hash records its parameters, so the server checks it.
 var cheapArgon2 = auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
-// Seed writes the fixtures. Every directory in dirs must be new: Seed refuses one that exists
-// and has anything in it, so it can never write into a real data dir.
+// Seed writes the fixtures. The data dir must be empty: Seed refuses one that has anything in
+// it, so it can never write into a real data dir. The image and accounts directories are made
+// inside it.
 func Seed(ctx context.Context, dirs Dirs, log *slog.Logger) (Seeded, error) {
-	for _, d := range []string{dirs.Data, dirs.Images, dirs.Accounts} {
-		if err := requireEmpty(d); err != nil {
-			return Seeded{}, err
-		}
+	if err := requireEmpty(dirs.Data); err != nil {
+		return Seeded{}, err
 	}
 	now := time.Now()
 	if err := seedContent(ctx, dirs, log, now); err != nil {
 		return Seeded{}, fmt.Errorf("seed content: %w", err)
 	}
-	acc, err := seedAccount(ctx, dirs.Accounts, log, now)
+	acc, err := seedAccount(ctx, dirs, log, now)
 	if err != nil {
 		return Seeded{}, fmt.Errorf("seed account: %w", err)
 	}
@@ -109,17 +110,19 @@ func Seed(ctx context.Context, dirs Dirs, log *slog.Logger) (Seeded, error) {
 	}, nil
 }
 
-// requireEmpty accepts a missing or empty directory.
-func requireEmpty(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+// requireEmpty accepts an empty directory.
+func requireEmpty(dir *os.Root) (err error) {
+	f, err := dir.Open(".")
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	entries, err := f.ReadDir(1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
 	if len(entries) > 0 {
-		return fmt.Errorf("%s is not empty: e2eseed only writes into a new directory", dir)
+		return fmt.Errorf("%s is not empty: e2eseed only writes into a new directory", dir.Name())
 	}
 	return nil
 }
@@ -131,6 +134,11 @@ func seedContent(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time
 		return err
 	}
 	defer func() { err = errors.Join(err, st.Close()) }()
+	imageDir, err := rootdirs.Sub(dirs.Data, dirs.Images, 0o750)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, imageDir.Close()) }()
 
 	pngBody, err := fixturePNG()
 	if err != nil {
@@ -141,7 +149,7 @@ func seedContent(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time
 		imageSVG: {body: []byte(fixtureSVG), contentType: "image/svg+xml"},
 	}
 	for _, img := range images {
-		if err := img.write(dirs.Images); err != nil {
+		if err := img.write(imageDir); err != nil {
 			return err
 		}
 	}
@@ -203,12 +211,12 @@ func (i storedImage) sha() string {
 }
 
 // write puts the image where the image worker would have.
-func (i storedImage) write(dir string) error {
-	p := imagefetch.Path(dir, i.sha(), i.contentType)
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+func (i storedImage) write(dir *os.Root) error {
+	p := imagefetch.File(i.sha(), i.contentType)
+	if err := dir.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		return err
 	}
-	return os.WriteFile(p, i.body, 0o600)
+	return dir.WriteFile(p, i.body, 0o600)
 }
 
 // fixturePNG is a 32x32 two-colour square.
@@ -232,10 +240,12 @@ func fixturePNG() ([]byte, error) {
 
 // seedAccount creates the test user, with its TOTP secret and recovery codes, the way serve
 // will read them: keys.db gets its first master key here, and serve reuses it.
-func seedAccount(ctx context.Context, dir string, log *slog.Logger, now time.Time) (acc Account, err error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+func seedAccount(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time) (acc Account, err error) {
+	dir, err := rootdirs.PrivateSub(dirs.Data, dirs.Accounts)
+	if err != nil {
 		return Account{}, err
 	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
 	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
 	if err != nil {
 		return Account{}, err

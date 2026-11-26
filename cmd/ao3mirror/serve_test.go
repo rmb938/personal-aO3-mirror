@@ -21,6 +21,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
@@ -34,6 +35,15 @@ func serveConfig(t *testing.T) config.Config {
 	require.NoError(t, cfg.Validate())
 	cfg.API.Listen = "127.0.0.1:0" // any free port; config validation wants a real one
 	return cfg
+}
+
+// testData opens cfg's data dir as main does, closed when the test ends.
+func testData(t *testing.T, cfg config.Config) *dataDirs {
+	t.Helper()
+	d, err := openDataDirs(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+	return d
 }
 
 func unixClient(path string) *http.Client {
@@ -60,7 +70,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	cfg := serveConfig(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	s, err := newServer(ctx, cfg, slog.New(slog.DiscardHandler), true)
+	s, err := newServer(ctx, cfg, testData(t, cfg), slog.New(slog.DiscardHandler), true)
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- s.serve(ctx) }()
@@ -105,7 +115,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 	}
 
 	// A second server must not take over a live socket.
-	_, err = newServer(ctx, cfg, slog.New(slog.DiscardHandler), true)
+	_, err = newServer(ctx, cfg, testData(t, cfg), slog.New(slog.DiscardHandler), true)
 	require.ErrorContains(t, err, "in use")
 
 	cancel()
@@ -121,7 +131,7 @@ func TestServeListenersAndShutdown(t *testing.T) {
 
 func TestServeListenerFailureStopsBoth(t *testing.T) {
 	cfg := serveConfig(t)
-	s, err := newServer(t.Context(), cfg, slog.New(slog.DiscardHandler), true)
+	s, err := newServer(t.Context(), cfg, testData(t, cfg), slog.New(slog.DiscardHandler), true)
 	require.NoError(t, err)
 	require.NoError(t, s.tcp.Close()) // public Serve fails at once
 	require.Error(t, s.serve(t.Context()))
@@ -140,8 +150,9 @@ func TestOpenAuth(t *testing.T) {
 	logs := &lockedBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
 	const created = `"event":"master_key_created","key_id":1`
+	data := testData(t, cfg)
 
-	acc, err := openAuth(t.Context(), cfg, log)
+	acc, err := openAuth(t.Context(), cfg, data, log)
 	require.NoError(t, err)
 	assert.Equal(t, 1, logs.count(created), "first start creates the master key")
 	before := time.Now()
@@ -152,7 +163,7 @@ func TestOpenAuth(t *testing.T) {
 	require.NoError(t, acc.Close())
 
 	// A restart reads the same users.db and keys.db.
-	acc, err = openAuth(t.Context(), cfg, log)
+	acc, err = openAuth(t.Context(), cfg, data, log)
 	require.NoError(t, err)
 	assert.Equal(t, 1, logs.count(created), "a restart reuses the master key")
 	invites, err := acc.auth.ListInvites(t.Context())
@@ -166,8 +177,14 @@ func TestOpenAuth(t *testing.T) {
 	require.ErrorIs(t, err, fs.ErrNotExist, "auth.key is gone")
 
 	require.NoError(t, os.Chmod(dir, 0o750)) //nolint:gosec // deliberately unsafe mode under test
-	_, err = openAuth(t.Context(), cfg, log)
+	_, err = openAuth(t.Context(), cfg, data, log)
 	require.ErrorContains(t, err, "chmod 700")
+	require.NoError(t, os.Chmod(dir, 0o700)) //nolint:gosec // G302: a directory; 0700 is the private mode
+
+	// So is a backup directory others can reach.
+	require.NoError(t, os.Chmod(cfg.Path(cfg.API.BackupDir), 0o750)) //nolint:gosec // deliberately unsafe mode under test
+	_, err = openAuth(t.Context(), cfg, data, log)
+	require.ErrorContains(t, err, "api.backup_dir")
 }
 
 // lockedBuffer is a log sink shared with a goroutine under test.
@@ -192,7 +209,7 @@ func (l *lockedBuffer) count(s string) int {
 // becomes due rotates on a later tick, a retired master key is deleted once its retention has
 // passed, and the loop stops with its context.
 func TestKeyChecks(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "api")
+	dir := dirstest.At(t, filepath.Join(t.TempDir(), "api"), 0o700)
 	var offset atomic.Int64
 	t0 := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 	now := func() time.Time { return t0.Add(time.Duration(offset.Load())) }
@@ -261,23 +278,27 @@ func TestAuthBoundsMatchController(t *testing.T) {
 
 func TestAdminSocketChecks(t *testing.T) {
 	ctx := t.Context()
-	dir := filepath.Join(t.TempDir(), "api")
-	path := filepath.Join(dir, "admin.sock")
+	base := t.TempDir()
+	data := dirstest.At(t, base, 0o750)
+	const rel = "api/admin.sock"
+	dir := filepath.Join(base, "api")
+	path := filepath.Join(base, rel)
 
-	// A stale socket (crashed server) is replaced.
-	require.NoError(t, os.Mkdir(dir, 0o700))
-	var lc net.ListenConfig
-	l, err := lc.Listen(ctx, "unix", path)
-	require.NoError(t, err)
+	// A missing directory is created private; a stale socket (crashed server) is replaced.
+	l, err := listenAdminSocket(ctx, data, rel)
+	require.NoError(t, err, "new directory")
 	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	require.NoError(t, l.Close())
-	l, err = listenAdminSocket(ctx, path)
+	fi, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
+	l, err = listenAdminSocket(ctx, data, rel)
 	require.NoError(t, err, "stale socket")
 	require.NoError(t, l.Close())
 
 	// Anything else at the path is left alone.
 	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
-	_, err = listenAdminSocket(ctx, path)
+	_, err = listenAdminSocket(ctx, data, rel)
 	require.ErrorContains(t, err, "not a socket")
 	_, err = os.Stat(path)
 	require.NoError(t, err, "regular file kept")
@@ -285,11 +306,18 @@ func TestAdminSocketChecks(t *testing.T) {
 
 	// A directory others can reach is refused.
 	require.NoError(t, os.Chmod(dir, 0o750)) //nolint:gosec // deliberately unsafe mode under test
-	_, err = listenAdminSocket(ctx, path)
+	_, err = listenAdminSocket(ctx, data, rel)
 	require.ErrorContains(t, err, "chmod 700")
+	require.NoError(t, os.Chmod(dir, 0o700)) //nolint:gosec // G302: a directory; 0700 is the private mode
 
-	_, err = listenAdminSocket(ctx, filepath.Join(dir, strings.Repeat("x", maxSocketPath)))
+	_, err = listenAdminSocket(ctx, data, "api/"+strings.Repeat("x", maxSocketPath))
 	require.ErrorContains(t, err, "unix socket limit")
+
+	// The socket stays inside the data dir.
+	_, err = listenAdminSocket(ctx, data, "../escape/admin.sock")
+	require.Error(t, err)
+	_, err = os.Stat(filepath.Join(filepath.Dir(base), "escape"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestServeArgs(t *testing.T) {

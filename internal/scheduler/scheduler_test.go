@@ -17,6 +17,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
@@ -77,7 +78,7 @@ func newEnvWith(t *testing.T, works int, opts func(*controllers.Options), client
 	}
 	e.cl, err = httpx.New(co)
 	require.NoError(t, err)
-	dataDir := t.TempDir()
+	dataDir := dirstest.Temp(t)
 	e.st, err = store.Open(context.Background(), dataDir, store.Options{Now: e.clk.Now, Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, e.st.Close()) })

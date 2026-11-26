@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/parse"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -24,7 +25,8 @@ func TestReparse(t *testing.T) {
 	dir := t.TempDir()
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	st, err := store.Open(ctx, dir, store.Options{Now: now, Logger: log})
+	data := dirstest.At(t, dir, 0o750)
+	st, err := store.Open(ctx, data, store.Options{Now: now, Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	db := st.AutoCommitForTestOnly()
@@ -65,7 +67,7 @@ func TestReparse(t *testing.T) {
 	clk = clk.Add(time.Hour)
 
 	// No Client: reparse is offline, so any AO3 fetch would fail with ErrOffline.
-	ctl := New(Options{Store: st, DataDir: dir, QueueImages: true, Logger: log, Now: now})
+	ctl := New(Options{Store: st, DataDir: data, QueueImages: true, Logger: log, Now: now})
 	res, err := ctl.Reparse(ctx, ReparseOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 3, res.Seen)
@@ -102,7 +104,7 @@ func TestReparse(t *testing.T) {
 
 func TestOfflineControllersNeverFetch(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.Open(ctx, t.TempDir(), store.Options{})
+	st, err := store.Open(ctx, dirstest.Temp(t), store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	ctl := New(Options{Store: st, Sources: config.Default().Sources})

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
 
@@ -25,10 +26,10 @@ func TestBackupRestores(t *testing.T) {
 	e.signup(t, "fixture_after") // a second account, after the rotation
 
 	require.NoError(t, e.mk.BackupDatabases(ctx, "backup"))
-	fi, err := os.Stat(e.mk.backupDir)
+	fi, err := os.Stat(e.mk.backupDir.Name())
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), "the backup directory is created private")
-	dir := filepath.Join(e.mk.backupDir, "backup")
+	dir := filepath.Join(e.mk.backupDir.Name(), "backup")
 	fi, err = os.Stat(dir)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
@@ -43,7 +44,7 @@ func TestBackupRestores(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{store.UsersFile, store.KeysFile}, names)
 	assert.Contains(t, e.logs.String(), `"event":"backup_created"`)
-	assert.NotContains(t, e.logs.String(), e.mk.backupDir, "the path is not logged")
+	assert.NotContains(t, e.logs.String(), e.mk.backupDir.Name(), "the path is not logged")
 
 	// Restore: copy both files into a new api dir and start on them.
 	api := filepath.Join(t.TempDir(), "api")
@@ -54,10 +55,11 @@ func TestBackupRestores(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(api, name), b, 0o600)) //nolint:gosec // G703: a temp dir and constant file names
 
 	}
-	users, err := store.OpenUsers(ctx, api, store.Options{})
+	apiRoot := dirstest.At(t, api, 0o700)
+	users, err := store.OpenUsers(ctx, apiRoot, store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
-	keys, err := store.OpenKeys(ctx, api, store.Options{})
+	keys, err := store.OpenKeys(ctx, apiRoot, store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
 	assert.Equal(t, masterKeyIDs(t, e.keys), masterKeyIDs(t, keys), "both keys are in the copy")
@@ -77,7 +79,7 @@ func TestBackupRefusals(t *testing.T) {
 	e := newAuthEnv(t)
 	ctx := context.Background()
 
-	existing := filepath.Join(e.mk.backupDir, "existing")
+	existing := filepath.Join(e.mk.backupDir.Name(), "existing")
 	require.NoError(t, os.MkdirAll(existing, 0o700))
 	require.ErrorIs(t, e.mk.BackupDatabases(ctx, "existing"), ErrBackupExists)
 	entries, err := os.ReadDir(existing)
@@ -89,20 +91,20 @@ func TestBackupRefusals(t *testing.T) {
 		strings.Repeat("a", MaxBackupNameBytes+1)} {
 		require.ErrorIs(t, e.mk.BackupDatabases(ctx, name), ErrBadBackupName, "%q", name)
 	}
-	_, err = os.Stat(filepath.Join(filepath.Dir(e.mk.backupDir), "escape"))
+	_, err = os.Stat(filepath.Join(filepath.Dir(e.mk.backupDir.Name()), "escape"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 
 	err = e.users.InReadTx(ctx, func(ctx context.Context, _ *store.UsersReadTx) error {
 		return e.mk.BackupDatabases(ctx, "in-tx")
 	})
 	require.ErrorIs(t, err, store.ErrTxMisuse)
-	_, err = os.Stat(filepath.Join(e.mk.backupDir, "in-tx"))
+	_, err = os.Stat(filepath.Join(e.mk.backupDir.Name(), "in-tx"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 
 	// A backup directory others can reach is refused, and nothing is written into it.
-	require.NoError(t, os.Chmod(e.mk.backupDir, 0o755)) //nolint:gosec // G302: the test makes it too open on purpose
+	require.NoError(t, os.Chmod(e.mk.backupDir.Name(), 0o755)) //nolint:gosec // G302: the test makes it too open on purpose
 	require.ErrorContains(t, e.mk.BackupDatabases(ctx, "open"), "private to this user")
-	_, err = os.Stat(filepath.Join(e.mk.backupDir, "open"))
+	_, err = os.Stat(filepath.Join(e.mk.backupDir.Name(), "open"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 
 	none, err := NewMasterKeys(ctx, MasterKeysOptions{Keys: e.keys, Users: e.users})
@@ -123,7 +125,7 @@ func TestValidBackupName(t *testing.T) {
 // once the rotation is done.
 func TestBackupWaitsForRotation(t *testing.T) {
 	e := newAuthEnv(t)
-	dir := filepath.Join(e.mk.backupDir, "backup")
+	dir := filepath.Join(e.mk.backupDir.Name(), "backup")
 	e.mk.mu.Lock()
 	done := make(chan error, 1)
 	go func() { done <- e.mk.BackupDatabases(context.Background(), "backup") }()

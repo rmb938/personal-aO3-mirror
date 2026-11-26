@@ -15,6 +15,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -56,7 +57,7 @@ var seedTime = time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 func newTestControllers(tb testing.TB, log *slog.Logger, more ...func(context.Context, *store.Tx) error) *controllers.Controllers {
 	tb.Helper()
 	ctx := context.Background()
-	st, err := store.Open(ctx, tb.TempDir(), store.Options{Logger: log, Now: func() time.Time { return seedTime }})
+	st, err := store.Open(ctx, dirstest.Temp(tb), store.Options{Logger: log, Now: func() time.Time { return seedTime }})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, st.Close()) })
 	seed(tb, st)
@@ -67,7 +68,8 @@ func newTestControllers(tb testing.TB, log *slog.Logger, more ...func(context.Co
 	seedImages(tb, st, imageDir)
 	cfg := config.Default()
 	return controllers.New(controllers.Options{Store: st, Logger: log, Now: func() time.Time { return seedTime },
-		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: imageDir, Auth: newTestAuth(tb, log)})
+		Sources: cfg.Sources, Interval: cfg.Rate.Interval, ImageDir: dirstest.At(tb, imageDir, 0o750),
+		Auth: newTestAuth(tb, log)})
 }
 
 // seedImageBody is the downloaded image's bytes, a sentinel (no real image: the API serves the
@@ -88,7 +90,7 @@ const seedImageType = "image/png"
 func seedImages(tb testing.TB, st *store.Store, dir string) {
 	tb.Helper()
 	ctx := context.Background()
-	p := imagefetch.Path(dir, seedImageSHA, seedImageType)
+	p := filepath.Join(dir, imagefetch.File(seedImageSHA, seedImageType))
 	require.NoError(tb, os.MkdirAll(filepath.Dir(p), 0o750))
 	require.NoError(tb, os.WriteFile(p, seedImageBody, 0o600))
 	require.NoError(tb, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {

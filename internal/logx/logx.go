@@ -17,8 +17,11 @@ import (
 
 // Options configures New.
 type Options struct {
-	Level    string // debug|info|warn|error
-	File     string // absolute or cwd-relative path; empty disables file logging
+	Level string // debug|info|warn|error
+	// Dir is the directory File is in (the data directory, opened as a root); File is relative
+	// to it (log.file). An empty File disables file logging.
+	Dir      *os.Root
+	File     string
 	MaxBytes int64
 	MaxFiles int
 	Stderr   io.Writer // defaults to os.Stderr; nil-able for tests via io.Discard
@@ -38,7 +41,10 @@ func New(o Options) (*slog.Logger, io.Closer, error) {
 	handlers := []slog.Handler{slog.NewTextHandler(stderr, hopts)}
 	var closer io.Closer = nopCloser{}
 	if o.File != "" {
-		rf, err := OpenRotating(o.File, o.MaxBytes, o.MaxFiles)
+		if o.Dir == nil {
+			return nil, nil, errors.New("logx: a log file needs its directory")
+		}
+		rf, err := OpenRotating(o.Dir, o.File, o.MaxBytes, o.MaxFiles)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -104,21 +110,23 @@ func (f fanout) WithGroup(name string) slog.Handler {
 	return out
 }
 
-// RotatingFile is a size-based rotating log file: path, path.1 ... path.N.
+// RotatingFile is a size-based rotating log file: name, name.1 ... name.N, all in dir.
 type RotatingFile struct {
 	mu       sync.Mutex
-	path     string
+	dir      *os.Root
+	path     string // relative to dir
 	maxBytes int64
 	maxFiles int
 	f        *os.File
 	size     int64
 }
 
-func OpenRotating(path string, maxBytes int64, maxFiles int) (*RotatingFile, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+// OpenRotating opens (creating it and its directories when missing) the log file name in dir.
+func OpenRotating(dir *os.Root, name string, maxBytes int64, maxFiles int) (*RotatingFile, error) {
+	if err := dir.MkdirAll(filepath.Dir(name), 0o750); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
-	r := &RotatingFile{path: path, maxBytes: maxBytes, maxFiles: maxFiles}
+	r := &RotatingFile{dir: dir, path: name, maxBytes: maxBytes, maxFiles: maxFiles}
 	if err := r.open(); err != nil {
 		return nil, err
 	}
@@ -126,7 +134,7 @@ func OpenRotating(path string, maxBytes int64, maxFiles int) (*RotatingFile, err
 }
 
 func (r *RotatingFile) open() error {
-	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := r.dir.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
@@ -155,10 +163,10 @@ func (r *RotatingFile) Write(p []byte) (int, error) {
 func (r *RotatingFile) rotate() error {
 	r.f.Close()
 	for i := r.maxFiles - 1; i >= 1; i-- {
-		_ = os.Rename(fmt.Sprintf("%s.%d", r.path, i), fmt.Sprintf("%s.%d", r.path, i+1))
+		_ = r.dir.Rename(fmt.Sprintf("%s.%d", r.path, i), fmt.Sprintf("%s.%d", r.path, i+1))
 	}
-	_ = os.Remove(fmt.Sprintf("%s.%d", r.path, r.maxFiles+1))
-	if err := os.Rename(r.path, r.path+".1"); err != nil && !os.IsNotExist(err) {
+	_ = r.dir.Remove(fmt.Sprintf("%s.%d", r.path, r.maxFiles+1))
+	if err := r.dir.Rename(r.path, r.path+".1"); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return r.open()

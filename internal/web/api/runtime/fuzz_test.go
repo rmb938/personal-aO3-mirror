@@ -27,6 +27,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/searchquery"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
@@ -253,7 +254,7 @@ func FuzzPathParams(f *testing.F) {
 func fuzzAPI(f *testing.F, noReveal bool, logs *bytes.Buffer) *API {
 	f.Helper()
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	st, err := store.Open(f.Context(), f.TempDir(), store.Options{Logger: slog.New(slog.DiscardHandler)})
+	st, err := store.Open(f.Context(), dirstest.Temp(f), store.Options{Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(f, err)
 	f.Cleanup(func() { require.NoError(f, st.Close()) })
 	cfg := config.Default()

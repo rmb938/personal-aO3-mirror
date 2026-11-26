@@ -21,7 +21,7 @@ const fetchWorkUsage = "usage: ao3mirror fetch-work [--now] <work id | AO3 work 
 // runFetchWork queues one work at the highest priority, or fetches it right away with --now. It
 // is a direct command (docs/part2-api.md): it opens the store itself, and only --now, which
 // needs the daemon lock, builds an AO3 client.
-func runFetchWork(ctx context.Context, cfg config.Config, log *slog.Logger, args []string, out, errOut io.Writer) int {
+func runFetchWork(ctx context.Context, cfg config.Config, data *dataDirs, log *slog.Logger, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("fetch-work", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	now := fs.Bool("now", false, "fetch immediately in this process (only when no daemon is running)")
@@ -40,13 +40,13 @@ func runFetchWork(ctx context.Context, cfg config.Config, log *slog.Logger, args
 		id, _ = strconv.ParseInt(src.Target, 10, 64)
 	}
 
-	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
+	st, err := store.Open(ctx, data.root, store.Options{Logger: log})
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work: %v\n", err)
 		return 1
 	}
 	defer st.Close()
-	jobID, created, err := newControllers(cfg, log, st, nil).EnqueueWorkFetch(ctx, id, 0, jobs.ClassOnDemand)
+	jobID, created, err := newControllers(cfg, data, log, st, nil).EnqueueWorkFetch(ctx, id, 0, jobs.ClassOnDemand)
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work: %v\n", err)
 		return 1
@@ -60,7 +60,7 @@ func runFetchWork(ctx context.Context, cfg config.Config, log *slog.Logger, args
 		return 0
 	}
 
-	unlock, err := lockDaemon(cfg.DataDir)
+	unlock, err := lockDaemon(data.root)
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work --now: %v; job %d stays queued for the daemon\n", err, jobID)
 		return 1
@@ -75,7 +75,7 @@ func runFetchWork(ctx context.Context, cfg config.Config, log *slog.Logger, args
 		fmt.Fprintf(errOut, "fetch-work --now: %v\n", err)
 		return 1
 	}
-	s := scheduler.New(scheduler.Options{Store: st, Controllers: newControllers(cfg, log, st, client), Pacer: client, Logger: log})
+	s := scheduler.New(scheduler.Options{Store: st, Controllers: newControllers(cfg, data, log, st, client), Pacer: client, Logger: log})
 	j, err := s.RunJob(ctx, jobID)
 	if err != nil {
 		fmt.Fprintf(errOut, "fetch-work --now: %v\n", err)

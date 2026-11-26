@@ -41,7 +41,7 @@ func TestVacuumInto(t *testing.T) {
 	assert.False(t, bytes.Contains(raw, gone), "a deleted key is not carried into the copy")
 
 	// The copy opens as keys.db and holds the kept key.
-	c, err := OpenKeys(ctx, out, Options{})
+	c, err := OpenKeys(ctx, rootAt(t, out), Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	got, err := c.AutoCommitForTestOnly().MasterKeys(ctx)
@@ -64,7 +64,7 @@ func TestUsersVacuumInto(t *testing.T) {
 	path := filepath.Join(out, UsersFile)
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	require.NoError(t, u.VacuumInto(ctx, path))
-	c, err := OpenUsers(ctx, out, Options{})
+	c, err := OpenUsers(ctx, rootAt(t, out), Options{})
 	require.NoError(t, err)
 	require.NoError(t, c.Close())
 }
