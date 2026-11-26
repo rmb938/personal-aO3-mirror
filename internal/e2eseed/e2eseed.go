@@ -48,11 +48,15 @@ type Account struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
-// Seeded is what Seed wrote: the accounts (by Accounts' keys) and the IDs tests can open.
+// Seeded is what Seed wrote: the accounts (by Accounts' keys), the invite and reset links (by
+// Links' keys) and the IDs tests can open.
 type Seeded struct {
 	Accounts map[string]Account `json:"accounts"`
-	Works    []int64            `json:"works"`
-	Series   []int64            `json:"series"`
+	// Links are paths with the token in the fragment ("/signup#token=…",
+	// "/reset#token=…&scope=…"), as an invite link has them after api.public_url.
+	Links  map[string]string `json:"links"`
+	Works  []int64           `json:"works"`
+	Series []int64           `json:"series"`
 }
 
 // Accounts are the seeded accounts' keys in Seeded.Accounts, each for one group of tests, so a
@@ -64,7 +68,31 @@ var Accounts = []string{
 	"password",    // changing the password
 	"recovery",    // replacing the recovery codes
 	"screenshots", // the UI screenshots for pull requests (web/tests/screenshots.spec.ts)
+	// Each reset test resets its own account (web/tests/reset.spec.ts), through the reset link
+	// of the same key (resets).
+	"reset_both",
+	"reset_password",
+	"reset_totp",
+	"reset_shots", // the reset page's screenshots
 }
+
+// signups are the signup invites' keys in Seeded.Links, one per test that signs up.
+var signups = []string{
+	"signup",       // web/tests/signup.spec.ts
+	"signup_shots", // the signup page's screenshots
+}
+
+// resets are the reset links' keys in Seeded.Links and their scopes. Each resets the account
+// of the same key.
+var resets = map[string]model.ResetScope{
+	"reset_both":     model.ResetBoth,
+	"reset_password": model.ResetPassword,
+	"reset_totp":     model.ResetTOTP,
+	"reset_shots":    model.ResetBoth,
+}
+
+// linkTTL keeps the seeded links usable for longer than any test run.
+const linkTTL = 24 * time.Hour
 
 // The seeded IDs. Tests read them from Seeded rather than repeating them.
 const (
@@ -110,12 +138,13 @@ func Seed(ctx context.Context, dirs Dirs, log *slog.Logger) (Seeded, error) {
 	if err := seedContent(ctx, dirs, log, now); err != nil {
 		return Seeded{}, fmt.Errorf("seed content: %w", err)
 	}
-	accs, err := seedAccounts(ctx, dirs, log, now)
+	accs, links, err := seedAccounts(ctx, dirs, log, now)
 	if err != nil {
 		return Seeded{}, fmt.Errorf("seed accounts: %w", err)
 	}
 	return Seeded{
 		Accounts: accs,
+		Links:    links,
 		Works:    []int64{WorkChaptered, WorkOneShot, WorkAnonymous, WorkHostile},
 		Series:   []int64{SeriesPartial},
 	}, nil
@@ -251,42 +280,80 @@ func fixturePNG() ([]byte, error) {
 
 // seedAccounts creates the test users (Accounts), each with its own TOTP secret and recovery
 // codes, the way serve will read them: keys.db gets its first master key here, and serve
-// reuses it.
-func seedAccounts(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time) (accs map[string]Account, err error) {
+// reuses it. Then it creates the invite and reset links (signups, resets).
+func seedAccounts(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time) (
+	accs map[string]Account, links map[string]string, err error) {
 	dir, err := rootdirs.PrivateSub(dirs.Data, dirs.Accounts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
 	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { err = errors.Join(err, keys.Close()) }()
 	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { err = errors.Join(err, users.Close()) }()
 	mk, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users, Logger: log,
 		Now: func() time.Time { return now }})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	hasher, err := auth.NewHasher(mk.Keyring(), auth.HasherOptions{Params: cheapArgon2})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	accs = make(map[string]Account, len(Accounts))
+	ids := make(map[string]int64, len(Accounts))
 	for i, key := range Accounts {
 		// A fresh users.db numbers its users from 1, in creation order.
-		acc, err := seedAccount(ctx, users, mk.Keyring(), hasher, int64(i)+1, Username(key), now)
+		ids[key] = int64(i) + 1
+		acc, err := seedAccount(ctx, users, mk.Keyring(), hasher, ids[key], Username(key), now)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", key, err)
+			return nil, nil, fmt.Errorf("%s: %w", key, err)
 		}
 		accs[key] = acc
 	}
-	return accs, nil
+	links, err = seedLinks(ctx, users, ids, now)
+	return accs, links, err
+}
+
+// seedLinks creates the signup invites and reset links, as paths (Seeded.Links). The link
+// format is controllers.Auth.CreateInvite's and CreateReset's.
+func seedLinks(ctx context.Context, users *store.Users, ids map[string]int64, now time.Time) (map[string]string, error) {
+	links := make(map[string]string, len(signups)+len(resets))
+	err := users.InTx(ctx, func(ctx context.Context, tx *store.UsersTx) error {
+		add := func(key string, inv model.Invite, path string) error {
+			inv.CreatedAt, inv.ExpiresAt = now, now.Add(linkTTL)
+			token, sum := auth.NewToken(auth.InviteToken)
+			if _, err := tx.CreateInvite(ctx, inv, sum); err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+			links[key] = strings.Replace(path, "{token}", token, 1)
+			return nil
+		}
+		for _, key := range signups {
+			if err := add(key, model.Invite{Kind: model.InviteSignup}, "/signup#token={token}"); err != nil {
+				return err
+			}
+		}
+		for key, scope := range resets {
+			id, ok := ids[key]
+			if !ok {
+				return fmt.Errorf("reset %s: no account with that key", key)
+			}
+			inv := model.Invite{Kind: model.InviteReset, TargetUserID: id, Scope: scope}
+			if err := add(key, inv, "/reset#token={token}&scope="+string(scope)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return links, err
 }
 
 // seedAccount creates one test user, which must get userID.

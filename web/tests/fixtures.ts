@@ -24,13 +24,28 @@ export interface Account {
 // The seeded accounts (internal/e2eseed.Accounts), one per group of tests, so a test that
 // changes an account (password, recovery codes, sessions, backoff, last TOTP step) never
 // disturbs another group.
-export type AccountKey = 'reader' | 'sessions' | 'password' | 'recovery' | 'screenshots';
+// Each reset test resets the account of its link's key (LinkKey).
+export type AccountKey =
+	| 'reader'
+	| 'sessions'
+	| 'password'
+	| 'recovery'
+	| 'screenshots'
+	| 'reset_both'
+	| 'reset_password'
+	| 'reset_totp'
+	| 'reset_shots';
+
+// The seeded invite and reset links (internal/e2eseed), one per test that uses one up.
+export type LinkKey = 'signup' | 'signup_shots' | 'reset_both' | 'reset_password' | 'reset_totp' | 'reset_shots';
 
 // What `ao3mirror dev ui-server` prints once listening (cmd/ao3mirror/uiserver.go). All of it
 // is synthetic: the accounts exist only in that run's temporary data dir.
 export interface Server {
 	url: string;
 	accounts: Record<AccountKey, Account>;
+	/** Paths with the token in the fragment: "/signup#token=…", "/reset#token=…&scope=…". */
+	links: Record<LinkKey, string>;
 	works: number[];
 	series: number[];
 }

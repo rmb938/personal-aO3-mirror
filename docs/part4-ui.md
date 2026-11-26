@@ -175,8 +175,11 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
   (`e2eseed.Accounts`, stage 6a) are one per group of tests, since a test that changes an
   account (password, recovery codes, sessions, backoff, last TOTP step) would disturb any other
   test using it: `e2e_reader` (login), `e2e_sessions`, `e2e_password` and `e2e_recovery` (the
-  account page), and `e2e_screenshots` (the screenshots below). Each has its own random TOTP secret and recovery codes, printed in the JSON
-  line under `accounts`, keyed by the part after `e2e_`.
+  account page), `e2e_screenshots` (the screenshots below), and `e2e_reset_both`,
+  `e2e_reset_password`, `e2e_reset_totp` and `e2e_reset_shots` (stage 6b, one per reset link). Each has its own random TOTP secret and recovery codes, printed in the JSON
+  line under `accounts`, keyed by the part after `e2e_`. Under `links` are the invite and reset
+  links as paths (stage 6b): `signup` and `signup_shots`, and a reset link per `reset_*` key
+  that resets the account of the same key.
 - **Why not in-memory storage** (asked 2026-11-25): SQLite files opened by path in WAL mode,
   the image files and the admin unix socket all need paths, and an in-memory variant would be
   code production never runs. The temp dir is private (0700) and deleted at the end.
@@ -362,9 +365,25 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     password change (mismatch, policy, wrong current password and its backoff, other devices
     signed out, the new password signs in), new recovery codes (copy, download, no console
     messages, an old code refused and a new one accepted).
-  - [ ] **6b. Signup and reset pages.** Invite signup from the fragment link (password policy
+  - [x] **6b. Signup and reset pages.** Invite signup from the fragment link (password policy
     messages, TOTP QR + text secret, confirm code, recovery codes shown once with
     copy/download), reset from link. The seed adds invite and reset links to the JSON line.
+    As built: a reset link didn't say whether it replaces the password, so (asked 2026-11-26)
+    admin reset links now end `&scope=password|totp|both` (`controllers.Auth.createInvite`, the
+    `InviteURL` pattern and the spec); the server still checks the password against the
+    invite's own scope, so the fragment is only a hint. `/signup` and `/reset` sit outside the
+    `(app)` group. `#lib/auth/enroll.ts` reads the fragment (a malformed token or scope shows
+    "incomplete link" and sends nothing), and `#lib/auth/TotpSetup.svelte` shows the new
+    secret: a QR code (uqr 0.1.3, zero dependencies, encodes to a module matrix that
+    `#lib/auth/qr.ts` draws as one SVG path, so no markup string reaches the page; dark on
+    light in both themes), the otpauth URI as a link for a phone, and the key in groups of
+    four with Copy. A pending signup or reset has no attempt limit, only its 15-minute expiry
+    (then the page starts over) and `signup_per_hour`, which `ui-server` raises. The reset
+    page takes the username for the recovery-codes download from the otpauth URI's label. New
+    messages: a taken username (`already-exists`) and the username rule (422 at
+    `/username`). Playwright: `tests/signup.spec.ts` (refusals, setup, wrong and right code,
+    sign-in with the new account, invite used up), `tests/reset.spec.ts` (one test per scope,
+    incomplete link, link used up), and screenshots of each step.
 - [ ] **7. Sanitizers.** HTML sanitizer (otwarchive allowlist, image references rewritten to
   our route, external images dropped) and skin sanitizer (parse, scope, drop). Pure TS with
   heavy unit tests, including known XSS and CSS-injection payloads.
