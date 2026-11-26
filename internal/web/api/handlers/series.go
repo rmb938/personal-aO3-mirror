@@ -34,7 +34,7 @@ func (a *Handlers) ListSeriesWorks(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	items, total, err := a.ctl.ListSeriesWorks(r.Context(), id, int(p.Offset()), int(p.PerPage))
+	items, total, err := a.ctl.ListSeriesWorks(r.Context(), id, p.Offset(), p.PerPage)
 	if err != nil {
 		return nil, err
 	}

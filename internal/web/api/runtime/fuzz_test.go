@@ -155,7 +155,7 @@ func FuzzParseParams(f *testing.F) {
 			want = append(want, string(dto.ParamPage))
 		}
 		if perOK && pageOK {
-			require.Equal(t, Page{Page: page, PerPage: per}, pg)
+			require.Equal(t, []int64{page, per}, []int64{int64(pg.Page), int64(pg.PerPage)})
 		}
 
 		sort := p.Enum(string(dto.ParamSort), dto.WorkSort(""), DetailWorkSort)
@@ -168,8 +168,8 @@ func FuzzParseParams(f *testing.F) {
 
 		if len(want) == 0 {
 			require.NoError(t, p.Err())
-			require.GreaterOrEqual(t, pg.Offset(), int64(0))
-			require.LessOrEqual(t, pg.Offset(), int64(MaxOffset))
+			require.GreaterOrEqual(t, pg.Offset(), 0)
+			require.LessOrEqual(t, pg.Offset(), MaxOffset)
 			return
 		}
 		e := problemOf(t, p.Err())
@@ -194,6 +194,10 @@ func FuzzPathParams(f *testing.F) {
 		wv, wok := oracleInt(id, hi)
 		require.Equal(t, wok, ok)
 		require.Equal(t, wv, v)
+		sv, sok := ParseSmallInt(id, MaxPosition)
+		swv, swok := oracleInt(id, MaxPosition)
+		require.Equal(t, swok, sok)
+		require.Equal(t, swv, int64(sv))
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", id)

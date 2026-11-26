@@ -6,7 +6,7 @@ import (
 )
 
 // TagList maps one page of a tag listing.
-func TagList(items []store.TagRow, total int, page, perPage int64) dto.List[dto.TagListItem] {
+func TagList(items []store.TagRow, total, page, perPage int) dto.List[dto.TagListItem] {
 	return list(items, tagListItem, total, page, perPage)
 }
 

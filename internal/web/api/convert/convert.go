@@ -15,8 +15,8 @@ import (
 )
 
 // list converts one page of items with conv.
-func list[M, D any](items []M, conv func(M) D, total int, page, perPage int64) dto.List[D] {
-	return dto.List[D]{Items: convSlice(items, conv), Page: page, PerPage: perPage, Total: total}
+func list[M, D any](items []M, conv func(M) D, total, page, perPage int) dto.List[D] {
+	return dto.List[D]{Items: convSlice(items, conv), Page: int64(page), PerPage: int64(perPage), Total: total}
 }
 
 // convSlice converts every item with conv; an empty slice gives nil. Converters never need to

@@ -26,7 +26,7 @@ func (a *Handlers) ListJobs(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	f.Offset, f.Limit = p.Offset(), p.PerPage
 	if f.State == string(dto.JobQueued) {
 		f.Order = model.JobsOldest
 	}

@@ -116,6 +116,20 @@ func (p *Params) Int(name string, def, hi int64, d problem.Detail) int64 {
 	return v
 }
 
+// count returns parameter name as a small integer in [1, hi], or def when it is absent. d
+// describes the accepted range. Unlike Int it gives an int, for page numbers and sizes.
+func (p *Params) count(name string, def, hi int, d problem.Detail) int {
+	s, ok := p.vals[name]
+	if !ok {
+		return def
+	}
+	v, ok := ParseSmallInt(s, hi)
+	if !ok {
+		p.Param(name, d)
+	}
+	return v
+}
+
 // enum returns parameter name when it is one of e's values, or "" when it is absent. d lists
 // the values (problem.OneOf(e)).
 func (p *Params) Enum(name string, e interface{ EnumValues() []string }, d problem.Detail) string {
@@ -132,13 +146,17 @@ func (p *Params) Enum(name string, e interface{ EnumValues() []string }, d probl
 
 // PathID returns the route's ID path parameter name (1..MaxID).
 func (p *Params) PathID(name dto.ParamName) int64 {
-	return p.PathInt(name, MaxID, DetailID)
+	v, ok := ParseInt(chi.URLParam(p.r, string(name)), MaxID)
+	if !ok {
+		p.Param(string(name), DetailID)
+	}
+	return v
 }
 
-// PathInt returns the route's path parameter name as an integer in [1, hi]. d describes the
-// accepted range.
-func (p *Params) PathInt(name dto.ParamName, hi int64, d problem.Detail) int64 {
-	v, ok := ParseInt(chi.URLParam(p.r, string(name)), hi)
+// PathInt returns the route's path parameter name as a small integer in [1, hi]. d describes
+// the accepted range.
+func (p *Params) PathInt(name dto.ParamName, hi int, d problem.Detail) int {
+	v, ok := ParseSmallInt(chi.URLParam(p.r, string(name)), hi)
 	if !ok {
 		p.Param(string(name), d)
 	}
@@ -200,14 +218,27 @@ func ParseInt(s string, hi int64) (int64, bool) {
 	return v, true
 }
 
+// ParseSmallInt is ParseInt for values that fit an int (page numbers, sizes, positions): it
+// parses s with strconv.Atoi, so the result is an int with no narrowing conversion.
+func ParseSmallInt(s string, hi int) (int, bool) {
+	if s == "" || s[0] == '+' {
+		return 0, false
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 1 || v > hi {
+		return 0, false
+	}
+	return v, true
+}
+
 // Page is a validated page request.
 type Page struct {
-	Page    int64
-	PerPage int64
+	Page    int
+	PerPage int
 }
 
 // Offset is the row offset of the page's first item.
-func (p Page) Offset() int64 { return (p.Page - 1) * p.PerPage }
+func (p Page) Offset() int { return (p.Page - 1) * p.PerPage }
 
 // Values returns a copy of the param values read so far (the fuzz oracle compares them).
 func (p *Params) Values() map[string]string {
@@ -218,9 +249,9 @@ func (p *Params) Values() map[string]string {
 // (page-1)*per_page <= MaxOffset without overflowing (when per_page itself is valid).
 func (p *Params) Page() Page {
 	n := p.Len()
-	per := p.Int(string(dto.ParamPerPage), DefaultPerPage, MaxPerPage, DetailPerPage)
+	per := p.count(string(dto.ParamPerPage), DefaultPerPage, MaxPerPage, DetailPerPage)
 	m := p.Len()
-	pg := p.Int(string(dto.ParamPage), 1, MaxOffset+1, DetailPage)
+	pg := p.count(string(dto.ParamPage), 1, MaxOffset+1, DetailPage)
 	if m == n && p.Len() == m && pg-1 > MaxOffset/per { // both valid: check the cap
 		p.Param(string(dto.ParamPage), DetailPage)
 	}
