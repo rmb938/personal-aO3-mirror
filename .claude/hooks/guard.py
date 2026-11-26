@@ -9,7 +9,8 @@ Allowed exceptions inside data/: data/logs/*.log* and data/debug/*.skel.html
 (both are designed to be content-free).
 
 Part 2 API (docs/part2-api.md): blocks sending the reveal param from Bash, WebFetch or MCP
-tools, writing its literal outside docs, and starting `ao3mirror serve` without --no-reveal.
+tools, writing its literal outside docs, and starting `ao3mirror serve` without --no-reveal
+(or through `make serve`, the user's shortcut for a revealing serve).
 
 Part 4 UI (docs/part4-ui.md): blocks starting `ao3mirror dev ui-server` (a revealing server over
 synthetic data); only Playwright starts it, under `make ui-e2e`.
@@ -89,12 +90,25 @@ def _shell_tokens(cmd: str):
     return list(lex)
 
 
-def _runs_ao3mirror(words) -> bool:
+def _command_start(words) -> int:
+    """The index of the word a simple command runs, past prefixes like env, timeout, fnm exec."""
     i = 0
-    while i < len(words) and (words[i] in PREFIX_CMDS or ASSIGN.match(words[i])):
-        i += 1
-    if i < len(words) and words[i] == "timeout":
-        i += 2  # timeout DURATION cmd...
+    while True:
+        while i < len(words) and (words[i] in PREFIX_CMDS or ASSIGN.match(words[i])):
+            i += 1
+        if i < len(words) and words[i] == "timeout":
+            i += 2  # timeout DURATION cmd...
+            continue
+        if words[i:i + 2] == ["fnm", "exec"]:
+            i += 2  # fnm exec [--using X | --using=X ...] cmd...
+            while i < len(words) and words[i].startswith("-"):
+                i += 2 if words[i] == "--using" else 1
+            continue
+        return i
+
+
+def _runs_ao3mirror(words) -> bool:
+    i = _command_start(words)
     if i >= len(words):
         return False
     if AO3MIRROR_TOKEN.match(words[i]):
@@ -116,29 +130,54 @@ def _ui_server(words) -> bool:
     return any(a == "dev" and b == "ui-server" for a, b in zip(words, words[1:]))
 
 
-def runs_ao3mirror_with(cmd: str, pred, depth: int = 0) -> bool:
-    """Whether any simple command in cmd runs ao3mirror with words matching pred."""
+# `make serve` runs a revealing `ao3mirror serve` over the real data: the user's shortcut
+# (Makefile, CLAUDE.md). The guard sees only `make`, so it blocks the target itself, with any
+# SERVE_FLAGS: Claude runs `ao3mirror serve --no-reveal` directly instead.
+MAKE_TOKEN = re.compile(r"^(\S*/)?g?make$")
+
+
+def _runs_make(words) -> bool:
+    i = _command_start(words)
+    return i < len(words) and bool(MAKE_TOKEN.match(words[i]))
+
+
+def _make_serve(words) -> bool:
+    return "serve" in words[_command_start(words) + 1:]
+
+
+def runs_command_with(cmd: str, runs, token, pred, depth: int = 0) -> bool:
+    """Whether any simple command in cmd is one `runs` accepts, with words matching pred.
+    `token` matches the program's name, for the fallback scan of an unparsable command."""
     try:
         toks = _shell_tokens(cmd)
     except ValueError:
         # Unbalanced quotes: fall back to a plain scan, failing closed.
         toks = cmd.split()
-        return any(AO3MIRROR_TOKEN.match(t) for t in toks) and pred(toks)
+        return any(token.match(t) for t in toks) and pred(toks)
     words = []
     for t in toks + [";"]:
         if t and all(c in CONTROL for c in t):
-            if words and _runs_ao3mirror(words) and pred(words):
+            if words and runs(words) and pred(words):
                 return True
             words = []
             continue
-        if depth < 3 and (" " in t or "\n" in t) and runs_ao3mirror_with(t, pred, depth + 1):
+        if depth < 3 and (" " in t or "\n" in t) and runs_command_with(t, runs, token, pred, depth + 1):
             return True
         words.append(t)
     return False
 
 
+def runs_ao3mirror_with(cmd: str, pred) -> bool:
+    """Whether any simple command in cmd runs ao3mirror with words matching pred."""
+    return runs_command_with(cmd, _runs_ao3mirror, AO3MIRROR_TOKEN, pred)
+
+
 def serve_without_no_reveal(cmd: str) -> bool:
     return runs_ao3mirror_with(cmd, _serve_without_no_reveal)
+
+
+def runs_make_serve(cmd: str) -> bool:
+    return runs_command_with(cmd, _runs_make, MAKE_TOKEN, _make_serve)
 
 
 def starts_ui_server(cmd: str) -> bool:
@@ -253,6 +292,8 @@ def main() -> None:
             block("the API reveal param is user-only; Claude never sends it")
         if serve_without_no_reveal(cmd):
             block("Claude may only start `ao3mirror serve` with --no-reveal")
+        if runs_make_serve(cmd):
+            block("`make serve` runs a revealing server; user-only (use `ao3mirror serve --no-reveal`)")
         if starts_ui_server(cmd):
             block("`ao3mirror dev ui-server` reveals; only Playwright starts it (make ui-e2e)")
         if touches_protected(cmd):

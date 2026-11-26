@@ -25,13 +25,17 @@ PLAYWRIGHT_INSTALL_FLAGS ?=
 # cores (the default is one fuzz worker per core).
 FUZZTIME ?= 30s
 FUZZFLAGS ?=
+# `make serve`: the config it runs with, and extra flags for `serve` (e.g. SERVE_FLAGS=--no-reveal).
+CONFIG   ?= ao3mirror.local.yaml
+SERVE_FLAGS ?=
 
-.PHONY: all build ui ui-check ui-e2e web-deps generate fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench fuzz clean help
+.PHONY: all build serve ui ui-check ui-e2e web-deps generate fmt fmt-check vet tidy-check lint vulncheck deadcode test test-short guard-test check bench fuzz clean help
 
 all: check build
 
 help:
 	@echo "make build       build the web UI, then ./$(BIN) with the UI embedded"
+	@echo "make serve       build, then run ./$(BIN) serve with CONFIG (default $(CONFIG)) and SERVE_FLAGS"
 	@echo "make ui          build the web UI into $(UI_DIST)"
 	@echo "make ui-check    web UI checks: svelte-check, eslint, vitest, build, npm audit"
 	@echo "make ui-e2e      web UI Playwright tests against a seeded synthetic server (dev ui-server)"
@@ -49,6 +53,11 @@ help:
 
 build: ui
 	$(GO) build -o $(BIN) ./cmd/ao3mirror
+
+# Runs the API and the web UI over the real data dir, revealing (unless SERVE_FLAGS has
+# --no-reveal), so only the user runs it; Claude never does (CLAUDE.md).
+serve: build
+	./$(BIN) --config $(CONFIG) serve $(SERVE_FLAGS)
 
 $(WEB_DEPS): $(WEB)/package.json $(WEB)/package-lock.json
 	$(NPM) --prefix $(WEB) ci
