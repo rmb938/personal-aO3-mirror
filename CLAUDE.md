@@ -57,7 +57,8 @@ Claude must NOT:
   files outside `docs/`, `CLAUDE.md` and `.claude/hooks/`. Go code and tests use the constant
   `api.RevealParam`, never the literal.
 - Start `ao3mirror serve` without `--no-reveal` (the guard enforces this). That flag makes the
-  server refuse reveal, so any server Claude runs is hashed-only.
+  server refuse reveal, so any server Claude runs is hashed-only. Never run `make serve`: it is
+  the user's shortcut for a revealing `serve` over the real data.
 - Probe the real data with guessed free text (search terms, tag/creator names). Hashed mode
   rejects free text anyway; test search with synthetic fixtures in Go tests.
 - Weaken the response enforcer (`internal/web/api/redact`), bypass it, or add a route outside it.
