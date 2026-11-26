@@ -140,5 +140,7 @@ func uiServerConfig(dir, url string) config.Config {
 	cfg.API.PublicURL = url
 	cfg.API.Rate.GeneralPerMin = 100_000
 	cfg.API.Rate.UIPerMin = 100_000
+	cfg.API.Rate.LoginPerMin = 100_000
+	cfg.API.Rate.RefreshPerMin = 100_000
 	return cfg
 }
