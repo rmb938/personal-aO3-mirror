@@ -31,6 +31,15 @@ export const passwordPolicy =
 /** Shown when the server refuses a new password (a 422 at /password). */
 export const passwordRefused = `Choose a different password. ${passwordPolicy}`;
 
+/** The username rule (the spec's SignupRequest.username), to show beside a new username. */
+export const usernameRule = 'Use 3 to 32 letters, digits, _ or -. Letters are stored in lower case.';
+
+/** Shown when the server refuses a new username's form (a 422 at /username). */
+export const usernameRefused = `Choose a different username. ${usernameRule}`;
+
+/** Shown for already-exists at signup: someone has the username. */
+export const usernameTaken = 'That username is taken. Choose another one.';
+
 /** Per-step texts for the problems whose meaning depends on the step. */
 export interface StepTexts {
 	/** invalid-credentials: a wrong password or code at a sign-in step. */
@@ -66,11 +75,19 @@ export function describeFailure(res: Failure, texts: string | StepTexts): Messag
 			return {
 				text: forbidden ?? 'The server refused this as a cross-site request. Reload the page and try again.'
 			};
-		case 'validation-error':
-			if (invalidPointers(res.data).includes('/password')) {
+		case 'already-exists':
+			// Only signup answers with it among the auth steps.
+			return { text: usernameTaken };
+		case 'validation-error': {
+			const pointers = invalidPointers(res.data);
+			if (pointers.includes('/password')) {
 				return { text: passwordRefused };
 			}
+			if (pointers.includes('/username')) {
+				return { text: usernameRefused };
+			}
 			return { text: 'Check what you entered: it is not in the expected form.' };
+		}
 		default:
 			return { text: `Something went wrong (HTTP ${String(res.status)}). Try again.` };
 	}

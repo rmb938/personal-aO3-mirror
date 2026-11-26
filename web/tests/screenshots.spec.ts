@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { Locator, Page } from '@playwright/test';
 
+import { expectTotpSetup, shownRecoveryCodes } from './enroll';
 import { expect, test } from './fixtures';
 import { enterPassword, enterSecondFactor, expectSignedIn } from './signin';
 import { totp } from './totp';
@@ -16,7 +17,8 @@ import { totp } from './totp';
 // <page>-<state>-<viewport>-<light|dark>.png; the directory is emptied first, so it never
 // holds shots of states that are gone.
 //
-// They use the seeded `screenshots` account, which nothing else touches, and run in order.
+// They use the seeded `screenshots` account and the `signup_shots` and `reset_shots` links,
+// which nothing else touches, and run in order.
 
 const dir = fileURLToPath(new URL('../screenshots/', import.meta.url));
 
@@ -91,4 +93,36 @@ test('login and account pages', async ({ page, server }) => {
 	await enterPassword(page, account, 'not-the-password');
 	await expect(page.getByRole('alert')).toBeVisible();
 	await shoot(page, 'login-wrong-password');
+});
+
+test('signup and reset pages', async ({ page, server }) => {
+	// Signup: the form, the TOTP setup, the recovery codes.
+	await page.goto(server.links.signup_shots);
+	await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+	await shoot(page, 'signup-account');
+	await page.getByLabel('Username').fill('e2e_shots_signup');
+	await page.getByLabel('Password', { exact: true }).fill('fixture-shots-password-amet');
+	await page.getByLabel('Password again').fill('fixture-shots-password-amet');
+	await page.getByRole('button', { name: 'Continue' }).click();
+	const secret = await expectTotpSetup(page, 'e2e_shots_signup');
+	await shoot(page, 'signup-totp');
+	await page.getByLabel('Code from your authenticator app').fill(totp(secret));
+	await page.getByRole('button', { name: 'Create account' }).click();
+	await shownRecoveryCodes(page);
+	await shoot(page, 'signup-recovery-codes');
+
+	// Reset (a link that replaces both): the form, the TOTP setup, the recovery codes.
+	const account = server.accounts.reset_shots;
+	await page.goto(server.links.reset_shots);
+	await expect(page.getByRole('heading', { name: 'Reset your account' })).toBeVisible();
+	await shoot(page, 'reset-both');
+	await page.getByLabel('New password', { exact: true }).fill('fixture-shots-password-amet');
+	await page.getByLabel('New password again').fill('fixture-shots-password-amet');
+	await page.getByRole('button', { name: 'Continue' }).click();
+	const resetSecret = await expectTotpSetup(page, account.username);
+	await shoot(page, 'reset-totp');
+	await page.getByLabel('Code from your authenticator app').fill(totp(resetSecret));
+	await page.getByRole('button', { name: 'Reset account' }).click();
+	await shownRecoveryCodes(page);
+	await shoot(page, 'reset-recovery-codes');
 });

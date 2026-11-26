@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
 )
 
 func testDirs(t *testing.T) (Dirs, string) {
@@ -35,6 +38,16 @@ func TestSeed(t *testing.T) {
 	}
 	assert.Len(t, secrets, len(Accounts), "each account has its own TOTP secret")
 	assert.Len(t, seeded.Works, 4)
+
+	// The links have the API's invite link format, after api.public_url.
+	link := regexp.MustCompile(`\A` + dto.InviteURL("").VerbatimPattern() + `\z`)
+	assert.Len(t, seeded.Links, len(signups)+len(resets))
+	for key, path := range seeded.Links {
+		assert.True(t, link.MatchString("http://127.0.0.1:8080"+path), "%s: %s", key, path)
+	}
+	for key, scope := range resets {
+		assert.True(t, strings.HasSuffix(seeded.Links[key], "&scope="+string(scope)), key)
+	}
 
 	st, err := store.Open(ctx, dirs.Data, store.Options{})
 	require.NoError(t, err)

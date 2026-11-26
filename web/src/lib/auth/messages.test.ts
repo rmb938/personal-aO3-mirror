@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeFailure, invalidPointers, passwordRefused, retryAfterSeconds, revealDisabled } from './messages';
+import {
+	describeFailure,
+	invalidPointers,
+	passwordRefused,
+	retryAfterSeconds,
+	revealDisabled,
+	usernameRefused,
+	usernameTaken
+} from './messages';
 
 const base = 'https://github.com/rmb938/personal-aO3-mirror/blob/main/docs/api/problems.md#';
 
@@ -61,6 +69,16 @@ describe('describeFailure', () => {
 
 		(res.data as Record<string, unknown>)['errors'] = [{ detail: 'DETAIL-SENTINEL', pointer: '/code' }];
 		expect(describeFailure(res, '').text).toBe('Check what you entered: it is not in the expected form.');
+	});
+
+	it('explains the username rule when the new username is refused', () => {
+		const res = failure(422, 'validation-error');
+		(res.data as Record<string, unknown>)['errors'] = [{ detail: 'DETAIL-SENTINEL', pointer: '/username' }];
+		expect(describeFailure(res, '').text).toBe(usernameRefused);
+	});
+
+	it('says a taken username is taken', () => {
+		expect(describeFailure(failure(409, 'already-exists'), '').text).toBe(usernameTaken);
 	});
 
 	it('falls back on the status when the body is no problem', () => {
