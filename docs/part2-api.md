@@ -1024,7 +1024,8 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
       filter on the tag matches (`tagFilterWorks`), only when a Fandom tag's type, merger, meta
       tags or merged synonyms changed. Most tag info refetches change nothing and cost nothing.
     - Meta migration `0006_work_crossover.sql` adds the column; its backfill is a Go step
-      (`migrationSteps` in `store.go`, run in the migration's transaction).
+      (the `step` of its entry in `internal/store/migrations.go`, run in the migration's
+      transaction).
     - `BenchmarkCrossover` at 200k works: one work ~0.05 ms, a rare tag ~0.5 ms, a meta tag
       over ~10% of works ~55 ms, a fandom on a third of works ~150 ms, the full backfill
       ~0.3 s.
