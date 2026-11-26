@@ -72,6 +72,9 @@ type Session struct {
 	// ExpiresAt is when the session ends unless it is refreshed (never past the login plus
 	// auth.max_session_age).
 	ExpiresAt time.Time `json:"expires_at"`
+	// Current marks the session the request was signed in with (never on the admin socket,
+	// which has no session).
+	Current bool `json:"current"`
 }
 
 // Account is the signed-in user's own account (GET /api/v1/account): a User without the

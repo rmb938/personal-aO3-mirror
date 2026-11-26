@@ -1,4 +1,4 @@
-// Package e2eseed fills a new, empty data dir with synthetic works and a test account, for the
+// Package e2eseed fills a new, empty data dir with synthetic works and test accounts, for the
 // web UI's Playwright tests (`ao3mirror dev ui-server`, docs/part4-ui.md stage 4).
 //
 // Every string here is lorem ipsum or an obvious fixture name. Never put real AO3 content here
@@ -39,7 +39,7 @@ type Dirs struct {
 	Accounts string   // users.db and keys.db (the admin socket's directory), relative to Data
 }
 
-// Account is the seeded user's credentials. They are fixtures, not secrets: the server they
+// Account is a seeded user's credentials. They are fixtures, not secrets: the server they
 // sign in to holds only synthetic data and lives as long as one test run.
 type Account struct {
 	Username      string   `json:"username"`
@@ -48,11 +48,21 @@ type Account struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
-// Seeded is what Seed wrote: the account and the IDs tests can open.
+// Seeded is what Seed wrote: the accounts (by Accounts' keys) and the IDs tests can open.
 type Seeded struct {
-	Account Account `json:"account"`
-	Works   []int64 `json:"works"`
-	Series  []int64 `json:"series"`
+	Accounts map[string]Account `json:"accounts"`
+	Works    []int64            `json:"works"`
+	Series   []int64            `json:"series"`
+}
+
+// Accounts are the seeded accounts' keys in Seeded.Accounts, each for one group of tests, so a
+// test that changes an account (its password, recovery codes, sessions, login backoff, last
+// TOTP step) never disturbs another group. Each username is "e2e_" plus the key.
+var Accounts = []string{
+	"reader",   // signing in and out (web/tests/login.spec.ts)
+	"sessions", // the account page's sessions list
+	"password", // changing the password
+	"recovery", // replacing the recovery codes
 }
 
 // The seeded IDs. Tests read them from Seeded rather than repeating them.
@@ -65,11 +75,11 @@ const (
 	seriesMissing int64 = 1501 // part 2 of SeriesPartial, never fetched
 )
 
-// Username and password of the seeded account. The password passes auth.CheckPassword.
-const (
-	Username = "e2e_reader"
-	Password = "fixture-e2e-password-lorem" //nolint:gosec // a fixture for a throwaway synthetic server, not a secret
-)
+// Password is every seeded account's password. It passes auth.CheckPassword.
+const Password = "fixture-e2e-password-lorem" //nolint:gosec // a fixture for a throwaway synthetic server, not a secret
+
+// Username is the seeded account's username for an Accounts key.
+func Username(key string) string { return "e2e_" + key }
 
 // The images WorkChaptered embeds: a PNG and an SVG (with a script that must never run) that
 // are downloaded, and a third still queued, so the UI has a not-mirrored image to handle.
@@ -99,14 +109,14 @@ func Seed(ctx context.Context, dirs Dirs, log *slog.Logger) (Seeded, error) {
 	if err := seedContent(ctx, dirs, log, now); err != nil {
 		return Seeded{}, fmt.Errorf("seed content: %w", err)
 	}
-	acc, err := seedAccount(ctx, dirs, log, now)
+	accs, err := seedAccounts(ctx, dirs, log, now)
 	if err != nil {
-		return Seeded{}, fmt.Errorf("seed account: %w", err)
+		return Seeded{}, fmt.Errorf("seed accounts: %w", err)
 	}
 	return Seeded{
-		Account: acc,
-		Works:   []int64{WorkChaptered, WorkOneShot, WorkAnonymous, WorkHostile},
-		Series:  []int64{SeriesPartial},
+		Accounts: accs,
+		Works:    []int64{WorkChaptered, WorkOneShot, WorkAnonymous, WorkHostile},
+		Series:   []int64{SeriesPartial},
 	}, nil
 }
 
@@ -238,39 +248,53 @@ func fixturePNG() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// seedAccount creates the test user, with its TOTP secret and recovery codes, the way serve
-// will read them: keys.db gets its first master key here, and serve reuses it.
-func seedAccount(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time) (acc Account, err error) {
+// seedAccounts creates the test users (Accounts), each with its own TOTP secret and recovery
+// codes, the way serve will read them: keys.db gets its first master key here, and serve
+// reuses it.
+func seedAccounts(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time) (accs map[string]Account, err error) {
 	dir, err := rootdirs.PrivateSub(dirs.Data, dirs.Accounts)
 	if err != nil {
-		return Account{}, err
+		return nil, err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
 	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
 	if err != nil {
-		return Account{}, err
+		return nil, err
 	}
 	defer func() { err = errors.Join(err, keys.Close()) }()
 	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
 	if err != nil {
-		return Account{}, err
+		return nil, err
 	}
 	defer func() { err = errors.Join(err, users.Close()) }()
 	mk, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users, Logger: log,
 		Now: func() time.Time { return now }})
 	if err != nil {
-		return Account{}, err
+		return nil, err
 	}
-	secrets := mk.Keyring()
-	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})
+	hasher, err := auth.NewHasher(mk.Keyring(), auth.HasherOptions{Params: cheapArgon2})
 	if err != nil {
-		return Account{}, err
+		return nil, err
 	}
-	if err := auth.CheckPassword(Password, Username); err != nil {
+	accs = make(map[string]Account, len(Accounts))
+	for i, key := range Accounts {
+		// A fresh users.db numbers its users from 1, in creation order.
+		acc, err := seedAccount(ctx, users, mk.Keyring(), hasher, int64(i)+1, Username(key), now)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		accs[key] = acc
+	}
+	return accs, nil
+}
+
+// seedAccount creates one test user, which must get userID.
+func seedAccount(ctx context.Context, users *store.Users, secrets *auth.LiveKeyring, hasher *auth.Hasher, userID int64,
+	username string, now time.Time) (Account, error) {
+	if err := auth.CheckPassword(Password, username); err != nil {
 		return Account{}, fmt.Errorf("fixture password: %w", err)
 	}
-	// A fresh users.db numbers its first user 1. Hash outside the transaction (txguard).
-	const userID int64 = 1
+	// Hash outside the transaction (txguard).
 	phc, err := hasher.Hash(ctx, auth.UserPassword(userID), Password)
 	if err != nil {
 		return Account{}, err
@@ -286,7 +310,7 @@ func seedAccount(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time
 		encs = append(encs, secrets.Load().EncryptRecoveryCode(userID, n))
 	}
 	err = users.InTx(ctx, func(ctx context.Context, tx *store.UsersTx) error {
-		id, err := tx.CreateUser(ctx, model.User{Username: Username, PasswordPHC: phc,
+		id, err := tx.CreateUser(ctx, model.User{Username: username, PasswordPHC: phc,
 			TOTPSecretEnc: secrets.Load().EncryptTOTPSecret(auth.UserTOTP(userID), totp),
 			CreatedAt:     now, PasswordChangedAt: now})
 		if err != nil {
@@ -300,7 +324,7 @@ func seedAccount(ctx context.Context, dirs Dirs, log *slog.Logger, now time.Time
 	if err != nil {
 		return Account{}, err
 	}
-	return Account{Username: Username, Password: Password, TOTPSecret: auth.EncodeTOTPSecret(totp),
+	return Account{Username: username, Password: Password, TOTPSecret: auth.EncodeTOTPSecret(totp),
 		RecoveryCodes: codes}, nil
 }
 

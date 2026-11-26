@@ -94,7 +94,7 @@ func (a *Handlers) AccountSessions(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return convert.SessionList(items), nil
+	return convert.SessionList(items, p.SessionID), nil
 }
 
 // RevokeAccountSession is DELETE /api/v1/account/sessions/{id} (204): ends one of the user's

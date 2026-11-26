@@ -10033,13 +10033,18 @@ func (s *Session) encodeFields(e *jx.Encoder) {
 		e.FieldStart("expires_at")
 		s.ExpiresAt.Encode(e)
 	}
+	{
+		e.FieldStart("current")
+		e.Bool(s.Current)
+	}
 }
 
-var jsonFieldsNameOfSession = [4]string{
+var jsonFieldsNameOfSession = [5]string{
 	0: "id",
 	1: "created_at",
 	2: "last_used_at",
 	3: "expires_at",
+	4: "current",
 }
 
 // Decode decodes Session from json.
@@ -10091,6 +10096,18 @@ func (s *Session) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"expires_at\"")
 			}
+		case "current":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Bool()
+				s.Current = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"current\"")
+			}
 		default:
 			return errors.Errorf("unexpected field %q", k)
 		}
@@ -10101,7 +10118,7 @@ func (s *Session) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00001111,
+		0b00011111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

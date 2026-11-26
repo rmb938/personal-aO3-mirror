@@ -6467,6 +6467,9 @@ type Session struct {
 	LastUsedAt Timestamp `json:"last_used_at"`
 	// When the session ends unless refreshed (never past the login plus `auth.max_session_age`).
 	ExpiresAt Timestamp `json:"expires_at"`
+	// True for the session this request was signed in with; always false on the admin socket, which has
+	// none.
+	Current bool `json:"current"`
 }
 
 // GetID returns the value of ID.
@@ -6489,6 +6492,11 @@ func (s *Session) GetExpiresAt() Timestamp {
 	return s.ExpiresAt
 }
 
+// GetCurrent returns the value of Current.
+func (s *Session) GetCurrent() bool {
+	return s.Current
+}
+
 // SetID sets the value of ID.
 func (s *Session) SetID(val ID) {
 	s.ID = val
@@ -6507,6 +6515,11 @@ func (s *Session) SetLastUsedAt(val Timestamp) {
 // SetExpiresAt sets the value of ExpiresAt.
 func (s *Session) SetExpiresAt(val Timestamp) {
 	s.ExpiresAt = val
+}
+
+// SetCurrent sets the value of Current.
+func (s *Session) SetCurrent(val bool) {
+	s.Current = val
 }
 
 // Ref: #/components/schemas/SessionList

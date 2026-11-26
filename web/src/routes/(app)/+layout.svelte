@@ -86,6 +86,7 @@
 		<a class="home" href={resolve('/(app)')}>ao3mirror</a>
 		<span class="account">
 			Signed in as <strong>{status.account.username}</strong>
+			<a href={resolve('/(app)/account')}>Account</a>
 			<button type="button" onclick={signOut} disabled={loggingOut}>Log out</button>
 		</span>
 	</header>

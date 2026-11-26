@@ -24,14 +24,33 @@ export const revealDisabled =
 	'This server runs with --no-reveal, so it never shows your mirror. ' +
 	'Restart it without --no-reveal to use the web UI.';
 
+/** The password policy (the spec's Password schema, auth.CheckPassword), to show beside a new password. */
+export const passwordPolicy =
+	"Use 8 to 128 characters. It can't be your username or a common password, and there are no other rules.";
+
+/** Shown when the server refuses a new password (a 422 at /password). */
+export const passwordRefused = `Choose a different password. ${passwordPolicy}`;
+
+/** Per-step texts for the problems whose meaning depends on the step. */
+export interface StepTexts {
+	/** invalid-credentials: a wrong password or code at a sign-in step. */
+	invalid?: string;
+	/**
+	 * forbidden: on a signed-in change (password, recovery codes), a wrong current password or
+	 * code. Elsewhere it is a cross-site refusal.
+	 */
+	forbidden?: string;
+}
+
 /**
- * The message for a failed auth step. `invalid` is the text for invalid-credentials, which
- * means something different at each step (a wrong password, a wrong code).
+ * The message for a failed auth step. `texts` (or a string, for invalid-credentials alone)
+ * gives the texts for the problems that mean something different at each step.
  */
-export function describeFailure(res: Failure, invalid: string): Message {
+export function describeFailure(res: Failure, texts: string | StepTexts): Message {
+	const { invalid, forbidden } = typeof texts === 'string' ? { invalid: texts } : texts;
 	switch (problemSlug(res.data)) {
 		case 'invalid-credentials':
-			return { text: invalid };
+			return { text: invalid ?? "That didn't work. Check what you entered and try again." };
 		case 'rate-limited': {
 			const wait = retryAfterSeconds(res.headers);
 			if (wait === undefined) {
@@ -44,12 +63,27 @@ export function describeFailure(res: Failure, invalid: string): Message {
 		case 'unavailable':
 			return { text: 'The server is busy. Try again in a moment.' };
 		case 'forbidden':
-			return { text: 'The server refused this as a cross-site request. Reload the page and try again.' };
+			return {
+				text: forbidden ?? 'The server refused this as a cross-site request. Reload the page and try again.'
+			};
 		case 'validation-error':
+			if (invalidPointers(res.data).includes('/password')) {
+				return { text: passwordRefused };
+			}
 			return { text: 'Check what you entered: it is not in the expected form.' };
 		default:
 			return { text: `Something went wrong (HTTP ${String(res.status)}). Try again.` };
 	}
+}
+
+/** The body members a validation-error names (its errors' JSON Pointers), never their details. */
+export function invalidPointers(data: unknown): string[] {
+	if (typeof data !== 'object' || data === null || !('errors' in data) || !Array.isArray(data.errors)) {
+		return [];
+	}
+	return data.errors.flatMap((e: unknown) =>
+		typeof e === 'object' && e !== null && 'pointer' in e && typeof e.pointer === 'string' ? [e.pointer] : []
+	);
 }
 
 /** Retry-After as a whole number of seconds (the API only sends delay-seconds), at least 1. */

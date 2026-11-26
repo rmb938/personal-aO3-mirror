@@ -1,15 +1,4 @@
-import type { Page } from '@playwright/test';
-
-import { expect, test, uiCSP } from './fixtures';
-
-// problems collects everything the page logs or throws. The UI is meant to load with none:
-// a CSP or Trusted Types violation shows up here as a console error.
-function problems(page: Page): string[] {
-	const seen: string[] = [];
-	page.on('console', (msg) => seen.push(`console ${msg.type()}: ${msg.text()}`));
-	page.on('pageerror', (err) => seen.push(`page error: ${err.message}`));
-	return seen;
-}
+import { expect, problems, test, uiCSP } from './fixtures';
 
 // The login page makes no API request, so nothing (not even a 401) reaches the console.
 test('the built app loads under the UI CSP', async ({ page }) => {
