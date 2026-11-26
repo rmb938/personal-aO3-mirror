@@ -108,14 +108,16 @@ internal/web/ui/         the static handler, the UI's CSP, placeholder.html
 
   `orval.config.ts` generates `src/lib/api/api.gen.ts`: types plus one plain `fetch`-style
   function per operation, each response typed as a union by status, and no runtime library.
-  Every call goes through `apiFetch` (`src/lib/api/http.ts`), where stage 5 adds refresh, the
-  CSRF header and the reveal param. orval reads `tsconfig.json`, which extends Kit's generated
+  Every call goes through `apiFetch` (`src/lib/api/http.ts`), which adds the reveal param and
+  the CSRF header and refreshes the session (stage 5a; see "Auth in the browser"). orval reads `tsconfig.json`, which extends Kit's generated
   `$app/tsconfig`, so the scripts run `svelte-kit sync` first. orval depends on esbuild, whose
   postinstall script only checks the platform binary npm already installed;
   `package.json` `allowScripts` denies it, so no install scripts run.
 - **SvelteKit 3** takes its config as the argument to the `sveltekit()` Vite plugin (in
   `vite.config.ts`; there is no `svelte.config.js`), and `$lib` is gone: imports use `#lib/…`,
-  a Node subpath import declared in `package.json`. The generated base tsconfig is
+  a Node subpath import declared in `package.json`. The pattern maps paths as written, so the
+  import names the file with its extension (`#lib/reveal.gen.ts`; TypeScript allows `.ts`
+  imports here). The generated base tsconfig is
   `$app/tsconfig` (under `node_modules`).
 - **No inline script.** Kit always writes its start-up code as an inline `<script>` in the
   page. `scripts/externalize-boot.js` wraps adapter-static: after the build it moves that script
@@ -255,6 +257,14 @@ The cookie transport `bearerToken(r)` (`internal/web/api/runtime/bearer.go`) was
   session**: stage 5 must single-flight refresh across tabs (Web Locks API,
   `navigator.locks.request`), and after taking the lock first retry the request, since another
   tab may already have refreshed (the cookies are shared).
+  As built (stage 5a, `apiFetch`): only a 401 `unauthorized` triggers it (other 401s, such as
+  `invalid-credentials` from a login step, are answers, not a lost session); there is no
+  refresh ahead of `expires_in`, since the first 401 after expiry costs one extra round trip.
+  Under the lock it retries, then refreshes, then retries once more. A refused refresh (401)
+  fires `onSessionLost`, which the layout turns into the redirect to login (5b); any other
+  refresh failure (429, 5xx) hands the caller the original 401 without it. Every request gets
+  the reveal param, and every method but GET/HEAD the CSRF header. Problems are branched on
+  by their type's slug (`problemSlug`, `src/lib/api/problem.ts`), never the detail.
 - **Logout** revokes the session and, when it was signed in by the access cookie, clears both
   cookies (`Max-Age=0`).
 - **CSRF.** A request carrying either session cookie must send `X-Ao3mirror-Csrf: 1` on every
@@ -296,9 +306,15 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
   First tests: the app (not the placeholder) loads with the UI CSP and no console messages, a
   deep link reaches the client router, Trusted Types refuse a raw `innerHTML`, the API answers
   same-origin. The guard blocks Claude starting `dev ui-server` (CLAUDE.md updated).
-- [ ] **5. Login UI.** Two-step login (password, then TOTP or a recovery code), the fetch
-  wrapper (refresh and retry single-flighted across tabs, CSRF header), logout, the redirect to login on session loss, the
-  lockout and rate-limit messages.
+- **5. Login UI**, split in two PRs (agreed with the user 2026-11-25):
+  - [x] **5a. Fetch wrapper.** `apiFetch`: the reveal param, the CSRF header, refresh and
+    retry single-flighted across tabs, `onSessionLost` (see "Auth in the browser", "As built"),
+    with Vitest tests against a fake cookie session, including concurrent requests and a
+    second lock holder standing in for another tab.
+  - [ ] **5b. Login pages.** Two-step login (password, then TOTP or a recovery code), logout,
+    the redirect to login on session loss (and back afterwards), the lockout, rate-limit and
+    reveal-disabled messages, and Playwright tests (sign in both ways, wrong password, logout,
+    a cleared access cookie refreshed, two tabs refreshing together without ending the session).
 - [ ] **6. Signup and account pages.** Invite signup from the fragment link (password policy
   messages, TOTP QR + text secret, confirm code, recovery codes shown once with copy/download),
   reset from link, account page: password change, regenerate recovery codes, sessions list

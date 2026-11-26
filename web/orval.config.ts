@@ -2,7 +2,7 @@ import { defineConfig } from 'orval';
 
 // The typed API client (docs/part4-ui.md, "API client"), generated from the hand-written spec by
 // `make generate`. Each operation is a plain function that calls apiFetch, so every request goes
-// through one place (stage 5 adds refresh, the CSRF header and the reveal param there).
+// through one place, which adds the reveal param and the CSRF header and refreshes the session.
 export default defineConfig({
 	api: {
 		input: { target: '../docs/api/openapi.yaml' },
