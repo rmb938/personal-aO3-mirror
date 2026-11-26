@@ -199,6 +199,11 @@ func requireAuthShaped(t *testing.T, key, s string) {
 		require.NotEmpty(t, u.Host)
 		tok, ok := strings.CutPrefix(u.Fragment, "token=")
 		require.True(t, ok)
+		tok, scope, hasScope := strings.Cut(tok, "&scope=")
+		require.Equal(t, u.Path == "/reset", hasScope, "only a reset link names its scope")
+		if hasScope {
+			require.Contains(t, []string{"password", "totp", "both"}, scope)
+		}
 		opaque(auth.InviteToken, tok)
 	default:
 		t.Fatalf("requireAuthShaped: no format for %s; add it", key)

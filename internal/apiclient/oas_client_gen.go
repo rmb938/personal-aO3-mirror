@@ -152,8 +152,8 @@ type Invoker interface {
 	CreateInvite(ctx context.Context, request *CreateInviteRequest, options ...RequestOption) (*InviteLink, error)
 	// CreateReset invokes createReset operation.
 	//
-	// The link (`{api.public_url}/reset#token=…`) is in this response only. Confirming the reset revokes
-	// every session of the account; a scope with `totp` also issues new recovery codes.
+	// The link (`{api.public_url}/reset#token=…&scope=…`) is in this response only. Confirming the
+	// reset revokes every session of the account; a scope with `totp` also issues new recovery codes.
 	//
 	// POST /api/v1/admin/users/{id}/reset
 	CreateReset(ctx context.Context, request *CreateResetRequest, params CreateResetParams, options ...RequestOption) (*InviteLink, error)
@@ -1268,8 +1268,8 @@ func (c *Client) sendCreateInvite(ctx context.Context, request *CreateInviteRequ
 
 // CreateReset invokes createReset operation.
 //
-// The link (`{api.public_url}/reset#token=…`) is in this response only. Confirming the reset revokes
-// every session of the account; a scope with `totp` also issues new recovery codes.
+// The link (`{api.public_url}/reset#token=…&scope=…`) is in this response only. Confirming the
+// reset revokes every session of the account; a scope with `totp` also issues new recovery codes.
 //
 // POST /api/v1/admin/users/{id}/reset
 func (c *Client) CreateReset(ctx context.Context, request *CreateResetRequest, params CreateResetParams, options ...RequestOption) (*InviteLink, error) {

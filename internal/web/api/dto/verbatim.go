@@ -77,11 +77,14 @@ type RecoveryCode string
 func (RecoveryCode) VerbatimPattern() string { return `[a-z2-7]{4}(?:-[a-z2-7]{4}){5}` }
 
 // InviteURL is a signup or reset link: api.public_url (scheme, lower-case host or bracketed
-// IPv6, optional port; no path), the page, and the invite token in the fragment.
+// IPv6, optional port; no path), the page, and the invite token in the fragment; a reset link
+// also carries its scope there, for the reset page.
 type InviteURL string
 
 // VerbatimPattern implements redact.Verbatim.
 func (InviteURL) VerbatimPattern() string {
 	const host = `(?:(?:[a-z0-9-]{1,63}\.){0,7}[a-z0-9-]{1,63}|\[[0-9a-f:.]{2,45}\])`
-	return `https?://` + host + `(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_` + opaqueBody
+	const token = `#token=inv_` + opaqueBody
+	return `https?://` + host + `(?::[0-9]{1,5})?/(?:signup` + token + `|reset` + token +
+		`&scope=(?:password|totp|both))`
 }

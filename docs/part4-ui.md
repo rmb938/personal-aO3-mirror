@@ -289,8 +289,9 @@ The cookie transport `bearerToken(r)` (`internal/web/api/runtime/bearer.go`) was
   `bad-request` (ambiguous); the refresh cookie alone never signs a request in.
 - **Admin socket** drops the `Cookie` header, so there is no cookie transport there.
 - **Logs:** `auth` as before, plus `auth_transport` (`bearer` or `cookie`); never a token.
-- **Invite and reset links** (`{api.public_url}/signup#token=…`) land on UI pages that read the
-  fragment, so the token never reaches the server's logs or Cloudflare.
+- **Invite and reset links** (`{api.public_url}/signup#token=…`, `/reset#token=…&scope=…`)
+  land on UI pages that read the fragment, so the token never reaches the server's logs or
+  Cloudflare.
 
 ## Stages
 
