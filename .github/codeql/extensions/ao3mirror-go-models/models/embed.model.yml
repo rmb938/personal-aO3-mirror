@@ -1,0 +1,14 @@
+# Files read from an embed.FS are compiled into the binary (//go:embed): they are the program's
+# own source, never input. Under the local threat model CodeQL counts every io/fs ReadFile as a
+# "file" source, so the embedded migrations that internal/store executes showed up as
+# go/sql-injection. This barrier stops that flow for SQL only: an embedded file's contents are
+# still tracked for every other query, and real file reads (os.ReadFile, os.Open, io/fs on an
+# os.DirFS) are unaffected.
+#
+# Columns: package, type, subtypes, name, signature, ext, output, kind, provenance.
+extensions:
+  - addsTo:
+      pack: codeql/go-all
+      extensible: barrierModel
+    data:
+      - ["embed", "FS", false, "ReadFile", "", "", "ReturnValue[0]", "sql-injection", "manual"]
