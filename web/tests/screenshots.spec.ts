@@ -7,14 +7,14 @@ import { expect, test } from './fixtures';
 import { enterPassword, enterSecondFactor, expectSignedIn } from './signin';
 import { totp } from './totp';
 
-// Screenshots of every page and notable state, at desktop and phone width, for pull requests
-// that change the UI (CLAUDE.md "Dev workflow"; docs/part4-ui.md "E2E harness"). They run with
-// the other end-to-end tests, so `make check` keeps web/screenshots/ current, and CI keeps
-// them as an artifact. Everything shown is the seed's synthetic content.
+// Screenshots of every page and notable state, at desktop and phone width in light and dark
+// mode, for pull requests that change the UI (CLAUDE.md "Dev workflow"; docs/part4-ui.md "E2E
+// harness"). They run with the other end-to-end tests, so `make check` keeps web/screenshots/
+// current, and CI keeps them as an artifact. Everything shown is the seed's synthetic content.
 //
 // A new page or state gets a shot here in the same change. The files are named
-// <page>-<state>-<viewport>.png; the directory is emptied first, so it never holds shots of
-// states that are gone.
+// <page>-<state>-<viewport>-<light|dark>.png; the directory is emptied first, so it never
+// holds shots of states that are gone.
 //
 // They use the seeded `screenshots` account, which nothing else touches, and run in order.
 
@@ -25,14 +25,21 @@ const viewports = {
 	phone: { width: 390, height: 844 }
 } as const;
 
-/** Saves `name` at each viewport: the whole page, or just `part` of it. */
+// The UI follows the system's color scheme (app.css), so each shot is taken in both.
+const schemes = ['light', 'dark'] as const;
+
+/** Saves `name` at each viewport in each color scheme: the whole page, or just `part` of it. */
 async function shoot(page: Page, name: string, part?: Locator): Promise<void> {
 	for (const [viewport, size] of Object.entries(viewports)) {
 		await page.setViewportSize(size);
-		const path = `${dir}${name}-${viewport}.png`;
-		await (part === undefined ? page.screenshot({ path, fullPage: true }) : part.screenshot({ path }));
+		for (const colorScheme of schemes) {
+			await page.emulateMedia({ colorScheme });
+			const path = `${dir}${name}-${viewport}-${colorScheme}.png`;
+			await (part === undefined ? page.screenshot({ path, fullPage: true }) : part.screenshot({ path }));
+		}
 	}
 	await page.setViewportSize(viewports.desktop);
+	await page.emulateMedia({ colorScheme: 'light' });
 }
 
 test.describe.configure({ mode: 'serial' });

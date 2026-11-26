@@ -191,8 +191,9 @@ clean checkout works and serves "UI not built" (and `serve` logs a warning).
   stored session. `tests/signin.ts` holds the sign-in steps the test files share.
 - **Screenshots for pull requests** (asked 2026-11-26): `tests/screenshots.spec.ts` runs with
   the other tests and saves every page and notable state at desktop (1280 px) and phone
-  (390 px) width to `web/screenshots/` (gitignored, emptied first), as
-  `<page>-<state>-<viewport>.png`. CI uploads them as the `ui-screenshots` artifact. A stage
+  (390 px) width, each in light and dark mode (the UI follows the system's scheme), to
+  `web/screenshots/` (gitignored, emptied first), as `<page>-<state>-<viewport>-<scheme>.png`.
+  CI uploads them as the `ui-screenshots` artifact. A stage
   that adds a page or state adds its shots there, and its PR gets the changed ones attached as
   a comment (`gh pr comment --attach`; CLAUDE.md "Dev workflow"). They show only the seed's
   synthetic content.
