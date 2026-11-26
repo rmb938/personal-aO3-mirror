@@ -84,7 +84,7 @@ func pathScopeID(q *runtime.Params, scope worksScope) int64 {
 
 // worksPage reads page p of the works matching f, within scope's scopeID unless scope is nil.
 func (a *Handlers) worksPage(r *http.Request, scope worksScope, scopeID int64, f model.WorkFilter, p runtime.Page) (any, error) {
-	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	f.Offset, f.Limit = p.Offset(), p.PerPage
 	var items []controllers.WorkBlurb
 	var total int
 	var err error
@@ -123,7 +123,7 @@ func (a *Handlers) GetChapter(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	c, err := a.ctl.GetChapter(r.Context(), id, int(pos))
+	c, err := a.ctl.GetChapter(r.Context(), id, pos)
 	if err != nil {
 		return nil, err
 	}

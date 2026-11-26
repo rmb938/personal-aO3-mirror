@@ -20,7 +20,7 @@ func (a *Handlers) ListMedia(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	items, total, err := a.ctl.ListMedia(r.Context(), int(p.Offset()), int(p.PerPage))
+	items, total, err := a.ctl.ListMedia(r.Context(), p.Offset(), p.PerPage)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (a *Handlers) ListMediumFandoms(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	f.Offset, f.Limit = p.Offset(), p.PerPage
 	items, total, err := a.ctl.ListMediumFandoms(r.Context(), id, f)
 	if err != nil {
 		return nil, err

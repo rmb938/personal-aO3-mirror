@@ -6,7 +6,7 @@ import (
 )
 
 // CreatorList maps one page of a creator listing.
-func CreatorList(items []store.CreatorRow, total int, page, perPage int64) dto.List[dto.Creator] {
+func CreatorList(items []store.CreatorRow, total, page, perPage int) dto.List[dto.Creator] {
 	return list(items, creatorListItem, total, page, perPage)
 }
 

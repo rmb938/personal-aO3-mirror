@@ -6,7 +6,7 @@ import (
 )
 
 // MediumList maps one page of the media listing.
-func MediumList(items []controllers.Medium, total int, page, perPage int64) dto.List[dto.Medium] {
+func MediumList(items []controllers.Medium, total, page, perPage int) dto.List[dto.Medium] {
 	return list(items, medium, total, page, perPage)
 }
 

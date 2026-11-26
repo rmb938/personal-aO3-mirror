@@ -20,7 +20,7 @@ func (a *Handlers) ListSources(r *http.Request) (any, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	items, total, err := a.ctl.ListSources(r.Context(), int(p.Offset()), int(p.PerPage))
+	items, total, err := a.ctl.ListSources(r.Context(), p.Offset(), p.PerPage)
 	if err != nil {
 		return nil, err
 	}
