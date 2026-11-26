@@ -1,0 +1,9 @@
+# CodeQL model pack for this repository's Go code. Code scanning loads packs from
+# .github/codeql/extensions; see models/embed.model.yml for what it changes and why.
+name: rmb938/ao3mirror-go-models
+version: 0.0.1
+library: true
+extensionTargets:
+  codeql/go-all: "*"
+dataExtensions:
+  - models/**/*.yml

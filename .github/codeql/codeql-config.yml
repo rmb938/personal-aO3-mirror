@@ -1,0 +1,10 @@
+# CodeQL configuration for .github/workflows/codeql.yml.
+name: ao3mirror
+
+# Taint sources: remote (HTTP requests, the network) and local (config files, command-line
+# arguments, environment variables, file reads): what default setup called "remote and local".
+threat-models: [remote, local]
+
+# The model pack in .github/codeql/extensions/ao3mirror-go-models is loaded from that
+# directory. It only tells CodeQL that files compiled into the binary (embed.FS) are not
+# untrusted SQL; see its models/embed.model.yml.
