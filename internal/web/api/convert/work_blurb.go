@@ -32,7 +32,7 @@ func WorkBlurb(b controllers.WorkBlurb) dto.WorkBlurb {
 }
 
 // WorkBlurbList maps one page of a work listing.
-func WorkBlurbList(items []controllers.WorkBlurb, total int, page, perPage int64) dto.List[dto.WorkBlurb] {
+func WorkBlurbList(items []controllers.WorkBlurb, total, page, perPage int) dto.List[dto.WorkBlurb] {
 	return list(items, WorkBlurb, total, page, perPage)
 }
 

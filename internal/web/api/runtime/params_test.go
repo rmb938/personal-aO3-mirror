@@ -100,6 +100,13 @@ func TestParseInt(t *testing.T) {
 		"99999999999999999999"} {
 		_, valid := ParseInt(s, 100)
 		assert.False(t, valid, s)
+		_, valid = ParseSmallInt(s, 100)
+		assert.False(t, valid, s)
+	}
+	for s, want := range ok {
+		v, valid := ParseSmallInt(s, 100)
+		require.True(t, valid, s)
+		assert.Equal(t, int(want), v, s)
 	}
 }
 
@@ -124,9 +131,9 @@ func TestParamGetters(t *testing.T) {
 func TestPage(t *testing.T) {
 	cases := []struct {
 		raw        string
-		page, per  int64
+		page, per  int
 		bad        []string
-		wantOffset int64
+		wantOffset int
 	}{
 		{raw: "", page: 1, per: DefaultPerPage},
 		{raw: "page=3&per_page=50", page: 3, per: 50, wantOffset: 100},
@@ -152,7 +159,7 @@ func TestPage(t *testing.T) {
 		require.NoError(t, p.Err(), c.raw)
 		assert.Equal(t, Page{Page: c.page, PerPage: c.per}, pg)
 		assert.Equal(t, c.wantOffset, pg.Offset())
-		assert.LessOrEqual(t, pg.Offset(), int64(MaxOffset))
+		assert.LessOrEqual(t, pg.Offset(), MaxOffset)
 	}
 }
 

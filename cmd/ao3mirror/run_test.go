@@ -5,12 +5,14 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 )
 
 // A daemon starting while a probe (daemonRunning, e.g. from `source add`) briefly holds the
 // lock must wait the probe out, not refuse to run; a lock that stays held still refuses.
 func TestLockDaemonWaitsOutProbe(t *testing.T) {
-	dir := t.TempDir()
+	dir := dirstest.Temp(t)
 	probe, err := flockDaemon(dir, 1)
 	require.NoError(t, err)
 	go func() {

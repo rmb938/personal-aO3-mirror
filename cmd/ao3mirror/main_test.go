@@ -37,7 +37,17 @@ func newCLI(t *testing.T, extraYAML string) *cli {
 	cfg := filepath.Join(dir, "cfg.yaml")
 	body := "data_dir: " + filepath.Join(dir, "d") + "\ncontact: {discord: \"@fixture_user\"}\nrate: {interval: 3s, jitter: 0}\n" + extraYAML
 	require.NoError(t, os.WriteFile(cfg, []byte(body), 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "d"), 0o750)) // the user creates the data dir
 	return &cli{t: t, cfg: cfg, srv: srv}
+}
+
+// data opens the CLI's data dir as main does, closed when the test ends.
+func (c *cli) data() *dataDirs {
+	c.t.Helper()
+	d, err := openDataDirs(c.config())
+	require.NoError(c.t, err)
+	c.t.Cleanup(func() { require.NoError(c.t, d.Close()) })
+	return d
 }
 
 func (c *cli) run(args ...string) (int, string, string) {
@@ -60,7 +70,7 @@ func (c *cli) serve(reveal bool) {
 	cfg := c.config()
 	cfg.API.Listen = "127.0.0.1:0" // any free port; config validation wants a real one
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := newServer(ctx, cfg, slog.New(slog.DiscardHandler), !reveal)
+	s, err := newServer(ctx, cfg, c.data(), slog.New(slog.DiscardHandler), !reveal)
 	if err != nil {
 		cancel()
 		require.NoError(c.t, err)
@@ -80,8 +90,9 @@ func (c *cli) daemon() (stop func()) {
 	cfg := c.config()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
-	go func() { done <- runDaemon(ctx, cfg, slog.New(slog.DiscardHandler), io.Discard) }()
-	require.Eventually(c.t, func() bool { r, _ := daemonRunning(cfg.DataDir); return r }, 10*time.Second, 50*time.Millisecond)
+	data := c.data()
+	go func() { done <- runDaemon(ctx, cfg, data, slog.New(slog.DiscardHandler), io.Discard) }()
+	require.Eventually(c.t, func() bool { r, _ := daemonRunning(data.root); return r }, 10*time.Second, 50*time.Millisecond)
 	stopped := false
 	stop = func() {
 		if !stopped {
@@ -92,6 +103,21 @@ func (c *cli) daemon() (stop func()) {
 	}
 	c.t.Cleanup(stop)
 	return stop
+}
+
+// A missing data dir is never created: every command that needs it says how to make it, and
+// nothing is written.
+func TestMissingDataDirIsRefused(t *testing.T) {
+	c := newCLI(t, "")
+	data := c.config().DataDir
+	require.NoError(t, os.Remove(data))
+	for _, args := range [][]string{{"config", "check"}, {"run"}, {"status"}, {"reparse"}} {
+		code, _, errOut := c.run(args...)
+		assert.Equal(t, 1, code, "%q", args)
+		assert.Contains(t, errOut, "the data directory does not exist; create it first (mkdir -m 750 "+data+")", "%q", args)
+	}
+	_, err := os.Stat(data)
+	require.ErrorIs(t, err, os.ErrNotExist, "the data dir is not created")
 }
 
 func TestRunStatusDebugEndToEnd(t *testing.T) {
@@ -111,7 +137,7 @@ func TestRunStatusDebugEndToEnd(t *testing.T) {
 		return code == 0 && strings.Contains(out, "fetched: 2,")
 	}, 60*time.Second, 200*time.Millisecond, "daemon should fetch both works")
 	// A second daemon on the same directory must refuse to start.
-	assert.Equal(t, 1, runDaemon(context.Background(), c.config(), slog.New(slog.DiscardHandler), io.Discard),
+	assert.Equal(t, 1, runDaemon(context.Background(), c.config(), c.data(), slog.New(slog.DiscardHandler), io.Discard),
 		"second daemon should be refused by the lock")
 	stop()
 
@@ -232,7 +258,7 @@ func TestSourceCLI(t *testing.T) {
 func TestJobsCLI(t *testing.T) {
 	c := newCLI(t, "")
 	ctx := context.Background()
-	st, err := store.Open(ctx, c.config().DataDir, store.Options{})
+	st, err := store.Open(ctx, c.data().root, store.Options{})
 	require.NoError(t, err)
 	for _, j := range []store.NewJob{
 		{Kind: "work", Target: 101, Priority: 3, DedupeKey: "work:101"},

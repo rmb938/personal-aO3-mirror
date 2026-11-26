@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/imagefetch"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
@@ -38,11 +39,11 @@ type imageEnv struct {
 func newImageEnv(t *testing.T) *imageEnv {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.Open(ctx, t.TempDir(), store.Options{})
+	st, err := store.Open(ctx, dirstest.Temp(t), store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	e := &imageEnv{st: st, dir: t.TempDir(), logs: &bytes.Buffer{}, sha: map[string]string{}}
-	e.svc = New(Options{Store: st, ImageDir: e.dir, Logger: slog.New(slog.NewJSONHandler(e.logs, nil))})
+	e.svc = New(Options{Store: st, ImageDir: dirstest.At(t, e.dir, 0o750), Logger: slog.New(slog.NewJSONHandler(e.logs, nil))})
 
 	bodies := map[string][]byte{"one.png": []byte("fixture image bytes one"), "gone.png": []byte("fixture image bytes gone")}
 	require.NoError(t, st.InTx(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -60,7 +61,7 @@ func newImageEnv(t *testing.T) *imageEnv {
 		sha := hex.EncodeToString(sum[:])
 		e.sha[name] = sha
 		if name == "one.png" {
-			p := imagefetch.Path(e.dir, sha, "image/png")
+			p := filepath.Join(e.dir, imagefetch.File(sha, "image/png"))
 			require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
 			require.NoError(t, os.WriteFile(p, bodies[name], 0o600))
 		}
@@ -99,7 +100,7 @@ func TestGetImage(t *testing.T) {
 func TestGetImageRefusesMismatchedFile(t *testing.T) {
 	e := newImageEnv(t)
 	ctx := context.Background()
-	p := imagefetch.Path(e.dir, e.sha["one.png"], "image/png")
+	p := filepath.Join(e.dir, imagefetch.File(e.sha["one.png"], "image/png"))
 	require.NoError(t, os.WriteFile(p, []byte("fixture image bytes changed"), 0o600))
 
 	_, err := e.svc.GetImage(ctx, e.sha["one.png"])
@@ -111,7 +112,7 @@ func TestGetImageRefusesMismatchedFile(t *testing.T) {
 
 func TestGetImageRefusesOversizedFile(t *testing.T) {
 	e := newImageEnv(t)
-	p := imagefetch.Path(e.dir, e.sha["one.png"], "image/png")
+	p := filepath.Join(e.dir, imagefetch.File(e.sha["one.png"], "image/png"))
 	require.NoError(t, os.Truncate(p, MaxImageFileBytes+1))
 
 	_, err := e.svc.GetImage(context.Background(), e.sha["one.png"])

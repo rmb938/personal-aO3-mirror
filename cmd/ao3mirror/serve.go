@@ -19,6 +19,7 @@ import (
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
@@ -42,7 +43,7 @@ const serveUsage = "usage: ao3mirror serve [--no-reveal]\n"
 
 // runServe runs the API on the public TCP listener and the admin unix socket until ctx ends.
 // It never builds an httpx client: the internet-facing process cannot reach AO3.
-func runServe(ctx context.Context, cfg config.Config, log *slog.Logger, args []string, errOut io.Writer) int {
+func runServe(ctx context.Context, cfg config.Config, data *dataDirs, log *slog.Logger, args []string, errOut io.Writer) int {
 	fl := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fl.SetOutput(errOut)
 	fl.Usage = func() { fmt.Fprint(errOut, serveUsage) }
@@ -54,7 +55,7 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger, args []s
 		fl.Usage()
 		return 2
 	}
-	s, err := newServer(ctx, cfg, log, *noReveal)
+	s, err := newServer(ctx, cfg, data, log, *noReveal)
 	if err != nil {
 		fmt.Fprintf(errOut, "serve: %v\n", err)
 		return 1
@@ -78,26 +79,29 @@ type server struct {
 	public, admin *http.Server
 }
 
-// accounts are users.db, keys.db and the Auth controller over them.
+// accounts are users.db, keys.db, the backup directory and the Auth controller over them.
 type accounts struct {
-	users  *store.Users
-	keys   *store.Keys
-	master *controllers.MasterKeys
-	auth   *controllers.Auth
+	users   *store.Users
+	keys    *store.Keys
+	backups *os.Root
+	master  *controllers.MasterKeys
+	auth    *controllers.Auth
 }
 
-// Close closes users.db and keys.db.
-func (a accounts) Close() error { return errors.Join(a.users.Close(), a.keys.Close()) }
+// Close closes users.db, keys.db and the backup directory.
+func (a accounts) Close() error {
+	return errors.Join(a.users.Close(), a.keys.Close(), a.backups.Close())
+}
 
 // newServer binds the public listener on api.listen, then builds the server on it
 // (newServerOn).
-func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool) (*server, error) {
+func newServer(ctx context.Context, cfg config.Config, data *dataDirs, log *slog.Logger, noReveal bool) (*server, error) {
 	var lc net.ListenConfig
 	tcp, err := lc.Listen(ctx, "tcp", cfg.API.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("public listener: %w", err)
 	}
-	return newServerOn(ctx, cfg, log, noReveal, tcp)
+	return newServerOn(ctx, cfg, data, log, noReveal, tcp)
 }
 
 // newServerOn opens the store and the accounts (users.db and keys.db, in the admin socket's
@@ -105,13 +109,14 @@ func newServer(ctx context.Context, cfg config.Config, log *slog.Logger, noRevea
 // admin socket; tcp is the public listener. ctx is every request's base context, so a signal
 // cancels in-flight requests while shutdown waits for them. On an error, everything opened so
 // far (tcp included) is closed.
-func newServerOn(ctx context.Context, cfg config.Config, log *slog.Logger, noReveal bool, tcp net.Listener) (s *server, err error) {
+func newServerOn(ctx context.Context, cfg config.Config, data *dataDirs, log *slog.Logger, noReveal bool,
+	tcp net.Listener) (s *server, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, tcp.Close())
 		}
 	}()
-	st, err := store.Open(ctx, cfg.DataDir, store.Options{Logger: log})
+	st, err := store.Open(ctx, data.root, store.Options{Logger: log})
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +125,7 @@ func newServerOn(ctx context.Context, cfg config.Config, log *slog.Logger, noRev
 			err = errors.Join(err, st.Close())
 		}
 	}()
-	acc, err := openAuth(ctx, cfg, log)
+	acc, err := openAuth(ctx, cfg, data, log)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +134,7 @@ func newServerOn(ctx context.Context, cfg config.Config, log *slog.Logger, noRev
 			err = errors.Join(err, acc.Close())
 		}
 	}()
-	ctlOpts := controllerOptions(cfg, log, st, nil)
+	ctlOpts := controllerOptions(cfg, data, log, st, nil)
 	ctlOpts.Auth = acc.auth
 	uiFiles, err := ui.New()
 	if err != nil {
@@ -157,7 +162,7 @@ func newServerOn(ctx context.Context, cfg config.Config, log *slog.Logger, noRev
 	if err != nil {
 		return nil, err
 	}
-	sock, err := listenAdminSocket(ctx, cfg.Path(cfg.API.AdminSocket))
+	sock, err := listenAdminSocket(ctx, data.root, cfg.API.AdminSocket)
 	if err != nil {
 		return nil, fmt.Errorf("admin socket: %w", err)
 	}
@@ -172,11 +177,22 @@ func newServerOn(ctx context.Context, cfg config.Config, log *slog.Logger, noRev
 // like the socket) and builds the MasterKeys and Auth controllers over them. keys.db gets its
 // first master key on first start; an interrupted master key rotation is finished, and a
 // users.db under a key keys.db lacks is refused. On an error, both databases are closed.
-func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc accounts, err error) {
-	dir := filepath.Dir(cfg.Path(cfg.API.AdminSocket))
-	if err := privateDir(dir); err != nil {
+func openAuth(ctx context.Context, cfg config.Config, data *dataDirs, log *slog.Logger) (acc accounts, err error) {
+	dir, err := dirs.PrivateSub(data.root, filepath.Dir(cfg.API.AdminSocket))
+	if err != nil {
 		return accounts{}, err
 	}
+	// users.db and keys.db are open by now (SQLite keeps them by path), so the root isn't kept.
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	backups, err := dirs.PrivateSub(data.root, cfg.API.BackupDir)
+	if err != nil {
+		return accounts{}, fmt.Errorf("api.backup_dir: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, backups.Close())
+		}
+	}()
 	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
 	if err != nil {
 		return accounts{}, err
@@ -196,7 +212,7 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc acc
 		}
 	}()
 	master, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users,
-		Logger: log, Now: time.Now, Rotation: cfg.Auth.MasterKeyRotation})
+		Logger: log, Now: time.Now, Rotation: cfg.Auth.MasterKeyRotation, BackupDir: backups})
 	if err != nil {
 		return accounts{}, err
 	}
@@ -219,23 +235,7 @@ func openAuth(ctx context.Context, cfg config.Config, log *slog.Logger) (acc acc
 	if err != nil {
 		return accounts{}, err
 	}
-	return accounts{users: users, keys: keys, master: master, auth: ctl}, nil
-}
-
-// privateDir creates dir (0700) if needed and refuses it when group or others can reach it:
-// it holds the admin socket, users.db and keys.db.
-func privateDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	st, err := os.Stat(dir)
-	if err != nil {
-		return err
-	}
-	if st.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("directory %s has mode %s; it must be private to this user (chmod 700)", dir, st.Mode().Perm())
-	}
-	return nil
+	return accounts{users: users, keys: keys, backups: backups, master: master, auth: ctl}, nil
 }
 
 func newHTTPServer(ctx context.Context, h http.Handler, log *slog.Logger) *http.Server {
@@ -253,34 +253,41 @@ func newHTTPServer(ctx context.Context, h http.Handler, log *slog.Logger) *http.
 	}
 }
 
-// listenAdminSocket binds the admin socket at path with mode 0600. Its directory must not be
-// reachable by group or others, so there is no window before the chmod in which another user
-// could connect. A stale socket left by a crash is replaced; a live one (another serve) is not.
-func listenAdminSocket(ctx context.Context, path string) (net.Listener, error) {
-	if len(path) > maxSocketPath {
-		return nil, fmt.Errorf("path %s is %d bytes, over the %d-byte unix socket limit", path, len(path), maxSocketPath)
-	}
-	if err := privateDir(filepath.Dir(path)); err != nil {
-		return nil, err
-	}
-	if err := removeStaleSocket(ctx, path); err != nil {
-		return nil, err
-	}
-	var lc net.ListenConfig
-	l, err := lc.Listen(ctx, "unix", path)
+// listenAdminSocket binds the admin socket at rel (relative to data, api.admin_socket) with
+// mode 0600. Its directory is created 0700 and must not be reachable by group or others, so
+// there is no window before the chmod in which another user could connect. A stale socket left
+// by a crash is replaced; a live one (another serve) is not. Every file operation goes through
+// the directory's root; only bind and dial take the socket's path (its root's name joined with
+// the socket's file name).
+func listenAdminSocket(ctx context.Context, data *os.Root, rel string) (l net.Listener, err error) {
+	dir, err := dirs.PrivateSub(data, filepath.Dir(rel))
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	name := filepath.Base(rel)
+	path := filepath.Join(dir.Name(), name)
+	if len(path) > maxSocketPath {
+		return nil, fmt.Errorf("path %s is %d bytes, over the %d-byte unix socket limit", path, len(path), maxSocketPath)
+	}
+	if err := removeStaleSocket(ctx, dir, name, path); err != nil {
+		return nil, err
+	}
+	var lc net.ListenConfig
+	l, err = lc.Listen(ctx, "unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := dir.Chmod(name, 0o600); err != nil {
 		return nil, errors.Join(err, l.Close())
 	}
 	return l, nil
 }
 
-// removeStaleSocket deletes a socket at path that nothing is listening on. Anything else at
-// path (a live socket, a regular file) is an error and left alone.
-func removeStaleSocket(ctx context.Context, path string) error {
-	st, err := os.Lstat(path)
+// removeStaleSocket deletes the socket name in dir (at path) when nothing is listening on it.
+// Anything else there (a live socket, a regular file) is an error and left alone.
+func removeStaleSocket(ctx context.Context, dir *os.Root, name, path string) error {
+	st, err := dir.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -294,7 +301,7 @@ func removeStaleSocket(ctx context.Context, path string) error {
 	if c, err := d.DialContext(ctx, "unix", path); err == nil {
 		return errors.Join(fmt.Errorf("%s is in use (is another `ao3mirror serve` running?)", path), c.Close())
 	}
-	return os.Remove(path)
+	return dir.Remove(name)
 }
 
 // serve runs both listeners until ctx ends or one fails, then shuts both down gracefully and

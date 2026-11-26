@@ -47,10 +47,10 @@ func (c *Controllers) GetImage(ctx context.Context, sha string) (Image, error) {
 		return Image{}, err
 	}
 	log := c.logger(ctx).With("image_id", img.ID, "content_type", img.ContentType, "bytes", img.Bytes)
-	if c.options.ImageDir == "" {
+	if c.options.ImageDir == nil {
 		return Image{}, errors.New("controllers: no image directory")
 	}
-	body, err := readImageFile(imagefetch.Path(c.options.ImageDir, img.SHA256, img.ContentType))
+	body, err := readImageFile(c.options.ImageDir, imagefetch.File(img.SHA256, img.ContentType))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		log.Warn("image file missing; reported as no image")
@@ -66,10 +66,10 @@ func (c *Controllers) GetImage(ctx context.Context, sha string) (Image, error) {
 	return Image{ContentType: img.ContentType, Body: body}, nil
 }
 
-// readImageFile reads at most MaxImageFileBytes from path; a larger file is an error. The error
-// holds the path, which is made of the hash and the extension only.
-func readImageFile(path string) (body []byte, err error) {
-	f, err := os.Open(path)
+// readImageFile reads at most MaxImageFileBytes from file name in dir; a larger file is an
+// error. The error holds the name, which is made of the hash and the extension only.
+func readImageFile(dir *os.Root, name string) (body []byte, err error) {
+	f, err := dir.Open(name)
 	if err != nil {
 		return nil, err
 	}

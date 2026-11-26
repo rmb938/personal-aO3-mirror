@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 // End-to-end tests against `ao3mirror dev ui-server`: the real binary, with the built UI
 // embedded, over a new data dir seeded with synthetic works (docs/part4-ui.md stage 4). Run
-// them with `make ui-e2e`, which builds the binary and points AO3MIRROR_E2E_BIN at it.
+// them with `make ui-e2e`, which builds the binary as bin/ao3mirror-e2e, where global setup runs it.
 export default defineConfig({
 	testDir: 'tests',
 	globalSetup: './tests/global-setup.ts',

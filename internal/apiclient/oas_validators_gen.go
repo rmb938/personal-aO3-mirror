@@ -123,24 +123,24 @@ func (s *BackupRequest) Validate() error {
 	var failures []validate.FieldError
 	if err := func() error {
 		if err := (validate.String{
-			MinLength:     2,
+			MinLength:     1,
 			MinLengthSet:  true,
-			MaxLength:     1024,
+			MaxLength:     128,
 			MaxLengthSet:  true,
 			Email:         false,
 			Hostname:      false,
-			Regex:         nil,
+			Regex:         regexMap["^[A-Za-z0-9_-][A-Za-z0-9._-]*$"],
 			MinNumeric:    0,
 			MinNumericSet: false,
 			MaxNumeric:    0,
 			MaxNumericSet: false,
-		}).Validate(string(s.Dir)); err != nil {
+		}).Validate(string(s.Name)); err != nil {
 			return errors.Wrap(err, "string")
 		}
 		return nil
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
-			Name:  "dir",
+			Name:  "name",
 			Error: err,
 		})
 	}

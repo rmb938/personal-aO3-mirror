@@ -12,7 +12,7 @@ import (
 )
 
 // SourceList is one page of sources.
-func SourceList(items []model.Source, total int, page, perPage int64) dto.List[dto.Source] {
+func SourceList(items []model.Source, total, page, perPage int) dto.List[dto.Source] {
 	return list(items, Source, total, page, perPage)
 }
 

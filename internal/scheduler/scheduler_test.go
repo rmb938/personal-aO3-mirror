@@ -17,6 +17,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/fakeao3"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/jobs"
@@ -77,7 +78,7 @@ func newEnvWith(t *testing.T, works int, opts func(*controllers.Options), client
 	}
 	e.cl, err = httpx.New(co)
 	require.NoError(t, err)
-	dataDir := t.TempDir()
+	dataDir := dirstest.Temp(t)
 	e.st, err = store.Open(context.Background(), dataDir, store.Options{Now: e.clk.Now, Logger: log})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, e.st.Close()) })
@@ -190,7 +191,7 @@ func TestPollRetriesUnfetchedDeepWork(t *testing.T) {
 func TestDetailAttrs(t *testing.T) {
 	require.Empty(t, detailAttrs(nil))
 	require.Empty(t, detailAttrs((*controllers.WorkDetail)(nil)), "a handler's nil detail")
-	require.Equal(t, []any{"chapters", float64(0), "class", "ok", "work_id", float64(7)},
+	require.Equal(t, []any{slog.Any("chapters", float64(0)), slog.Any("class", "ok"), slog.Any("work_id", float64(7))},
 		detailAttrs(&controllers.WorkDetail{WorkID: new(int64(7)), Class: new("ok"), Chapters: new(0)}),
 		"set fields only, zeros kept, sorted by key")
 }

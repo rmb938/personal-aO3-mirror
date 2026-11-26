@@ -16,6 +16,7 @@ UI_DIST  := internal/web/ui/dist
 # npm ci writes this file, so web deps are reinstalled only when the lockfile changes.
 WEB_DEPS := $(WEB)/node_modules/.package-lock.json
 # The binary the Playwright tests run (`dev ui-server`), with the UI embedded.
+# web/tests/global-setup.ts runs this fixed path; keep the two in step.
 E2E_BIN  := bin/ao3mirror-e2e
 # Extra flags for `playwright install`. CI sets --with-deps (installs the browser's system
 # libraries with apt); locally they are usually present already.
@@ -76,7 +77,7 @@ ui-check: web-deps
 ui-e2e: ui
 	$(GO) build -o $(E2E_BIN) ./cmd/ao3mirror
 	cd $(WEB) && $(NPM) exec -- playwright install --only-shell $(PLAYWRIGHT_INSTALL_FLAGS) chromium
-	AO3MIRROR_E2E_BIN=$(abspath $(E2E_BIN)) $(NPM) --prefix $(WEB) run e2e
+	$(NPM) --prefix $(WEB) run e2e
 
 # Formatters (gofmt, goimports) are configured in .golangci.yml.
 fmt:

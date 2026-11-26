@@ -30,7 +30,7 @@ func (a *Handlers) QueryTags(r *http.Request) (any, error) {
 		return nil, problem.WithDetail(dto.TypeRevealRequired, runtime.DetailFreeText)
 	}
 	f := convert.TagFilter(req)
-	f.Offset, f.Limit = int(p.Offset()), int(p.PerPage)
+	f.Offset, f.Limit = p.Offset(), p.PerPage
 	items, total, err := a.ctl.ListTags(r.Context(), f)
 	if err != nil {
 		return nil, err

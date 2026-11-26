@@ -134,7 +134,7 @@ func TestMigrateWorkSortKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, old.meta.Close())
 
-	s, err := Open(ctx, dir, Options{})
+	s, err := Open(ctx, rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s.Close()) }()
 	type keys struct{ title, creator string }

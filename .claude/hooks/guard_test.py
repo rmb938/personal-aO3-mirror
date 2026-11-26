@@ -1,12 +1,38 @@
 #!/usr/bin/env python3
 """Tests for guard.py. Run: python3 -I .claude/hooks/guard_test.py"""
+import importlib.util
 import json
 import os
+import random
+import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.path.join(HERE, "guard.py")
+
+sys.dont_write_bytecode = True  # importing guard.py must not leave a __pycache__ in the repo
+_spec = importlib.util.spec_from_file_location("guard", GUARD)
+guard = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(guard)
+
+# The regexes strip_allowed and reveal_doc_path replaced (quadratic on long input). They stay
+# here as the oracle: on short random input the new code must give exactly their results.
+OLD_ALLOWED = re.compile(
+    r"(\.?/?data/logs(/[^\s'\"|;&]*\.log[^\s'\"|;&]*)?"
+    r"|\.?/?data/debug/[^\s'\"|;&]*\.skel\.html"
+    r"|\.?/?data/debug/?(?=[\s'\"]|$))",
+    re.IGNORECASE,
+)
+OLD_REVEAL_DOC_PATH = re.compile(
+    r"(^|/)(docs/\S*\.md$|CLAUDE\.md$|\.claude/hooks/|\.claude/plans/)"
+)
+# Pieces the rules care about, plus case-folding traps (long s, Kelvin sign) and delimiters.
+PIECES = ["data/", "DATA/", "data", "logs", "LOGS", "logſ", "debug", "Debug", "/", ".", "./",
+          ".log", ".LOG", ".skel.html", ".SKEL.html", ".sKel.html", "docs/", "Docs/", ".md",
+          "CLAUDE.md", ".claude/hooks/", ".claude/plans/", ".claude/", "x", "ſ", "K", " ",
+          "\t", "\n", " ", "'", '"', "|", ";", "&", "=", ":", "(", "`", "images/", "a.db"]
 HOST = "archiveofourown" + ".org"
 REVEAL = "reveal_" + "fanwork"
 
@@ -121,6 +147,45 @@ def run(tool, ti):
     return p.returncode == 2
 
 
+def check_same_as_old_regexes():
+    """strip_allowed and reveal_doc_path match the old regexes exactly on random input."""
+    rng = random.Random(20261126)
+    failed = 0
+    for _ in range(200_000):
+        s = "".join(rng.choice(PIECES) for _ in range(rng.randint(0, 12)))
+        want, got = OLD_ALLOWED.sub(" ", s), guard.strip_allowed(s)
+        if got != want:
+            failed += 1
+            print(f"FAIL strip_allowed({s!r}) = {got!r}, old regex gave {want!r}")
+        want_doc, got_doc = bool(OLD_REVEAL_DOC_PATH.search(s)), guard.reveal_doc_path(s)
+        if got_doc != want_doc:
+            failed += 1
+            print(f"FAIL reveal_doc_path({s!r}) = {got_doc}, old regex gave {want_doc}")
+        if failed > 20:
+            break
+    return failed
+
+
+def check_linear_time():
+    """Inputs that made the old regexes quadratic (CodeQL py/polynomial-redos) stay fast."""
+    failed = 0
+    n = 200_000
+    for name, fn, s in [
+        ("strip_allowed, many data/logs/", guard.strip_allowed, "data/logs/" * n),
+        ("strip_allowed, many data/debug/", guard.strip_allowed, "data/debug/" * n),
+        ("strip_allowed, many ./data/logs", guard.strip_allowed, "./data/logs" * n),
+        ("reveal_doc_path, many /docs/", guard.reveal_doc_path, "/docs/" * n),
+        ("reveal_doc_path, many docs/ + space", guard.reveal_doc_path, "/docs/" * n + " .md"),
+    ]:
+        start = time.monotonic()
+        fn(s)
+        took = time.monotonic() - start
+        if took > 2:
+            failed += 1
+            print(f"FAIL {name}: {took:.1f}s on {len(s)} chars")
+    return failed
+
+
 def main():
     failed = 0
     for want, tool, ti in CASES:
@@ -128,7 +193,10 @@ def main():
         if got != want:
             failed += 1
             print(f"FAIL want_blocked={want} got={got}: {tool} {ti}")
-    print(f"{len(CASES) - failed}/{len(CASES)} passed")
+    print(f"{len(CASES) - failed}/{len(CASES)} cases passed")
+    failed += check_same_as_old_regexes()
+    failed += check_linear_time()
+    print("FAILED" if failed else "all passed")
     sys.exit(1 if failed else 0)
 
 

@@ -21,7 +21,7 @@ const fixturePHC = "$argon2id$fixture"
 
 func openUsersTest(t *testing.T) (*Users, *UsersTx) {
 	t.Helper()
-	u, err := OpenUsers(context.Background(), filepath.Join(t.TempDir(), "api"), Options{})
+	u, err := OpenUsers(context.Background(), rootAt(t, filepath.Join(t.TempDir(), "api")), Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, u.Close()) })
 	return u, u.AutoCommitForTestOnly()
@@ -36,11 +36,8 @@ func fixtureUser(name string) model.User {
 
 func TestOpenUsersFilesArePrivate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "api")
-	u, err := OpenUsers(context.Background(), dir, Options{})
+	u, err := OpenUsers(context.Background(), rootAt(t, dir), Options{})
 	require.NoError(t, err)
-	fi, err := os.Stat(dir)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
 	// Checked while open: SQLite removes -wal and -shm on a clean close.
 	for _, f := range []string{UsersFile, UsersFile + "-wal", UsersFile + "-shm"} {
 		fi, err := os.Stat(filepath.Join(dir, f))
@@ -50,11 +47,11 @@ func TestOpenUsersFilesArePrivate(t *testing.T) {
 	require.NoError(t, u.Close())
 
 	// Reopening is fine; a database others can read is refused.
-	u, err = OpenUsers(context.Background(), dir, Options{})
+	u, err = OpenUsers(context.Background(), rootAt(t, dir), Options{})
 	require.NoError(t, err)
 	require.NoError(t, u.Close())
 	require.NoError(t, os.Chmod(filepath.Join(dir, UsersFile), 0o644)) //nolint:gosec // G302: the test needs a world-readable db
-	_, err = OpenUsers(context.Background(), dir, Options{})
+	_, err = OpenUsers(context.Background(), rootAt(t, dir), Options{})
 	require.ErrorContains(t, err, "chmod 600")
 }
 

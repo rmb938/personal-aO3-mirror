@@ -307,7 +307,7 @@ func decodePHC(s string) (phcHash, error) {
 	}
 	m, okM := phcParam(kv[0], "m=", maxArgon2Memory)
 	t, okT := phcParam(kv[1], "t=", maxArgon2Time)
-	th, okP := phcParam(kv[2], "p=", maxArgon2Threads)
+	th, okP := phcThreads(kv[2])
 	k, okK := phcParam(kv[3], "k=", MaxMasterKeyID)
 	salt, okSalt := phcBytes(parts[4], maxArgon2Bytes)
 	sealed, okSealed := phcBytes(parts[5], maxArgon2Bytes+sealedOverhead)
@@ -315,23 +315,34 @@ func decodePHC(s string) (phcHash, error) {
 		return phcHash{}, ErrMalformedHash
 	}
 	p := Argon2Params{
-		Memory: uint32(m), Time: uint32(t), Threads: uint8(th), //nolint:gosec // G115: bounds-checked above
-		SaltLen: uint32(len(salt)), KeyLen: uint32(len(sealed) - sealedOverhead), //nolint:gosec // G115: bounds-checked above
+		Memory: m, Time: t, Threads: th,
+		SaltLen: uint32(len(salt)), KeyLen: uint32(len(sealed) - sealedOverhead), //nolint:gosec // G115: phcBytes bounds both lengths
 	}
 	if p.check() != nil {
 		return phcHash{}, ErrMalformedHash
 	}
-	return phcHash{params: p, keyID: uint32(k), salt: salt, sealed: sealed}, nil //nolint:gosec // G115: phcParam bounds k by MaxMasterKeyID
+	return phcHash{params: p, keyID: k, salt: salt, sealed: sealed}, nil
 }
 
-// phcParam parses "<name><decimal>" with no leading zeros and a value at most max.
-func phcParam(s, name string, maxVal uint64) (uint64, bool) {
+// phcParam parses "<name><decimal>" with no leading zeros and a value at most maxVal. It
+// parses at 32 bits, so the result is a uint32 with no narrowing conversion.
+func phcParam(s, name string, maxVal uint32) (uint32, bool) {
 	v, ok := strings.CutPrefix(s, name)
 	n, err := strconv.ParseUint(v, 10, 32)
-	if !ok || err != nil || strconv.FormatUint(n, 10) != v || n > maxVal {
+	if !ok || err != nil || strconv.FormatUint(n, 10) != v || n > uint64(maxVal) {
 		return 0, false
 	}
-	return n, true
+	return uint32(n), true
+}
+
+// phcThreads is phcParam for the "p=" field, parsed at 8 bits to fit Argon2Params.Threads.
+func phcThreads(s string) (uint8, bool) {
+	v, ok := strings.CutPrefix(s, "p=")
+	n, err := strconv.ParseUint(v, 10, 8)
+	if !ok || err != nil || strconv.FormatUint(n, 10) != v || n > maxArgon2Threads {
+		return 0, false
+	}
+	return uint8(n), true
 }
 
 // phcBytes decodes a salt or hash field of at most maxLen bytes in its one canonical form.

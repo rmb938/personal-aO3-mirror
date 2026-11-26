@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs"
 	"github.com/rmb938/personal-aO3-mirror/internal/e2eseed"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
 )
@@ -91,14 +93,18 @@ func uiServer(ctx context.Context, addr, level string, out, errOut io.Writer) (e
 	}
 	url := "http://" + tcp.Addr().String()
 	cfg := uiServerConfig(dir, url)
-	seeded, err := e2eseed.Seed(ctx, e2eseed.Dirs{Data: cfg.DataDir, Images: cfg.Path(imageDir),
-		Accounts: filepath.Dir(cfg.Path(cfg.API.AdminSocket))}, log) // where openAuth looks
+	seeded, err := seedUIData(ctx, cfg, log)
 	if err != nil {
 		return errors.Join(err, tcp.Close())
 	}
+	data, err := openDataDirs(cfg)
+	if err != nil {
+		return errors.Join(err, tcp.Close())
+	}
+	defer func() { err = errors.Join(err, data.Close()) }()
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	s, err := newServerOn(ctx, cfg, log, false, tcp)
+	s, err := newServerOn(ctx, cfg, data, log, false, tcp)
 	if err != nil {
 		return err
 	}
@@ -112,6 +118,17 @@ func uiServer(ctx context.Context, addr, level string, out, errOut io.Writer) (e
 		stop() // nobody learns the URL: shut down at once
 	}
 	return errors.Join(err, <-done)
+}
+
+// seedUIData fills cfg's new, empty data dir with the e2e fixtures, where serve reads them.
+func seedUIData(ctx context.Context, cfg config.Config, log *slog.Logger) (seeded e2eseed.Seeded, err error) {
+	root, err := dirs.OpenData(cfg.DataDir)
+	if err != nil {
+		return e2eseed.Seeded{}, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return e2eseed.Seed(ctx, e2eseed.Dirs{Data: root, Images: imageDir,
+		Accounts: filepath.Dir(cfg.API.AdminSocket)}, log) // where openAuth looks
 }
 
 // uiServerConfig is the defaults over dir, with url as api.public_url and rate limits high

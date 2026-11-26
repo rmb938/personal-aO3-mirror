@@ -16,7 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/dto"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/problem"
+	"github.com/rmb938/personal-aO3-mirror/internal/web/api/request"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/route"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/runtime"
 	"github.com/rmb938/personal-aO3-mirror/internal/web/api/testutil"
@@ -181,14 +184,15 @@ func TestAdminRotateMasterKey(t *testing.T) {
 	requirePair(t, postJSON(t, h, route.AuthLoginTOTP, recoveryBody(seedChallengeToken, seedRecoveryCode)))
 }
 
-// TestAdminBackup writes a backup, then refuses the same directory again, one whose parent is
-// missing and a relative path. The path never reaches the logs.
+// TestAdminBackup writes a backup under the backup directory, then refuses the same name again
+// and names that are not one plain component (nothing is written outside the directory). The
+// path never reaches the logs.
 func TestAdminBackup(t *testing.T) {
 	a, logs := testutil.NewAPI(t, testOptions, testNew, nil)
 	h := a.Admin()
-	dir := filepath.Join(t.TempDir(), "backup")
-	body := func(d string) string { return `{"dir":` + strconv.Quote(d) + `}` }
-	requireNoContent(t, postJSON(t, h, route.AdminBackup, body(dir)), "backup")
+	body := func(n string) string { return `{"name":` + strconv.Quote(n) + `}` }
+	requireNoContent(t, postJSON(t, h, route.AdminBackup, body("nightly-1")), "backup")
+	dir := filepath.Join(lastBackupDir, "nightly-1")
 	for _, name := range []string{"users.db", "keys.db"} {
 		fi, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err, name)
@@ -196,12 +200,24 @@ func TestAdminBackup(t *testing.T) {
 	}
 	assert.Contains(t, logs.String(), `"event":"backup_created"`)
 
-	w := postJSON(t, h, route.AdminBackup, body(dir))
+	w := postJSON(t, h, route.AdminBackup, body("nightly-1"))
 	require.Equal(t, http.StatusConflict, w.Code)
 	requireProblem(t, w, dto.TypeAlreadyExists, runtime.DetailBackupExists.Message())
-	w = postJSON(t, h, route.AdminBackup, body(filepath.Join(dir, "missing", "backup")))
-	require.Equal(t, http.StatusNotFound, w.Code)
-	requireProblem(t, w, dto.TypeNotFound, runtime.DetailNoBackupParent.Message())
-	assert.Contains(t, problemPointers(t, postJSON(t, h, route.AdminBackup, body("relative/backup")), "relative"), "/dir")
-	assert.NotContains(t, logs.String(), dir, "no path in the logs")
+	for _, n := range []string{"", "..", "../escape", "a/b", "/abs/dir", ".hidden"} {
+		assert.Contains(t, problemPointers(t, postJSON(t, h, route.AdminBackup, body(n)), n), "/name", "%q", n)
+	}
+	_, err := os.Stat(filepath.Join(filepath.Dir(lastBackupDir), "escape"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	assert.NotContains(t, logs.String(), lastBackupDir, "no path in the logs")
+}
+
+// The request's backup name rule (stdlib only) is the controller's: same bound, same verdicts.
+func TestBackupNameRulesAgree(t *testing.T) {
+	require.Equal(t, controllers.MaxBackupNameBytes, request.MaxBackupNameBytes)
+	for _, n := range []string{"", "b", ".", "..", ".x", "-x", "_x", "a.b", "a/b", `a\b`, "a b", "é", "a\x00",
+		strings.Repeat("a", request.MaxBackupNameBytes), strings.Repeat("a", request.MaxBackupNameBytes+1)} {
+		var v problem.Validation
+		(&request.Backup{Name: n}).Validate(&v)
+		assert.Equal(t, controllers.ValidBackupName(n), v.Len() == 0, "%q", n)
+	}
 }

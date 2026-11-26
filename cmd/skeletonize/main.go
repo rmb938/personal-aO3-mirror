@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/config"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs"
 	"github.com/rmb938/personal-aO3-mirror/internal/httpx"
 	"github.com/rmb938/personal-aO3-mirror/internal/logx"
 	"github.com/rmb938/personal-aO3-mirror/internal/skeleton"
@@ -132,8 +133,13 @@ func fetch(cfgPath, raw string, retries int) ([]byte, error) {
 		kind = httpx.KindWork
 	}
 
+	data, err := dirs.OpenData(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	defer data.Close()
 	logger, closer, err := logx.New(logx.Options{
-		Level: cfg.Log.Level, File: cfg.Path(cfg.Log.File),
+		Level: cfg.Log.Level, Dir: data, File: cfg.Log.File,
 		MaxBytes: int64(cfg.Log.MaxSizeMB) << 20, MaxFiles: cfg.Log.MaxFiles,
 	})
 	if err != nil {

@@ -42,6 +42,15 @@ describe('externalizeBoot', () => {
 		expect(() => externalizeBoot(html, '/x')).toThrow(/expected one inline script/);
 	});
 
+	it.each(['</script >', '</script\t\n bar>', '</SCRIPT>', '</script/>'])(
+		'ends the script at %j, as a browser does',
+		(end) => {
+			const got = externalizeBoot(page(`<script>a()${end}`), '/x');
+			expect(got.script).toBe('a()');
+			expect(got.html).toBe(page('<script src="/x/' + got.name + '"></script>'));
+		}
+	);
+
 	it('rejects an inline script with attributes', () => {
 		expect(() => externalizeBoot(page('<script nonce="n">a()</script>'), '/x')).toThrow(/attributes/);
 	});
@@ -61,6 +70,7 @@ describe('assertNoInline', () => {
 	it.each([
 		['an inline script', '<script>a()</script>', /inline script/],
 		['an inline module script', '<script type="module">a()</script>', /inline script/],
+		['an inline script with an odd end tag', '<script>a()</script\t\n bar>', /inline script/],
 		['a style element', '<style>p{}</style>', /<style>/],
 		['a style attribute', '<div style="display: contents"></div>', /style attribute/],
 		['an event handler', '<img src="/a.png" onerror="a()">', /event handler/]

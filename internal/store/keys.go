@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
@@ -46,24 +45,20 @@ type KeysTx struct {
 	KeysReadTx
 }
 
-// OpenKeys opens (creating if needed) dir/keys.db and applies its migrations. dir is made 0700
-// when missing; the database is created 0600 (SQLite gives its journal the same mode), and an
-// existing one readable by group or others is refused.
-func OpenKeys(ctx context.Context, dir string, o Options) (*Keys, error) {
+// OpenKeys opens (creating if needed) keys.db in dir, the API's private directory opened as an
+// os.Root (dirs.PrivateSub), and applies its migrations. The database is created 0600 (SQLite
+// gives its journal the same mode), and an existing one readable by group or others is refused.
+func OpenKeys(ctx context.Context, dir *os.Root, o Options) (*Keys, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("store: create keys dir: %w", err)
-	}
-	path := filepath.Join(dir, KeysFile)
-	if err := createPrivate(path); err != nil {
+	if err := createPrivate(dir, KeysFile); err != nil {
 		return nil, err
 	}
-	db, err := openDB(ctx, path, dbOptions{rollback: true, pragmas: []string{"secure_delete(ON)"}})
+	db, err := openDB(ctx, dir, KeysFile, dbOptions{rollback: true, pragmas: []string{"secure_delete(ON)"}})
 	if err != nil {
 		return nil, err
 	}

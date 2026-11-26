@@ -69,9 +69,10 @@ func idFromLocation(loc string) (int64, bool) {
 	return id, err == nil && id > 0
 }
 
-// parseID parses a positional id argument, reporting a bad one on errOut.
+// parseID parses a positional id argument, reporting a bad one on errOut. apiclient.ID is an
+// int, so it parses with Atoi: no narrowing conversion.
 func parseID(errOut io.Writer, s string) (apiclient.ID, bool) {
-	id, err := strconv.ParseInt(s, 10, 64)
+	id, err := strconv.Atoi(s)
 	if err != nil || id <= 0 {
 		fmt.Fprintf(errOut, "bad id %q\n", s)
 		return 0, false

@@ -26,6 +26,6 @@ func Job(j model.Job) dto.Job {
 }
 
 // JobList maps one page of jobs.
-func JobList(items []model.Job, total int, page, perPage int64) dto.List[dto.Job] {
+func JobList(items []model.Job, total, page, perPage int) dto.List[dto.Job] {
 	return list(items, Job, total, page, perPage)
 }

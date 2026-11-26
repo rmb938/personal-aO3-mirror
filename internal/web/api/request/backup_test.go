@@ -8,15 +8,15 @@ import (
 )
 
 func TestBackupValid(t *testing.T) {
-	for _, d := range []string{"/srv/backups/2026-11-24", "/b", "/" + strings.Repeat("a", MaxBackupDirBytes-1)} {
-		assert.Empty(t, errorsOf(t, &Backup{Dir: d}), d)
+	for _, n := range []string{"2026-11-24", "b", "nightly_01.bak", "A-z.0_9", strings.Repeat("a", MaxBackupNameBytes)} {
+		assert.Empty(t, errorsOf(t, &Backup{Name: n}), n)
 	}
 }
 
 func TestBackupInvalid(t *testing.T) {
-	want := map[string]string{"/dir": detailBackupDir.Message()}
-	for _, d := range []string{"", "/", "relative/dir", "./dir", "/srv/backups/", "/srv/../etc", "/srv/./b",
-		"//srv", "/srv\x00b", "/srv/\xff", "/" + strings.Repeat("a", MaxBackupDirBytes)} {
-		assert.Equal(t, want, errorsOf(t, &Backup{Dir: d}), "%q", d)
+	want := map[string]string{"/name": detailBackupName.Message()}
+	for _, n := range []string{"", ".", "..", ".hidden", "a/b", "/abs", "../up", `a\b`, "a b", "a\x00b", "é",
+		"\xff", strings.Repeat("a", MaxBackupNameBytes+1)} {
+		assert.Equal(t, want, errorsOf(t, &Backup{Name: n}), "%q", n)
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
 	"github.com/rmb938/personal-aO3-mirror/internal/controllers"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -67,20 +68,27 @@ const testPublicURL = "https://mirror.example.com"
 // cheapArgon2 keeps the tests fast.
 var cheapArgon2 = auth.Argon2Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
+// lastBackupDir is the backup directory (api.backup_dir) of the Auth controller newTestAuth
+// made last; the tests don't run in parallel.
+var lastBackupDir string
+
 // newTestAuth opens a temp users.db and keys.db, seeds the accounts above and returns the
 // Auth controller over them (clocked at seedTime, logging to log).
 func newTestAuth(tb testing.TB, log *slog.Logger) *controllers.Auth {
 	tb.Helper()
 	ctx := context.Background()
-	dir := filepath.Join(tb.TempDir(), "api")
-	users, err := store.OpenUsers(ctx, dir, store.Options{Logger: log})
+	base := tb.TempDir()
+	dir := filepath.Join(base, "api")
+	lastBackupDir = filepath.Join(base, "backups")
+	api := dirstest.At(tb, dir, 0o700)
+	users, err := store.OpenUsers(ctx, api, store.Options{Logger: log})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, users.Close()) })
-	keys, err := store.OpenKeys(ctx, dir, store.Options{Logger: log})
+	keys, err := store.OpenKeys(ctx, api, store.Options{Logger: log})
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, keys.Close()) })
 	mk, err := controllers.NewMasterKeys(ctx, controllers.MasterKeysOptions{Keys: keys, Users: users, Logger: log,
-		Now: func() time.Time { return seedTime }})
+		Now: func() time.Time { return seedTime }, BackupDir: dirstest.At(tb, lastBackupDir, 0o700)})
 	require.NoError(tb, err)
 	secrets := mk.Keyring()
 	hasher, err := auth.NewHasher(secrets, auth.HasherOptions{Params: cheapArgon2})

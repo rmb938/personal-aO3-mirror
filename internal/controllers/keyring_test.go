@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rmb938/personal-aO3-mirror/internal/auth"
+	"github.com/rmb938/personal-aO3-mirror/internal/dirs/dirstest"
 	"github.com/rmb938/personal-aO3-mirror/internal/model"
 	"github.com/rmb938/personal-aO3-mirror/internal/store"
 )
@@ -28,10 +29,11 @@ func TestNewMasterKeys(t *testing.T) {
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
 
-	users, err := store.OpenUsers(ctx, dir, store.Options{})
+	api := dirstest.At(t, dir, 0o700)
+	users, err := store.OpenUsers(ctx, api, store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, users.Close()) })
-	keys, err := store.OpenKeys(ctx, dir, store.Options{})
+	keys, err := store.OpenKeys(ctx, api, store.Options{})
 	require.NoError(t, err)
 	m1, err := NewMasterKeys(ctx, MasterKeysOptions{Keys: keys, Users: users, Logger: log, Now: now})
 	require.NoError(t, err)
@@ -46,7 +48,7 @@ func TestNewMasterKeys(t *testing.T) {
 
 	// A restart loads the same key: what r1 encrypted still decrypts.
 	enc := r1.EncryptTOTPSecret(auth.UserTOTP(1), []byte("fixture secret"))
-	keys, err = store.OpenKeys(ctx, dir, store.Options{})
+	keys, err = store.OpenKeys(ctx, api, store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, keys.Close()) })
 	m2, err := NewMasterKeys(ctx, MasterKeysOptions{Keys: keys, Users: users, Logger: log, Now: now})
@@ -406,7 +408,7 @@ func TestMasterKeyMissingKeyRefusesStart(t *testing.T) {
 	_, err := e.mk.RotateMasterKey(ctx) // everything is under key 2 now
 	require.NoError(t, err)
 
-	other, err := store.OpenKeys(ctx, filepath.Join(t.TempDir(), "api"), store.Options{})
+	other, err := store.OpenKeys(ctx, dirstest.At(t, filepath.Join(t.TempDir(), "api"), 0o700), store.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, other.Close()) })
 	_, err = NewMasterKeys(ctx, MasterKeysOptions{Keys: other, Users: e.users, Logger: e.opts.Logger, Now: e.clk.Now})
