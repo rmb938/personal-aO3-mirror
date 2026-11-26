@@ -1631,12 +1631,13 @@ export interface CreateResetRequest {
 
 export interface BackupRequest {
   /**
-     * The new backup directory: an absolute, clean path (no trailing slash, `.` or `..`
-     * segments), at most 1024 bytes.
-     * @minLength 2
-     * @maxLength 1024
+     * The new backup's directory under `api.backup_dir`: one plain path component of
+     * letters, digits, `.`, `_` and `-`, not starting with `.`.
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[A-Za-z0-9_-][A-Za-z0-9._-]*$
      */
-  dir: string;
+  name: string;
 }
 
 export interface InviteLink {
@@ -5392,11 +5393,12 @@ export const getBackupUrl = () => {
 }
 
 /**
- * `serve` creates `dir` (0700) and writes `users.db` and `keys.db` into it (0600), as
- * one consistent pair: no master key rotation or deletion runs in between. The copies are
- * as sensitive as the live files. To restore, stop `serve`, copy both into `data/api/`
- * and start it. `dir` must not exist (409 already-exists); its parent must (404).
- * @summary Copy users.db and keys.db into a new directory.
+ * `serve` creates `name` (0700) under `api.backup_dir` (default `data/backups/`, created
+ * 0700 and refused if group or others can reach it) and writes `users.db` and `keys.db`
+ * into it (0600), as one consistent pair: no master key rotation or deletion runs in
+ * between. The copies are as sensitive as the live files. To restore, stop `serve`, copy
+ * both into `data/api/` and start it. `name` must not exist yet (409 already-exists).
+ * @summary Copy users.db and keys.db into a new backup directory.
  */
 export const backup = async (backupRequest: BackupRequest, options?: Parameters<typeof apiFetch>[1]): Promise<backupResponse> => {
 

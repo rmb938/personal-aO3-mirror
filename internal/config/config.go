@@ -49,6 +49,9 @@ type API struct {
 	Listen string `yaml:"listen"`
 	// AdminSocket is the admin unix socket, relative to data_dir.
 	AdminSocket string `yaml:"admin_socket"`
+	// BackupDir is where `ao3mirror backup NAME` writes NAME/users.db and NAME/keys.db,
+	// relative to data_dir; serve creates it 0700.
+	BackupDir string `yaml:"backup_dir"`
 	// TrustedProxies are the CIDR prefixes whose X-Forwarded-For is trusted.
 	TrustedProxies []string `yaml:"trusted_proxies"`
 	// AllowedHosts are the host names (no port) the public listener answers to; any other Host
@@ -202,6 +205,7 @@ func Default() Config {
 		API: API{
 			Listen:          "127.0.0.1:8080",
 			AdminSocket:     "api/admin.sock",
+			BackupDir:       "backups",
 			TrustedProxies:  []string{"127.0.0.1/32", "::1/128"},
 			AllowedHosts:    []string{"127.0.0.1", "::1", "localhost"},
 			RequestTimeout:  10 * time.Second,
@@ -370,6 +374,9 @@ func (a API) validate() []error {
 	}
 	if !filepath.IsLocal(a.AdminSocket) { // also rejects "", absolute paths and ".." escapes
 		add("api.admin_socket %q must be a relative path inside data_dir", a.AdminSocket)
+	}
+	if !filepath.IsLocal(a.BackupDir) {
+		add("api.backup_dir %q must be a relative path inside data_dir", a.BackupDir)
 	}
 	if len(a.TrustedProxies) == 0 {
 		add("api.trusted_proxies must not be empty (default [127.0.0.1/32, ::1/128])")

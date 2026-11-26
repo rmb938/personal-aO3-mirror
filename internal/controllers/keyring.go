@@ -23,12 +23,13 @@ const masterKeyRetention = 7 * 24 * time.Hour
 // creates the first master key, rotates the key (re-encrypting users.db) and deletes retired
 // keys. It is safe to share; every rotation step runs under one mutex.
 type MasterKeys struct {
-	keys     *store.Keys
-	users    *store.Users
-	live     *auth.LiveKeyring
-	log      *slog.Logger
-	now      func() time.Time
-	rotation time.Duration
+	keys      *store.Keys
+	users     *store.Users
+	live      *auth.LiveKeyring
+	log       *slog.Logger
+	now       func() time.Time
+	rotation  time.Duration
+	backupDir string
 
 	mu sync.Mutex // serializes rotation and deletion, so keys.db and live agree under it
 }
@@ -41,6 +42,9 @@ type MasterKeysOptions struct {
 	Now    func() time.Time
 	// Rotation is auth.master_key_rotation: RotateMasterKeyIfDue replaces a key this old; 720h.
 	Rotation time.Duration
+	// BackupDir is the directory BackupDatabases writes backups into (api.backup_dir under
+	// data_dir); empty refuses backups.
+	BackupDir string
 }
 
 // NewMasterKeys loads the master keys from keys.db, creating the first (active) key when
@@ -58,7 +62,7 @@ func NewMasterKeys(ctx context.Context, opts MasterKeysOptions) (*MasterKeys, er
 		opts.Now = time.Now
 	}
 	m := &MasterKeys{keys: opts.Keys, users: opts.Users, log: opts.Logger.With("component", "auth"),
-		now: opts.Now, rotation: durationOr(opts.Rotation, 720*time.Hour)}
+		now: opts.Now, rotation: durationOr(opts.Rotation, 720*time.Hour), backupDir: opts.BackupDir}
 	created := int64(0)
 	mks, err := store.WriteKeysValue(ctx, m.keys, func(ctx context.Context, tx *store.KeysTx) ([]model.MasterKey, error) {
 		mks, err := tx.MasterKeys(ctx)

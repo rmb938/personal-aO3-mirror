@@ -274,6 +274,7 @@ data changes. Drift is accepted (AO3 has it too). The skipping cost is bounded b
 api:
   listen: 127.0.0.1:8080     # public listener; the Cloudflare Tunnel points here
   admin_socket: api/admin.sock   # relative to data_dir
+  backup_dir: backups            # `ao3mirror backup NAME` writes here; relative to data_dir
   trusted_proxies: ["127.0.0.1/32", "::1/128"]   # quoted: bare ::1 breaks a YAML flow list
   allowed_hosts: ["127.0.0.1", "::1", "localhost"]  # public listener's Host names (stage 15d)
   request_timeout: 10s
