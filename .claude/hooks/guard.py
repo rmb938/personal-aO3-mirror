@@ -33,13 +33,20 @@ PROTECTED = re.compile(
     re.IGNORECASE,
 )
 
-# Content-free exceptions; removed before checking PROTECTED.
-ALLOWED = re.compile(
-    r"(\.?/?data/logs(/[^\s'\"|;&]*\.log[^\s'\"|;&]*)?"
-    r"|\.?/?data/debug/[^\s'\"|;&]*\.skel\.html"
-    r"|\.?/?data/debug/?(?=[\s'\"]|$))",
-    re.IGNORECASE,
-)
+# Content-free exceptions, removed by strip_allowed before checking PROTECTED. Each starts
+# with an optional "./" or "/" and any case:
+#   data/logs                         the bare logs dir (only those 9 characters)
+#   data/logs/<rest of the word>      when the rest holds ".log": the whole word
+#   data/debug/<...>.skel.html        up to the word's last ".skel.html"
+#   data/debug or data/debug/         ending the word, before whitespace, a quote or the end
+# A word is a run of characters other than whitespace, quotes, | ; and &. The rules were once
+# one regex with [^...]* tails, which rescans from every "data/" in a long word: quadratic
+# (a ReDoS on the hook's own input). strip_allowed scans each word once instead.
+WORD = re.compile(r"[^\s'\"|;&]+")
+ALLOWED_HEAD = re.compile(r"\.?/?data/(logs|debug)", re.IGNORECASE)
+LOG_EXT = re.compile(r"\.log", re.IGNORECASE)
+SKEL_EXT = re.compile(r"\.skel\.html", re.IGNORECASE)
+BARE_DEBUG_END = re.compile(r"[\s'\"]")
 
 SQLITE_CLI = re.compile(r"(^|[\s;&|`(])(sqlite3?|litecli|sqlite-utils|datasette)\b")
 
@@ -59,10 +66,8 @@ REVEAL_PARAM = re.compile(
     r"reveal(_|%5f|%255f)fanwork\s*(=|%3d|%253d)|reveal(%5f|%255f)fanwork",
     re.IGNORECASE,
 )
-# Files where the literal may appear (docs and rules, not code that could send it).
-REVEAL_DOC_PATH = re.compile(
-    r"(^|/)(docs/\S*\.md$|CLAUDE\.md$|\.claude/hooks/|\.claude/plans/)"
-)
+# Files where the literal may appear (docs and rules, not code that could send it): see
+# reveal_doc_path.
 
 # Any `ao3mirror serve` Claude starts must carry --no-reveal (hashed-only server).
 # The command is tokenized like a shell would (quotes kept together), split into simple
@@ -158,8 +163,69 @@ def block(reason: str) -> None:
     sys.exit(2)
 
 
+def strip_allowed(text: str) -> str:
+    """Replaces each allowed span (see WORD above) with a space, in one pass over text."""
+    out = []
+    last = 0
+    for w in WORD.finditer(text):
+        word, base = w.group(), w.start()
+        # Computed once per word, so each "data/" in it costs O(1) below.
+        log_starts = [m.start() for m in LOG_EXT.finditer(word)]
+        skels = list(SKEL_EXT.finditer(word))
+        last_log = log_starts[-1] if log_starts else -1
+        last_skel = skels[-1] if skels else None
+        after = text[w.end():w.end() + 1]
+        bare_ok = after == "" or BARE_DEBUG_END.fullmatch(after) is not None
+        pos = 0
+        while (h := ALLOWED_HEAD.search(word, pos)) is not None:
+            e = h.end()
+            slash = word[e:e + 1] == "/"
+            if h.group(1)[0] in "lL":  # logs
+                end = len(word) if slash and last_log >= e + 1 else e
+            elif slash and last_skel is not None and last_skel.start() >= e + 1:
+                end = last_skel.end()
+            elif bare_ok and (e == len(word) or (e == len(word) - 1 and slash)):
+                end = len(word)
+            else:  # debug, but none of its forms
+                pos = e
+                continue
+            out.append(text[last:base + h.start()])
+            out.append(" ")
+            last = base + end
+            pos = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def reveal_doc_path(path: str) -> bool:
+    """Whether path is a doc or rules file the reveal param literal may be written to:
+    docs/<no whitespace>.md, CLAUDE.md, or anything under .claude/hooks/ or .claude/plans/,
+    each at the start of path or after a "/". "Ends with" also allows one trailing newline.
+    No regex: a `docs/\\S*\\.md$` search rescans from every "/docs/" (quadratic)."""
+
+    def at_part(s: str, i: int) -> bool:
+        return i == 0 or s[i - 1] == "/"
+
+    for d in (".claude/hooks/", ".claude/plans/"):
+        if path.startswith(d) or "/" + d in path:
+            return True
+    body = path[:-1] if path.endswith("\n") else path
+    if body.endswith("CLAUDE.md") and at_part(body, len(body) - len("CLAUDE.md")):
+        return True
+    if not body.endswith(".md"):
+        return False
+    # The "docs/" must come after the last whitespace and leave room for ".md".
+    ws = max((i for i, c in enumerate(body) if c.isspace()), default=-1)
+    i = body.find("docs/", ws + 1)
+    while i != -1 and i + len("docs/") <= len(body) - len(".md"):
+        if at_part(body, i):
+            return True
+        i = body.find("docs/", i + 1)
+    return False
+
+
 def touches_protected(text: str) -> bool:
-    return bool(PROTECTED.search(ALLOWED.sub(" ", text)))
+    return bool(PROTECTED.search(strip_allowed(text)))
 
 
 def main() -> None:
@@ -217,7 +283,7 @@ def main() -> None:
         if (
             tool != "Read"
             and REVEAL_PARAM.search(written_text(ti))
-            and not REVEAL_DOC_PATH.search(path)
+            and not reveal_doc_path(path)
         ):
             block("the reveal param literal belongs only in docs; use api.RevealParam in code")
         return
