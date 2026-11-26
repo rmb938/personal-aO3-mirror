@@ -2,13 +2,8 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"maps"
-	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -30,28 +25,12 @@ func openAt(t *testing.T, dir string, upTo int) *Store {
 	return s
 }
 
-// The migration list is the migrations directory: every database there, every file in each in
-// name order, numbered 1, 2, 3, ... with no gaps, and each entry's SQL is its file's.
-func TestMigrationsListFiles(t *testing.T) {
-	dbs, err := os.ReadDir("migrations")
-	require.NoError(t, err)
-	var names []string
-	for _, d := range dbs {
-		require.True(t, d.IsDir(), d.Name())
-		names = append(names, d.Name())
-		files, err := os.ReadDir(filepath.Join("migrations", d.Name()))
-		require.NoError(t, err)
-		list := migrations[d.Name()]
-		require.Len(t, list, len(files), d.Name())
-		for i, f := range files { // os.ReadDir sorts by name
-			require.Equal(t, f.Name(), list[i].file, d.Name())
-			require.True(t, strings.HasPrefix(f.Name(), fmt.Sprintf("%04d_", i+1)), "%s/%s: version %d", d.Name(), f.Name(), i+1)
-			body, err := os.ReadFile(filepath.Join("migrations", d.Name(), f.Name()))
-			require.NoError(t, err)
-			require.Equal(t, string(body), list[i].sql, "%s/%s", d.Name(), f.Name())
-		}
+// Every Go step names a migration file (a misspelt key would never run).
+func TestMigrationStepsNameFiles(t *testing.T) {
+	for key := range migrationSteps {
+		_, err := migrationsFS.ReadFile("migrations/" + key)
+		require.NoError(t, err, key)
 	}
-	require.ElementsMatch(t, names, slices.Collect(maps.Keys(migrations)))
 }
 
 // 0003 turns text job targets into integers and keeps every job event.

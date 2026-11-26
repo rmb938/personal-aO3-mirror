@@ -8,18 +8,26 @@ package store
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"math"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
 	_ "modernc.org/sqlite"
 )
+
+//go:embed migrations
+var migrationsFS embed.FS
 
 const (
 	MetaFile    = "meta.db"
@@ -184,18 +192,21 @@ func (s *Store) Close() error {
 
 func (c *core) unix() int64 { return c.now().Unix() }
 
-// migrate applies the migrations of database name (migrations.go) in order, each in its own
-// transaction.
+// migrationSteps are Go steps for migrations whose data change is too costly or too intricate in
+// SQL, keyed "<db>/<file>". A step runs after its file's SQL, in the same transaction.
+var migrationSteps = map[string]func(ctx context.Context, tx querier) error{
+	"meta/0006_work_crossover.sql":   backfillCrossover,
+	"meta/0007_work_sort_keys.sql":   backfillSortKeys,
+	"meta/0008_works_fts_series.sql": backfillFTS,
+}
+
+// migrate applies migrations/<name>/NNNN_*.sql in order, each in its own transaction.
 func (c *core) migrate(ctx context.Context, db *sql.DB, name string) error {
 	return c.migrateTo(ctx, db, name, math.MaxInt)
 }
 
 // migrateTo is migrate stopping after version upTo (tests build older schemas with it).
 func (c *core) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int) error {
-	list, ok := migrations[name]
-	if !ok {
-		return fmt.Errorf("store: no migrations for database %s", name)
-	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("store: %s migrations table: %w", name, err)
@@ -204,40 +215,53 @@ func (c *core) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int)
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&current); err != nil {
 		return err
 	}
-	if err := checkApplied(ctx, db, name, list); err != nil {
+	dir := "migrations/" + name
+	entries, err := fs.ReadDir(migrationsFS, dir)
+	if err != nil {
+		return err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if err := checkApplied(ctx, db, name, entries); err != nil {
 		return err
 	}
 	applied := 0
-	for i, m := range list {
-		ver := i + 1
+	for _, e := range entries {
+		ver, err := strconv.Atoi(strings.SplitN(e.Name(), "_", 2)[0])
+		if err != nil {
+			return fmt.Errorf("store: bad migration name %s", e.Name())
+		}
 		if ver <= current {
 			continue
 		}
 		if ver > upTo {
 			break
 		}
+		body, err := migrationsFS.ReadFile(dir + "/" + e.Name())
+		if err != nil {
+			return err
+		}
 		start := time.Now()
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-			return errors.Join(fmt.Errorf("store: %s migration %s: %w", name, m.file, err), tx.Rollback())
+		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
+			return errors.Join(fmt.Errorf("store: %s migration %s: %w", name, e.Name(), err), tx.Rollback())
 		}
-		if m.step != nil {
-			if err := m.step(ctx, tx); err != nil {
-				return errors.Join(fmt.Errorf("store: %s migration %s step: %w", name, m.file, err), tx.Rollback())
+		if step := migrationSteps[name+"/"+e.Name()]; step != nil {
+			if err := step(ctx, tx); err != nil {
+				return errors.Join(fmt.Errorf("store: %s migration %s step: %w", name, e.Name(), err), tx.Rollback())
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES (?,?,?)`,
-			ver, m.file, c.unix()); err != nil {
-			return errors.Join(fmt.Errorf("store: %s record migration %s: %w", name, m.file, err), tx.Rollback())
+			ver, e.Name(), c.unix()); err != nil {
+			return errors.Join(fmt.Errorf("store: %s record migration %s: %w", name, e.Name(), err), tx.Rollback())
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
 		applied++
-		c.log.Info("migration applied", "db", name, "version", ver, "file", m.file, "ms", time.Since(start).Milliseconds())
+		c.log.Info("migration applied", "db", name, "version", ver, "file", e.Name(), "ms", time.Since(start).Milliseconds())
 	}
 	c.log.Debug("schema current", "db", name, "from", current, "applied", applied)
 	return nil
@@ -246,10 +270,12 @@ func (c *core) migrateTo(ctx context.Context, db *sql.DB, name string, upTo int)
 // checkApplied refuses a database whose applied migrations this binary does not have (same
 // version and file name). That happens when the db was created by a different build, e.g. one
 // from before migrations were squashed; silently skipping would leave the schema out of date.
-func checkApplied(ctx context.Context, db *sql.DB, name string, list []migration) error {
+func checkApplied(ctx context.Context, db *sql.DB, name string, entries []fs.DirEntry) error {
 	known := map[int]string{}
-	for i, m := range list {
-		known[i+1] = m.file
+	for _, e := range entries {
+		if ver, err := strconv.Atoi(strings.SplitN(e.Name(), "_", 2)[0]); err == nil {
+			known[ver] = e.Name()
+		}
 	}
 	rows, err := db.QueryContext(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
 	if err != nil {
