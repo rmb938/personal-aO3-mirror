@@ -39,6 +39,11 @@ body {
 	line-height: 1.5;
 }
 
+/* Links take the theme's accent in light and dark mode, not the browser's default blue. */
+a {
+	color: var(--color-accent);
+}
+
 .app {
 	display: contents;
 }
