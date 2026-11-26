@@ -11,13 +11,14 @@ function problems(page: Page): string[] {
 	return seen;
 }
 
+// The login page makes no API request, so nothing (not even a 401) reaches the console.
 test('the built app loads under the UI CSP', async ({ page }) => {
 	const seen = problems(page);
-	const response = await page.goto('/');
+	const response = await page.goto('/login');
 	expect(response?.status()).toBe(200);
 	expect(response?.headers()['content-security-policy']).toBe(uiCSP);
 	await expect(page).not.toHaveTitle(/UI not built/);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('ao3mirror');
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sign in');
 	expect(seen).toEqual([]);
 });
 

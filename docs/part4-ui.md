@@ -311,10 +311,25 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     retry single-flighted across tabs, `onSessionLost` (see "Auth in the browser", "As built"),
     with Vitest tests against a fake cookie session, including concurrent requests and a
     second lock holder standing in for another tab.
-  - [ ] **5b. Login pages.** Two-step login (password, then TOTP or a recovery code), logout,
+  - [x] **5b. Login pages.** Two-step login (password, then TOTP or a recovery code), logout,
     the redirect to login on session loss (and back afterwards), the lockout, rate-limit and
     reveal-disabled messages, and Playwright tests (sign in both ways, wrong password, logout,
     a cleared access cookie refreshed, two tabs refreshing together without ending the session).
+    As built: pages that need a session live in the `(app)` route group, whose layout checks
+    the session (`getAccount`), shows the header (username, log out) and turns
+    `onSessionLost` into `/login?next=<path>`; `/login` (and stage 6's signup and reset pages)
+    sit outside it. `next` is followed only when it is a same-origin path outside `/api` and
+    `/login` (`#lib/auth/next.ts`). Messages come from the problem slug
+    (`#lib/auth/messages.ts`, unit-tested, reveal-disabled included: the e2e server always
+    reveals); a 429 (the per-client limit or the username's backoff, which is the lockout the
+    API exposes; a disabled account is indistinguishable from a wrong password) disables the
+    button for `Retry-After`. The second step can't tell a wrong code from a spent challenge
+    (both `invalid-credentials`), so it counts wrong codes and starts over after the API's 5,
+    or when `expires_at` has passed; "Start over" is always offered. `ui-server` raises the
+    login and refresh limits too. The e2e tests sign in with TOTP once (one code per 30 s
+    step) and otherwise with a recovery code each, by index (`tests/login.spec.ts`); the
+    two-tab test holds each refresh back 500 ms and asserts only one is sent, so it fails
+    without the Web Lock (checked by removing it).
 - [ ] **6. Signup and account pages.** Invite signup from the fragment link (password policy
   messages, TOTP QR + text secret, confirm code, recovery codes shown once with copy/download),
   reset from link, account page: password change, regenerate recovery codes, sessions list
