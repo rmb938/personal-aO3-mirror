@@ -1778,6 +1778,7 @@ Status: tick a stage when its code is done, in the same PR as that code, just be
         (only the kid varies), since base64url alone matches `SENTINEL-…`; base64url last
         characters are limited to the values with zero spare bits. `InviteURL` allows
         `/signup` and `/reset`, an http(s) lower-case host or bracketed IPv6, a port, no path.
+        Since Part 4 stage 6b a reset link ends `&scope=password|totp|both`, for the reset page.
       - `runtime/verbatim_test.go` registers a test DTO with every type, checks 32 values of
         each from `internal/auth` pass unchanged in both modes, and checks sentinel, free text
         and near misses (prefix, suffix, whitespace, case, non-ASCII) are 500s with no trace

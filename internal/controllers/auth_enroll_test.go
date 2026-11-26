@@ -139,6 +139,7 @@ func TestAuthResetPassword(t *testing.T) {
 	r, err := e.a.CreateReset(ctx, u.id, model.ResetPassword, time.Hour)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(r.URL, "https://mirror.example.com/reset#token=inv_"))
+	assert.True(t, strings.HasSuffix(r.URL, "&scope=password"), "the link names its scope")
 	tok := inviteToken(t, r)
 	_, err = e.a.StartReset(ctx, tok, "")
 	require.ErrorIs(t, err, ErrResetPassword)

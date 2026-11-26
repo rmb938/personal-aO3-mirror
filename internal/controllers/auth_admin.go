@@ -55,8 +55,13 @@ func (a *Auth) createInvite(ctx context.Context, inv model.Invite, ttl time.Dura
 	}
 	a.event(ctx, slog.LevelInfo, "invite_created", "invite_id", id, "kind", string(inv.Kind),
 		"user_id", inv.TargetUserID, "scope", string(inv.Scope), "ttl_s", int64(ttl.Seconds()))
-	return InviteLink{ID: id, URL: strings.TrimSuffix(a.opts.PublicURL, "/") + "/" + page + "#token=" + token,
-		ExpiresAt: inv.ExpiresAt}, nil
+	url := strings.TrimSuffix(a.opts.PublicURL, "/") + "/" + page + "#token=" + token
+	if inv.Kind == model.InviteReset {
+		// The reset page reads the scope to know whether to ask for a new password. It is only
+		// a hint: StartReset checks the password against the invite's own scope.
+		url += "&scope=" + string(inv.Scope)
+	}
+	return InviteLink{ID: id, URL: url, ExpiresAt: inv.ExpiresAt}, nil
 }
 
 // CreateInvite makes a signup invite valid for ttl (0 = auth.invite_ttl; at most

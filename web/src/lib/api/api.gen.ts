@@ -1643,9 +1643,11 @@ export interface BackupRequest {
 export interface InviteLink {
   id: Id;
   /**
-     * `{api.public_url}/signup#token=…` or `/reset#token=…` (verbatim; the token is in the
-     * fragment, so it never reaches a proxy or server log). Shown only here.
-     * @pattern ^https?://(?:(?:[a-z0-9-]{1,63}\.){0,7}[a-z0-9-]{1,63}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$
+     * `{api.public_url}/signup#token=…` or `/reset#token=…&scope=…` (verbatim; the token
+     * is in the fragment, so it never reaches a proxy or server log). A reset link's
+     * `scope` (a ResetScope) tells the reset page whether to ask for a new password; the
+     * server checks against the link's own scope. Shown only here.
+     * @pattern ^https?://(?:(?:[a-z0-9-]{1,63}\.){0,7}[a-z0-9-]{1,63}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?/(?:signup#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]|reset#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]&scope=(?:password|totp|both))$
      */
   url: string;
   expires_at: Timestamp;
@@ -5169,7 +5171,7 @@ export const getCreateResetUrl = (id: number,) => {
 }
 
 /**
- * The link (`{api.public_url}/reset#token=…`) is in this response only. Confirming the
+ * The link (`{api.public_url}/reset#token=…&scope=…`) is in this response only. Confirming the
  * reset revokes every session of the account; a scope with `totp` also issues new
  * recovery codes.
  * @summary Create a reset link for an account's password, TOTP secret or both.

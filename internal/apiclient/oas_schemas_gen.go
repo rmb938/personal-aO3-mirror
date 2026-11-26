@@ -1767,8 +1767,10 @@ func (s *InviteKind) UnmarshalText(data []byte) error {
 // Ref: #/components/schemas/InviteLink
 type InviteLink struct {
 	ID ID `json:"id"`
-	// `{api.public_url}/signup#token=…` or `/reset#token=…` (verbatim; the token is in the fragment,
-	// so it never reaches a proxy or server log). Shown only here.
+	// `{api.public_url}/signup#token=…` or `/reset#token=…&scope=…` (verbatim; the token is in the
+	// fragment, so it never reaches a proxy or server log). A reset link's `scope` (a ResetScope) tells
+	// the reset page whether to ask for a new password; the server checks against the link's own scope.
+	// Shown only here.
 	URL       string    `json:"url"`
 	ExpiresAt Timestamp `json:"expires_at"`
 }

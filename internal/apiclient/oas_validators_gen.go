@@ -1077,7 +1077,7 @@ func (s *InviteLink) Validate() error {
 			MaxLengthSet:  false,
 			Email:         false,
 			Hostname:      false,
-			Regex:         regexMap["^https?://(?:(?:[a-z0-9-]{1,63}\\.){0,7}[a-z0-9-]{1,63}|\\[[0-9a-f:.]{2,45}\\])(?::[0-9]{1,5})?/(?:signup|reset)#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"],
+			Regex:         regexMap["^https?://(?:(?:[a-z0-9-]{1,63}\\.){0,7}[a-z0-9-]{1,63}|\\[[0-9a-f:.]{2,45}\\])(?::[0-9]{1,5})?/(?:signup#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]|reset#token=inv_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]&scope=(?:password|totp|both))$"],
 			MinNumeric:    0,
 			MinNumericSet: false,
 			MaxNumeric:    0,

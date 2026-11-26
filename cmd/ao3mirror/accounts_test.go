@@ -85,6 +85,7 @@ func TestAccountCLI(t *testing.T) {
 	require.Equal(t, 0, code, "user reset: %s", errOut)
 	assert.Contains(t, out, "password reset for user 1 created as invite 2", "user reset")
 	assert.Contains(t, out, "/reset#token=", "user reset prints the link")
+	assert.Contains(t, out, "&scope=password", "the link names its scope")
 	code, _, errOut = c.run("user", "reset", "1")
 	assert.Equal(t, 2, code, "user reset without --scope")
 	assert.Contains(t, errOut, "give --scope password|totp|both")

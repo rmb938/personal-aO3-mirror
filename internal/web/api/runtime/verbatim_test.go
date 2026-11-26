@@ -92,7 +92,11 @@ func verbatimValues(tb testing.TB) map[string][]string {
 		}),
 		"recovery_codes": auth.NewRecoveryCodes(),
 		"invite_url": many(func(i int) string {
-			return hosts[i%len(hosts)] + "#token=" + token(auth.InviteToken)(i)
+			u := hosts[i%len(hosts)] + "#token=" + token(auth.InviteToken)(i)
+			if strings.HasSuffix(hosts[i%len(hosts)], "/reset") {
+				u += "&scope=" + []string{"password", "totp", "both"}[i%3]
+			}
+			return u
 		}),
 	}
 }

@@ -57,6 +57,7 @@ func inviteToken(t *testing.T, l dto.InviteLink) string {
 	t.Helper()
 	_, tok, ok := strings.Cut(string(l.URL), "#token=")
 	require.True(t, ok, "invite link has a token")
+	tok, _, _ = strings.Cut(tok, "&") // a reset link's scope follows
 	return tok
 }
 
