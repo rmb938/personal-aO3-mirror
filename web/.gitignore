@@ -4,5 +4,7 @@
 # Playwright output (make ui-e2e)
 /test-results/
 /playwright-report/
+# Vitest browser-test failure screenshots (make ui-check)
+/.vitest/
 # UI screenshots for pull requests (make ui-e2e, tests/screenshots.spec.ts)
 /screenshots/

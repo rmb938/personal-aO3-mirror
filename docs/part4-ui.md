@@ -150,7 +150,9 @@ internal/web/ui/         the static handler, the UI's CSP, placeholder.html
   into `internal/web/ui/dist` (keeping `.gitkeep`); `make build` runs it first. `make ui-check`
   (part of `make check`) runs `orval --outdated` (fails on a stale `api.gen.ts`), svelte-check,
   ESLint, Vitest, the build and `npm audit`. `make generate` also writes `reveal.gen.ts` and
-  `api.gen.ts`.
+  `api.gen.ts`. Vitest has two projects (`vite.config.ts`): `node` for most tests, and
+  `browser` for `*.browser.test.ts`, run in Playwright's headless Chromium (stage 7a), which
+  `make web-browser` installs before ui-check and ui-e2e.
 
 `internal/web/ui/dist` is not committed except `dist/.gitkeep` (go:embed needs a file), and
 `make ui` writes the build into it (go:embed can't reach `web/build` from `internal/web/ui`).
@@ -384,9 +386,35 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     `/username`). Playwright: `tests/signup.spec.ts` (refusals, setup, wrong and right code,
     sign-in with the new account, invite used up), `tests/reset.spec.ts` (one test per scope,
     incomplete link, link used up), and screenshots of each step.
-- [ ] **7. Sanitizers.** HTML sanitizer (otwarchive allowlist, image references rewritten to
-  our route, external images dropped) and skin sanitizer (parse, scope, drop). Pure TS with
-  heavy unit tests, including known XSS and CSS-injection payloads.
+- **7. Sanitizers**, split in two PRs (agreed with the user 2026-11-26). Pure TS with heavy
+  unit tests, including known XSS and CSS-injection payloads.
+  - [x] **7a. HTML sanitizer.** otwarchive allowlist, image references rewritten to our route,
+    external images dropped. As built: `#lib/sanitize/html.ts` (`sanitizeHtml(dirty,
+    imageMap(work.images))` → `TrustedHTML`) runs its own DOMPurify 3.5.0 instance. The
+    allowlist (`#lib/sanitize/allowlist.ts`) is otwarchive's `Sanitize::Config::ARCHIVE` plus
+    `class` (CSS_ALLOWED, with UserClassSanitizer's class-name rule), read at otwarchive
+    commit `452391b6` (2026-11-01); its media and embed sanitizers are left out (audio, video
+    and iframes load from other hosts, which the CSP refuses). DOMPurify's attribute list is
+    flat, so an `uponSanitizeAttribute` hook applies the per-element attributes and URL
+    schemes: `a href` keeps ftp/http/https/mailto and `#fragment` links (AO3's footnotes),
+    `blockquote`/`q` `cite` http/https, and a relative URL is resolved against AO3, where it
+    was written. otwarchive's `rel="nofollow"` is not added (nothing indexes this mirror; the
+    UI already sends `no-referrer`). An image whose src matches a downloaded `images` entry
+    (both sides through the browser's URL parser, fragment dropped, as imagefetch stores
+    them) gets `/api/v1/images/{sha256}` with the reveal param (`withReveal`, shared with
+    `apiFetch`); any other image becomes a `span.ao3m-missing-image` note with its alt text,
+    and only src values the call wrote survive. Trusted Types: DOMPurify's own fix for a
+    strict CSP (`TRUSTED_TYPES_POLICY: null`, sanitizing inside your policy) can't work under
+    `require-trusted-types-for`, since DOMPurify parses its input with `DOMParser`, itself a
+    sink. So the `ao3mirror-html` policy passes strings through and is handed to DOMPurify; it
+    never leaves the module, the CSP allows it once, and ESLint rejects `createPolicy`
+    anywhere else. Tests run in headless Chromium (Vitest browser mode,
+    `*.browser.test.ts`; `make web-browser` installs it for ui-check and ui-e2e): the
+    allowlist, links and schemes, images, and ~65 XSS/mXSS/clobbering payloads, each checked
+    for allowed elements and attributes only, a stable second pass, and nothing run when
+    inserted live. Under the real CSP it is first exercised by stage 8's work page.
+  - [ ] **7b. Skin sanitizer.** Parse, scope under `#workskin`, drop (see "Security model"),
+    applied with `adoptedStyleSheets`.
 - [ ] **8. Work page.** Metadata and tags, chapter-by-chapter and full-work views, chapter
   navigation, notes and end notes, images, the work skin with the hide toggle, and the
   partial-series banner ("parts 3 and 5 are not mirrored"; the "mirror the whole series"

@@ -110,8 +110,16 @@ function prepare(url: string, init: RequestInit): Prepared {
 	if (!safeMethods.has((init.method ?? 'GET').toUpperCase())) {
 		headers.set(csrfHeader, '1');
 	}
+	return { url: withReveal(url), init: { ...init, headers } };
+}
+
+/**
+ * Adds the reveal param to a URL of our own API: every request, and every image URL the HTML
+ * sanitizer writes (images are only served revealed).
+ */
+export function withReveal(url: string): string {
 	const sep = url.includes('?') ? '&' : '?';
-	return { url: `${url}${sep}${REVEAL_PARAM}=${REVEAL_VALUE}`, init: { ...init, headers } };
+	return `${url}${sep}${REVEAL_PARAM}=${REVEAL_VALUE}`;
 }
 
 /** Sends the request and decodes the response. Generated bodies are strings, so a retry can resend them. */
