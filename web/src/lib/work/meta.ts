@@ -44,6 +44,18 @@ export function groupTags(tags: readonly WorkTag[]): TagGroup[] {
 	});
 }
 
+/** The tag types a listing blurb shows after the fandoms, in AO3's order (`blurb_tag_block`). */
+const blurbTypes: readonly TagType[] = ['ArchiveWarning', 'Relationship', 'Character', 'Freeform'];
+
+/**
+ * The tags a listing blurb shows after its fandoms, as AO3's `blurb_tag_block` does: the
+ * warnings (which AO3 shows in bold, including "No Archive Warnings Apply"), relationships,
+ * characters, then additional tags, each type in the work's own order.
+ */
+export function blurbTags(tags: readonly WorkTag[]): WorkTag[] {
+	return blurbTypes.flatMap((type) => tags.filter((t) => t.type === type));
+}
+
 /** AO3's chapter count: "3/4", or "3/?" when the expected count is unknown. */
 export function chapterCount(posted: number, expected: number | undefined): string {
 	return `${String(posted)}/${expected === undefined ? '?' : String(expected)}`;

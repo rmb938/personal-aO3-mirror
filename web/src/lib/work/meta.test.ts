@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { TagType, WorkSeries, WorkTag } from '#lib/api/api.gen.ts';
 
 import {
+	blurbTags,
 	chapterCount,
 	creatorName,
 	groupTags,
@@ -43,6 +44,23 @@ describe('groupTags', () => {
 
 	it('has no groups for no tags', () => {
 		expect(groupTags([])).toEqual([]);
+	});
+});
+
+describe('blurbTags', () => {
+	it("keeps warnings, relationships, characters and additional tags, in AO3's blurb order", () => {
+		const tags = blurbTags([
+			tag(1, 'Freeform'),
+			tag(2, 'Character'),
+			tag(3, 'Rating'),
+			tag(4, 'Relationship'),
+			tag(5, 'ArchiveWarning'),
+			tag(6, 'Fandom'),
+			tag(7, 'Category'),
+			tag(8, 'Character'),
+			tag(9, 'ArchiveWarning')
+		]);
+		expect(tags.map((t) => t.id)).toEqual([5, 9, 4, 2, 8, 1]);
 	});
 });
 

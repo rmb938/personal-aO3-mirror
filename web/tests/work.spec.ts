@@ -41,6 +41,21 @@ test('the home page lists the works, newest first, and links to them', async ({ 
 	const blurb = page.getByRole('article', { name: 'Fixture Work Chaptered' });
 	await expect(blurb.getByText('by fixture_author')).toBeVisible();
 	await expect(blurb.getByRole('list', { name: 'Fandoms' })).toHaveText('Fixture Fandom');
+	// AO3's blurb order: warnings (in bold), relationships, characters, additional tags.
+	const tags = blurb.getByRole('list', { name: 'Tags' }).getByRole('listitem');
+	await expect(tags).toHaveText([
+		'Fixture Warning',
+		'Fixture Character A/Fixture Character B',
+		'Fixture Character A',
+		'Fixture Character B',
+		'Fixture Freeform One',
+		'Fixture Freeform Two'
+	]);
+	await expect(tags.first()).toHaveCSS('font-weight', '700');
+	await expect(tags.nth(1)).toHaveCSS('font-weight', '400');
+	// Relationships get AO3's grey background (#eee in light mode); other tags none.
+	await expect(tags.nth(1).locator('span')).toHaveCSS('background-color', 'rgb(238, 238, 238)');
+	await expect(tags.nth(2).locator('span')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 	await expect(blurb.getByText('Chapters: 3/4')).toBeVisible();
 	await expect(blurb.getByText('Words: 4,200')).toBeVisible();
 

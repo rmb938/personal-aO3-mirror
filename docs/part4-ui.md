@@ -446,7 +446,8 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
   listing works so there is a way in.
   - [x] **8a. Home page and work header.** As built: the home page (`(app)/+page.svelte`)
     lists every work as a blurb (`#lib/work/WorkBlurb.svelte`: title linking to the work,
-    byline, fandoms, summary, a stats line), newest first, 20 a page with `?page=N`. The work
+    byline, fandoms, then warnings (bold), relationships, characters and additional tags as
+    otwarchive's `blurb_tag_block` orders them, summary, a stats line), newest first, 20 a page with `?page=N`. The work
     page is `(app)/works/[id=id]`; SvelteKit 3's matchers live in one `src/params.ts`
     (`defineParams`), and `id` hands the page a number (`parseId`), so a non-ID segment is the
     router's 404 and an ID the mirror lacks is "This work isn't in your mirror." Like AO3, the
