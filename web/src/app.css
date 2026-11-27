@@ -34,6 +34,17 @@
 	box-sizing: border-box;
 }
 
+/*
+	A work's text keeps the browser's content-box, as on AO3 (which has no such reset): work
+	skins size boxes and draw shapes (a texting skin's bubble tails, a border beside a
+	transparent content area) assuming it. The skin's own rules still win (#workskin).
+*/
+.ao3m-skin-scope *,
+.ao3m-skin-scope *::before,
+.ao3m-skin-scope *::after {
+	box-sizing: content-box;
+}
+
 body {
 	margin: 0;
 	color: var(--color-text);

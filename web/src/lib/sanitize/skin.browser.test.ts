@@ -133,6 +133,20 @@ describe('sanitizeSkin', () => {
 		expect(color(page.frame)).not.toBe(red);
 	});
 
+	// The rename keeps Chrome from logging a refused @import (the e2e hostile-work test checks
+	// the console); it must not change which rules survive.
+	it('renames @import without changing what survives', () => {
+		for (const css of [
+			'@import url(x.css); #workskin .a { color: red; }',
+			'@IMPORT "x.css" screen; #workskin .a { color: red; }',
+			'@import url(x.css) { #workskin .b { color: blue; } } #workskin .a { color: red; }',
+			// An escaped @import isn't renamed: replaceSync refuses it and the loop drops it.
+			'@\\69mport url(x.css); #workskin .a { color: red; }'
+		]) {
+			expect(rules(css), css).toEqual(['#workskin .a { color: red; }']);
+		}
+	});
+
 	it('drops every at-rule, keeping only plain style rules', () => {
 		const css = [
 			'@import url(https://evil.example/a.css);',

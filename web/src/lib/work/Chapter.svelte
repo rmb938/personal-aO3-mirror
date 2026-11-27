@@ -1,8 +1,9 @@
 <!--
 	One chapter, as otwarchive's chapters/_chapter: for a chaptered work its heading (linking to
 	the chapter's own page), summary and notes, then the text and the end notes. A one-shot shows
-	the text and end notes alone. The ids and classes are AO3's, so a work skin (stage 8c) finds
-	what it was written for.
+	the text and end notes alone. The elements' ids and classes are AO3's and only AO3's, in
+	AO3's places, so a work skin (stage 8c) finds what it was written for and nothing else: a
+	class of our own here could be one a skin uses for something else.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -24,13 +25,23 @@
 	const endNotesId = $derived(`chapter_${p}_endnotes`);
 </script>
 
-<section
-	class="chapter"
-	id="chapter-{p}"
-	aria-labelledby={chaptered ? `chapter-${p}-heading` : undefined}
-	aria-label={chaptered ? undefined : 'Work text'}
->
-	{#if chaptered}
+{#snippet endNotes(html: string)}
+	<div class="chapter preface group">
+		<section class="end notes module" id={endNotesId} aria-labelledby="{endNotesId}-heading">
+			<h3 class="heading" id="{endNotesId}-heading">Chapter End Notes</h3>
+			<WorkHtml as="blockquote" {html} {images} />
+		</section>
+	</div>
+{/snippet}
+
+{#if !chaptered}
+	<!-- AO3 puts a one-shot's text straight into #chapters, with no .chapter around it. -->
+	<WorkHtml html={chapter.body_html} {images} label="Work text" />
+	{#if chapter.end_notes_html !== undefined}
+		{@render endNotes(chapter.end_notes_html)}
+	{/if}
+{:else}
+	<section class="chapter" id="chapter-{p}" aria-labelledby="chapter-{p}-heading">
 		<div class="chapter preface group">
 			<h2 class="title" id="chapter-{p}-heading">
 				<a href={resolve('/(app)/works/[id=id]/chapters/[position=position]', { id: workId, position: chapter.position })}
@@ -40,14 +51,14 @@
 			{#if chapter.summary_html !== undefined}
 				<section class="summary module" aria-labelledby="chapter-{p}-summary">
 					<h3 class="heading" id="chapter-{p}-summary">Chapter Summary</h3>
-					<WorkHtml html={chapter.summary_html} {images} />
+					<WorkHtml as="blockquote" html={chapter.summary_html} {images} />
 				</section>
 			{/if}
 			{#if chapter.notes_html !== undefined || chapter.end_notes_html !== undefined}
 				<section class="notes module" aria-labelledby="chapter-{p}-notes">
 					<h3 class="heading" id="chapter-{p}-notes">Chapter Notes</h3>
 					{#if chapter.notes_html !== undefined}
-						<WorkHtml html={chapter.notes_html} {images} />
+						<WorkHtml as="blockquote" html={chapter.notes_html} {images} />
 					{/if}
 					{#if chapter.end_notes_html !== undefined}
 						<p class="jump">
@@ -59,21 +70,14 @@
 				</section>
 			{/if}
 		</div>
-	{/if}
 
-	<div class="text module">
-		<WorkHtml html={chapter.body_html} {images} />
-	</div>
+		<WorkHtml html={chapter.body_html} {images} chapterText />
 
-	{#if chapter.end_notes_html !== undefined}
-		<div class="chapter preface group">
-			<section class="end notes module" id={endNotesId} aria-labelledby="{endNotesId}-heading">
-				<h3 class="heading" id="{endNotesId}-heading">Chapter End Notes</h3>
-				<WorkHtml html={chapter.end_notes_html} {images} />
-			</section>
-		</div>
-	{/if}
-</section>
+		{#if chapter.end_notes_html !== undefined}
+			{@render endNotes(chapter.end_notes_html)}
+		{/if}
+	</section>
+{/if}
 
 <style>
 	/*
@@ -103,10 +107,6 @@
 		padding-bottom: var(--space-1);
 		border-bottom: 1px solid var(--color-muted);
 		font-size: 1rem;
-	}
-
-	.text {
-		margin-block: var(--space-3);
 	}
 
 	.jump {

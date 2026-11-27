@@ -13,6 +13,7 @@
 	import { type Chapter as ChapterData, getChapter, getWorkChapters } from '#lib/api/api.gen.ts';
 	import { problemSlug } from '#lib/api/problem.ts';
 	import { describeFailure, unreachable } from '#lib/auth/messages.ts';
+	import { skinScopeClass } from '#lib/sanitize/skin.ts';
 
 	import Byline from './Byline.svelte';
 	import Chapter from './Chapter.svelte';
@@ -124,6 +125,15 @@
 	});
 </script>
 
+{#if ctx.skin.kind === 'sheet'}
+	<!-- AO3's "Hide Creator's Style", in the work's navigation; here, for this work while it is open. -->
+	<p class="style-toggle">
+		<button type="button" onclick={() => (ctx.skinShown = !ctx.skinShown)}>
+			{ctx.skinShown ? "Hide Creator's Style" : "Show Creator's Style"}
+		</button>
+	</p>
+{/if}
+
 {#if many}
 	<ChapterNav workId={work.id} chapters={work.chapters} {view} {place} at="top" />
 {/if}
@@ -145,60 +155,72 @@
 {#if view.kind === 'chapter' && page.state.workTooLarge === true}
 	<p class="banner" role="note">This work is too large to show all at once, so it is shown one chapter at a time.</p>
 {/if}
+{#if ctx.skin.kind === 'failed'}
+	<p class="banner" role="note">This work's style couldn't be loaded, so it is shown without it.</p>
+{/if}
 
-<div id="workskin">
-	<div class="preface group">
-		<header>
-			<h1 class="title heading">{work.title}</h1>
-			<p class="byline heading">by <Byline creators={work.creators} anonymous={work.anonymous} /></p>
-		</header>
+<!--
+	The skin's rules are scoped to .ao3m-skin-scope (#lib/sanitize/skin.ts), so they can style
+	#workskin and what is in it but not the frame, whose paint containment keeps anything the
+	skin moves or positions from painting outside the work's text.
+-->
+<div class="skin-frame">
+	<div class={skinScopeClass}>
+		<div id="workskin">
+			<div class="preface group">
+				<header>
+					<h1 class="title heading">{work.title}</h1>
+					<p class="byline heading">by <Byline creators={work.creators} anonymous={work.anonymous} /></p>
+				</header>
 
-		{#if showPreface}
-			{#if work.summary_html !== undefined}
-				<section class="summary module" aria-labelledby="summary">
-					<h2 id="summary">Summary</h2>
-					<WorkHtml html={work.summary_html} {images} />
-				</section>
-			{/if}
-			{#if work.notes_html !== undefined || work.end_notes_html !== undefined}
-				<section class="notes module" aria-labelledby="notes">
-					<h2 id="notes">Notes</h2>
-					{#if work.notes_html !== undefined}
-						<WorkHtml html={work.notes_html} {images} />
+				{#if showPreface}
+					{#if work.summary_html !== undefined}
+						<section class="summary module" aria-labelledby="summary">
+							<h2 id="summary">Summary</h2>
+							<WorkHtml as="blockquote" html={work.summary_html} {images} />
+						</section>
 					{/if}
-					{#if work.end_notes_html !== undefined}
-						<p class="jump">
-							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- resolved above, or a fragment -->
-							(See the end of the work for <a href={endNotesHref}
-								>{work.notes_html === undefined ? 'notes' : 'more notes'}</a
-							>.)
-						</p>
+					{#if work.notes_html !== undefined || work.end_notes_html !== undefined}
+						<section class="notes module" aria-labelledby="notes">
+							<h2 id="notes">Notes</h2>
+							{#if work.notes_html !== undefined}
+								<WorkHtml as="blockquote" html={work.notes_html} {images} />
+							{/if}
+							{#if work.end_notes_html !== undefined}
+								<p class="jump">
+									<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- resolved above, or a fragment -->
+									(See the end of the work for <a href={endNotesHref}
+										>{work.notes_html === undefined ? 'notes' : 'more notes'}</a
+									>.)
+								</p>
+							{/if}
+						</section>
 					{/if}
-				</section>
+				{/if}
+			</div>
+
+			<div id="chapters">
+				{#if text.kind === 'ready'}
+					{#each text.chapters as c (c.position)}
+						<Chapter chapter={c} workId={work.id} {chaptered} {images} />
+					{/each}
+				{:else if text.kind === 'loading'}
+					<p class="ao3m-muted" aria-live="polite">Loading…</p>
+				{:else}
+					<p class="ao3m-error" role="alert">{text.text}</p>
+				{/if}
+			</div>
+
+			{#if showAfterword && work.end_notes_html !== undefined}
+				<div class="afterword preface group">
+					<section class="end notes module" id="work_endnotes" aria-labelledby="work-endnotes-heading">
+						<h2 id="work-endnotes-heading">End Notes</h2>
+						<WorkHtml as="blockquote" html={work.end_notes_html} {images} />
+					</section>
+				</div>
 			{/if}
-		{/if}
-	</div>
-
-	<div id="chapters">
-		{#if text.kind === 'ready'}
-			{#each text.chapters as c (c.position)}
-				<Chapter chapter={c} workId={work.id} {chaptered} {images} />
-			{/each}
-		{:else if text.kind === 'loading'}
-			<p class="muted" aria-live="polite">Loading…</p>
-		{:else}
-			<p class="error" role="alert">{text.text}</p>
-		{/if}
-	</div>
-
-	{#if showAfterword && work.end_notes_html !== undefined}
-		<div class="afterword preface group">
-			<section class="end notes module" id="work_endnotes" aria-labelledby="work-endnotes-heading">
-				<h2 id="work-endnotes-heading">End Notes</h2>
-				<WorkHtml html={work.end_notes_html} {images} />
-			</section>
 		</div>
-	{/if}
+	</div>
 </div>
 
 {#if many}
@@ -206,6 +228,17 @@
 {/if}
 
 <style>
+	/* Paint containment also makes the frame the containing block of anything the skin
+	   positions, and clips what it paints to the frame's box. */
+	.skin-frame {
+		contain: paint;
+	}
+
+	.style-toggle {
+		margin-block: var(--space-2) 0;
+		text-align: center;
+	}
+
 	header {
 		margin-top: var(--space-4);
 		text-align: center;
@@ -255,11 +288,11 @@
 		font-size: 0.875rem;
 	}
 
-	.muted {
+	.ao3m-muted {
 		color: var(--color-muted);
 	}
 
-	.error {
+	.ao3m-error {
 		color: var(--color-accent);
 	}
 </style>

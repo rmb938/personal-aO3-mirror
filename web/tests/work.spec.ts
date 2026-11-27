@@ -273,6 +273,78 @@ test('a work too large to show at once is read a chapter at a time', async ({ pa
 	expect(seen).toEqual([failedLoad(422)]);
 });
 
+/**
+ * The classes in #workskin outside the work's own HTML that are neither AO3's (works/show,
+ * chapters/_chapter) nor marked as ours (`ao3m-`, and Svelte's `svelte-` hashes). A skin's
+ * rules are written for AO3's page: a class of ours with a name a skin also uses (a texting
+ * skin's `.text`) gets that skin's styling.
+ */
+async function foreignClasses(page: Page): Promise<string[]> {
+	return page.evaluate(() => {
+		const ao3 = new Set(['preface', 'group', 'title', 'heading', 'byline', 'summary', 'notes', 'module', 'jump', 'chapter', 'userstuff', 'end', 'afterword']);
+		const out = new Set<string>();
+		for (const el of document.querySelectorAll('#workskin, #workskin *')) {
+			if ((el.parentElement?.closest('.userstuff') ?? null) !== null) {
+				continue; // the work's own HTML
+			}
+			for (const c of el.classList) {
+				if (!ao3.has(c) && !c.startsWith('ao3m-') && !c.startsWith('svelte-')) {
+					out.add(c);
+				}
+			}
+		}
+		return [...out];
+	});
+}
+
+// Stage 8c: the chaptered work's skin colours one paragraph and the blockquote's rule.
+test("a work's skin styles its text, and can be hidden", async ({ page, server }) => {
+	const seen = await signedIn(page, server, 8);
+	const { chaptered } = works(server);
+	await page.goto(chapterPath(chaptered, 1));
+	const skinned = page.locator('#workskin .fixture-skinned');
+	const quote = page.locator('#workskin .userstuff.module blockquote');
+	await expect(skinned).toHaveText('Fixture paragraph styled by the work skin.');
+	await expect(skinned).toHaveCSS('color', 'rgb(138, 43, 226)');
+	await expect(skinned).toHaveCSS('font-weight', '700');
+	// The text keeps AO3's (the browser's) content-box, pseudo-elements too, which skins'
+	// shapes assume; the rest of the page is border-box.
+	await expect(skinned).toHaveCSS('box-sizing', 'content-box');
+	expect(await skinned.evaluate((el) => getComputedStyle(el, '::after').boxSizing)).toBe('content-box');
+	await expect(page.locator('.skin-frame')).toHaveCSS('box-sizing', 'border-box');
+	await expect(quote).toHaveCSS('border-left-color', 'rgb(42, 111, 151)');
+	await expect(page.locator('.skin-frame')).toHaveCSS('contain', 'paint');
+	// The skin is the one adopted sheet.
+	expect(await page.evaluate(() => document.adoptedStyleSheets.length)).toBe(1);
+	// AO3's structure around the text, with no class of ours a skin could also use.
+	await expect(page.locator('#chapters > .chapter > .userstuff.module[role=article]')).toHaveCount(1);
+	await expect(page.locator('#workskin .summary > blockquote.userstuff')).toHaveCount(2);
+	expect(await foreignClasses(page)).toEqual([]);
+
+	const hide = page.getByRole('button', { name: "Hide Creator's Style" });
+	await hide.click();
+	await expect(skinned).not.toHaveCSS('color', 'rgb(138, 43, 226)');
+	await expect(skinned).toHaveCSS('font-weight', '400');
+	expect(await page.evaluate(() => document.adoptedStyleSheets.length)).toBe(0);
+
+	// It stays hidden while the work is open, chapter to chapter.
+	await page.getByRole('navigation', { name: 'Chapters', exact: true }).getByRole('link', { name: 'Next Chapter →' }).click();
+	await expect(region(page, 'Chapter 2: Fixture Chapter Two')).toBeVisible();
+	const show = page.getByRole('button', { name: "Show Creator's Style" });
+	await expect(show).toBeVisible();
+	await page.getByRole('navigation', { name: 'Chapters', exact: true }).getByRole('link', { name: '← Previous Chapter' }).click();
+	await expect(skinned).toHaveCSS('font-weight', '400');
+	await show.click();
+	await expect(skinned).toHaveCSS('color', 'rgb(138, 43, 226)');
+
+	// Leaving the work takes its skin off the page.
+	await page.getByRole('link', { name: 'ao3mirror' }).click();
+	await expect(page).toHaveURL('/');
+	await expect(page.getByRole('heading', { level: 2 })).toHaveCount(server.works.length);
+	expect(await page.evaluate(() => document.adoptedStyleSheets.length)).toBe(0);
+	expect(seen).toEqual([]);
+});
+
 test('an anonymous one-chapter work with no notes or series', async ({ page, server }) => {
 	const seen = await signedIn(page, server, 2);
 	await page.goto(`/works/${String(works(server).anonymous)}`);
@@ -290,6 +362,12 @@ test('an anonymous one-chapter work with no notes or series', async ({ page, ser
 	await expect(region(page, 'Work text')).toContainText('Lorem ipsum');
 	await expect(page.locator('#chapters h2')).toHaveCount(0);
 	await expect(page.getByRole('navigation', { name: /Chapters/ })).toHaveCount(0);
+	// AO3 puts a one-shot's text straight into #chapters.
+	await expect(page.locator('#chapters > .userstuff')).toHaveCount(1);
+	await expect(page.locator('#chapters .chapter')).toHaveCount(0);
+	expect(await foreignClasses(page)).toEqual([]);
+	// It has no skin, so nothing to hide.
+	await expect(page.getByRole('button', { name: /Creator's Style/ })).toHaveCount(0);
 	expect(seen).toEqual([]);
 });
 
@@ -321,6 +399,30 @@ test("a hostile work's payloads don't run", async ({ page, server }) => {
 	await expect(payloads).toContainText('Fixture overlay attempt');
 	await expect(payloads.locator('script, iframe, [style], [onerror]')).toHaveCount(0);
 	await expect(payloads.getByText('Fixture javascript link')).not.toHaveAttribute('href', /javascript/);
+
+	// Its skin: the colour stays, its image and the fixed overlay don't, its body rule reaches
+	// nothing outside the work, and the escape, positioned above the work, is clipped by the
+	// frame. The dropped @import and font face log nothing (`seen` below).
+	const calm = payloads.locator('p').first();
+	await expect(calm).toHaveCSS('color', 'rgb(178, 34, 34)');
+	await expect(calm).toHaveCSS('background-image', 'none');
+	await expect(payloads.locator('.overlay')).toHaveCSS('position', 'static');
+	await expect(page.locator('body')).not.toHaveCSS('background-color', 'rgb(255, 0, 0)');
+	const escape = payloads.locator('.escape');
+	await expect(escape).toHaveCSS('position', 'absolute');
+	// From the top of the page, the escape would cover the metadata above the frame.
+	await page.evaluate(() => {
+		window.scrollTo(0, 0);
+	});
+	const box = await escape.boundingBox();
+	const frame = await page.locator('.skin-frame').boundingBox();
+	expect(box !== null && frame !== null && box.y + 20 < frame.y).toBe(true);
+	// Nothing above the frame is the escape: it is clipped, not painted over the page.
+	const hit = await page.evaluate(() => {
+		const top = document.querySelector('.skin-frame')?.getBoundingClientRect().top ?? 0;
+		return (document.elementFromPoint(window.innerWidth / 2, top - 10)?.closest('.escape') ?? null) !== null;
+	});
+	expect(hit).toBe(false);
 
 	expect(await page.evaluate(() => (window as { __ao3mirrorXSS?: unknown }).__ao3mirrorXSS)).toBeUndefined();
 	expect(seen).toEqual([]);

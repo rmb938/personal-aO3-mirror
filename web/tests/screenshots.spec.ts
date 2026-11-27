@@ -73,6 +73,11 @@ test('login and account pages', async ({ page, server }) => {
 	await expect.poll(() => square.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
 	await page.getByText('Chapter Index').click();
 	await shoot(page, 'work');
+	// The same chapter without the work's skin.
+	await page.getByRole('button', { name: "Hide Creator's Style" }).click();
+	await expect(page.getByRole('button', { name: "Show Creator's Style" })).toBeVisible();
+	await shoot(page, 'work-style-hidden');
+	await page.getByRole('button', { name: "Show Creator's Style" }).click();
 
 	// The entire work: every chapter, and the work's end notes after them.
 	await page.getByRole('link', { name: 'Entire Work' }).click();
