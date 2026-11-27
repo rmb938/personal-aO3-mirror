@@ -463,9 +463,39 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     account): the list and its link, the chaptered work's header and banner, the anonymous
     work, the hostile work's summary and notes under the real CSP (no payload runs, nothing
     logged), an unknown ID and a non-ID path.
-  - [ ] **8b. Reading.** Chapter-by-chapter and full-work views, chapter navigation, chapter
+  - [x] **8b. Reading.** Chapter-by-chapter and full-work views, chapter navigation, chapter
     summaries, notes and end notes, images, the `work-too-large` fallback to one chapter at a
-    time.
+    time. As built, after otwarchive's works/show and chapters/show (commit `452391b6`):
+    `works/[id=id]/+layout.svelte` loads the work once and hands it (with its `imageMap`) to
+    its views through `#lib/work/context.ts`, so moving between chapters fetches only the
+    chapter. `/works/N` is the entire work (`getWorkChapters`) for a one-shot or with
+    `?view_full_work=true` (AO3's param); a work of several chapters otherwise replaces it with
+    its first chapter. `/works/N/chapters/P` is one chapter by position, as the API addresses
+    it (`getChapter`; a one-shot's chapter has no AO3 ID, since AO3 renders its text without a
+    chapter heading to read one from), with a `position` matcher bounded by the API's 100000. Both
+    render `#lib/work/WorkReader.svelte`: the navigation (`ChapterNav.svelte`: Entire Work or
+    Chapter by Chapter, previous/next from the chapter list so gaps are stepped over, a
+    `<details>` chapter index; at the bottom previous/next and ↑ Top; previous/next land on
+    `#workskin`, as AO3's do, while Chapter by Chapter and the index open at the top), the metadata and banners, then `#workskin` with the preface (title, byline,
+    and on the first chapter the work's summary and notes, with AO3's "See the end of the work
+    for notes" link), the chapters (`Chapter.svelte`: for a chaptered work, AO3's
+    `chaptered?` rule, the heading, chapter summary and notes, then the text and chapter end
+    notes) and on the last chapter the work's end notes. Inside `#workskin` the ids and classes
+    are AO3's (`#chapters`, `.chapter#chapter-N`, `#chapter_N_endnotes`, `#work_endnotes`,
+    `.preface.group`, `.notes.module`, ...), so 8c's skins find what they were written for.
+    The look follows otwarchive's `14-group-preface.css`: a rule above each chapter preface
+    group (where a chapter starts, and where its text ends before the end notes), a rule under
+    each Summary/Notes heading, and the groups set in from the text on a wide screen; the
+    afterword gets a rule above it too (AO3's has none), so the last chapter's end shows alike.
+    8a's plain chapter list became the index. After a chapter loads, the URL's fragment is
+    scrolled to (the router tried before the text was in). A `work-too-large` refusal replaces
+    the entire-work view with the first chapter, its page state (`App.PageState.workTooLarge`)
+    showing a note. Playwright (`tests/work.spec.ts`): chapter by chapter (images from the
+    mirror and the queued one as a note, the index, both note jumps landing in view), the
+    entire work (index fragments, ↑ Top, back to chapters), the too-large fallback (the 422
+    answered by `page.route`, since seeding 16 MiB is too slow), the one-shot, the hostile
+    work's chapter 2 payloads, and an unknown or out-of-range chapter; screenshots `work` (now
+    chapter 1) and `work-entire`.
   - [ ] **8c. Work skin.** The sanitized skin applied with `adoptedStyleSheets` in the
     `frame > .ao3m-skin-scope > #workskin` structure (7b), the "hide creator's style" toggle,
     and the check that a skin's dropped `@import` logs nothing to the console.
@@ -481,7 +511,9 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
 ### Part 4b (later, planned when it starts)
 
 Browse and search (tag, fandom, series, creator and collection pages; AO3-style filters;
-QUERY search), "mirror this URL" (source add), sources/jobs/status pages.
+QUERY search), "mirror this URL" (source add), sources/jobs/status pages. Nice to have: open
+a pasted AO3 chapter link (`/works/N/chapters/<AO3 chapter ID>`) at its position, through the
+work's chapter list (8b addresses chapters by position).
 
 ## Verification
 

@@ -66,10 +66,18 @@ test('login and account pages', async ({ page, server }) => {
 	await expect(page.getByRole('heading', { level: 2 })).toHaveCount(server.works.length);
 	await shoot(page, 'home');
 
-	// A work page, with the partial-series banner.
+	// A work's first chapter, with the partial-series banner and the chapter's images.
 	await page.getByRole('link', { name: 'Fixture Work Chaptered' }).click();
 	await expect(page.getByRole('note')).toBeVisible();
+	const square = page.getByRole('img', { name: 'fixture square' });
+	await expect.poll(() => square.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+	await page.getByText('Chapter Index').click();
 	await shoot(page, 'work');
+
+	// The entire work: every chapter, and the work's end notes after them.
+	await page.getByRole('link', { name: 'Entire Work' }).click();
+	await expect(page.getByRole('region', { name: 'End Notes', exact: true })).toBeVisible();
+	await shoot(page, 'work-entire');
 
 	// Account page.
 	await page.getByRole('link', { name: 'Account' }).click();
