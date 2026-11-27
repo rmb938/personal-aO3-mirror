@@ -67,6 +67,7 @@ var Accounts = []string{
 	"sessions",    // the account page's sessions list
 	"password",    // changing the password
 	"recovery",    // replacing the recovery codes
+	"works",       // reading works (web/tests/work.spec.ts)
 	"screenshots", // the UI screenshots for pull requests (web/tests/screenshots.spec.ts)
 	// Each reset test resets its own account (web/tests/reset.spec.ts), through the reset link
 	// of the same key (resets).
