@@ -106,9 +106,9 @@ test("a work's header: metadata, series, summary, notes and chapters", async ({ 
 	await expect(page.getByRole('region', { name: 'Notes', exact: true })).toContainText('Fixture work notes.');
 	await expect(page.getByRole('region', { name: 'End Notes' })).toContainText('Fixture work end notes.');
 	await expect(page.getByRole('region', { name: 'Chapters' }).getByRole('listitem')).toHaveText([
-		'Chapter 1: Fixture Chapter One (2025-01-02)',
-		'Chapter 2: Fixture Chapter Two (2025-03-04)',
-		'Chapter 3 (2025-06-07)'
+		'Chapter 1: Fixture Chapter One',
+		'Chapter 2: Fixture Chapter Two',
+		'Chapter 3'
 	]);
 	expect(seen).toEqual([]);
 });
