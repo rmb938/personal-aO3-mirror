@@ -43,7 +43,11 @@ export default defineConfig(
 				...rawHtmlSinks.map((property) => ({
 					property,
 					message: 'Render sanitized HTML with TrustedHtml.svelte instead.'
-				}))
+				})),
+				{
+					property: 'createPolicy',
+					message: "The HTML sanitizer's policy (src/lib/sanitize/html.ts) is the only Trusted Types policy."
+				}
 			]
 		}
 	},

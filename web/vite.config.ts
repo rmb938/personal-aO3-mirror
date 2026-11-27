@@ -1,5 +1,6 @@
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
 
 import { withExternalBoot } from './scripts/externalize-boot.js';
@@ -8,6 +9,8 @@ import { noInlineStyles } from './scripts/no-inline-styles.js';
 // A static single-page app (docs/part4-ui.md): `make ui` copies build/ into internal/web/ui/dist,
 // which `ao3mirror serve` embeds. Every app route gets index.html (the fallback page).
 const out = { pages: 'build', fallback: 'index.html' };
+
+const browserTests = 'src/**/*.browser.test.ts';
 
 export default defineConfig({
 	plugins: [
@@ -24,7 +27,31 @@ export default defineConfig({
 		assetsInlineLimit: 0
 	},
 	test: {
-		include: ['src/**/*.test.ts', 'scripts/**/*.test.js'],
-		environment: 'node'
+		projects: [
+			{
+				extends: true,
+				test: {
+					name: 'node',
+					include: ['src/**/*.test.ts', 'scripts/**/*.test.js'],
+					exclude: [browserTests],
+					environment: 'node'
+				}
+			},
+			{
+				// Tests that need a real browser's HTML parser and Trusted Types (the sanitizers):
+				// headless Chromium, the one `playwright install` puts in place for make ui-e2e.
+				extends: true,
+				test: {
+					name: 'browser',
+					include: [browserTests],
+					browser: {
+						enabled: true,
+						headless: true,
+						provider: playwright(),
+						instances: [{ browser: 'chromium' }]
+					}
+				}
+			}
+		]
 	}
 });
