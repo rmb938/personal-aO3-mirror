@@ -496,11 +496,41 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     answered by `page.route`, since seeding 16 MiB is too slow), the one-shot, the hostile
     work's chapter 2 payloads, and an unknown or out-of-range chapter; screenshots `work` (now
     chapter 1) and `work-entire`.
-  - [ ] **8c. Work skin.** The sanitized skin applied with `adoptedStyleSheets` in the
+  - [x] **8c. Work skin.** The sanitized skin applied with `adoptedStyleSheets` in the
     `frame > .ao3m-skin-scope > #workskin` structure (7b), the "hide creator's style" toggle,
-    and the check that a skin's dropped `@import` logs nothing to the console.
+    and the check that a skin's dropped `@import` logs nothing to the console. As built: the
+    work layout fetches the skin (`getWorkSkin`) once the work is there (so a missing work is
+    one 404) and before the text shows (so it never shows unstyled first), sanitizes it, and
+    hands it to the views through the work context (`Skin`: none, a sheet, or failed, which
+    shows a note). An `$effect` adopts the sheet on `document` while the work is open and its
+    style shown, and takes it off on leaving. `WorkReader` wraps `#workskin` in
+    `div.skin-frame` (`contain: paint`, the containing block of anything the skin positions,
+    and its clip) and the scope element, and above the navigation offers AO3's "Hide
+    Creator's Style" / "Show Creator's Style" button when there is a skin; hiding lasts while
+    the work is open, chapter to chapter (remembering it is stage 9's). A real texting skin
+    showed why the markup inside `#workskin` must be AO3's and only AO3's: its bubble class was
+    `.text`, which 8b's chapter-text wrapper (`div.text.module`) also had, so the whole chapter
+    became one floated bubble. So the chapter text is now AO3's
+    `.chapter > div.userstuff.module[role=article]`, a one-shot's text sits straight in
+    `#chapters` (`div.userstuff`, no `.chapter`), summaries and notes are
+    `blockquote.userstuff`, and any class of ours there starts `ao3m-`; a Playwright check
+    fails on any other class in `#workskin` outside the work's own HTML. The same skin's
+    bubble tails (a border beside a transparent content area) need the browser's
+    `content-box`, which AO3 keeps; `app.css` restores it under `.ao3m-skin-scope`, below the
+    page's border-box reset. Chrome logs a warning
+    for each `@import` a constructed sheet refuses, so `sanitizeSkin` first renames `@import`
+    to an unknown at-rule, which is dropped silently; it changes no rule's extent and protects
+    nothing (a missed escaped `@import` is still refused, with a warning). The hostile seed's
+    skin gained a `body` rule and an absolutely positioned `.escape` aimed above the work.
+    Playwright (`tests/work.spec.ts`): the chaptered work's skin applies, hides, stays hidden
+    across chapters, shows again and leaves with the work; the hostile skin keeps its colour,
+    loses its image and fixed overlay, doesn't reach `body`, the escape is clipped by the
+    frame (checked to fail without `contain: paint`), and nothing is logged; the one-shot has
+    no toggle. Screenshot `work-style-hidden`.
 - [ ] **9. Reader settings.** Dark mode, font size, reading width, remembered position (per
-  device, IDs and numbers only).
+  device, IDs and numbers only). Decide then how a work skin meets dark mode: skins assume
+  AO3's white page (dark text with no background, shapes masked in white), so perhaps a light
+  background inside the skin frame while a skin is shown (raised by 8c, 2026-11-27).
 - [ ] **10a. EPUB of a work.** Built in the browser (EPUB 3, JSZip) from the revealed work and
   chapters, sanitized the same way, images included, skin left out.
 - [ ] **10b. EPUB of a series.** The mirrored works in order, one EPUB, with a note on missing

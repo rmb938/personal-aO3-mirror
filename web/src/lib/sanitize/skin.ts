@@ -26,7 +26,7 @@ export function sanitizeSkin(css: string): CSSStyleSheet | undefined {
 	}
 	// A constructed sheet never loads @import; the loop below drops it with every other at-rule.
 	const input = new CSSStyleSheet();
-	input.replaceSync(css);
+	input.replaceSync(renameImports(css));
 
 	const out = new CSSStyleSheet();
 	out.insertRule(`@scope (.${skinScopeClass}) {}`);
@@ -62,6 +62,21 @@ export function sanitizeSkin(css: string): CSSStyleSheet | undefined {
 		}
 	}
 	return scope.cssRules.length > 0 ? out : undefined;
+}
+
+/** What renameImports turns `@import` into: an at-rule no browser knows. */
+const renamedImport = '@ao3m-dropped-import';
+
+/**
+ * Renames every `@import` so the browser reads it as an unknown at-rule. Chrome logs a warning
+ * for each @import a constructed sheet refuses, and an unknown at-rule is dropped silently. It
+ * changes no rule's extent (both are at-rules, ending at the same `;` or block), only the name,
+ * and protects nothing: an @import it misses (written with an escape) is still refused by
+ * replaceSync and dropped by the loop, at the cost of a warning. Inside a string or comment it
+ * changes the text, which a skin has no reason to hold.
+ */
+function renameImports(css: string): string {
+	return css.replace(/@import/gi, renamedImport);
 }
 
 interface Declaration {

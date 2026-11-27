@@ -436,7 +436,8 @@ func hostileBody() string {
 		`<p><img src="x" onerror="window.__ao3mirrorXSS = 'onerror'"></p>` + "\n" +
 		`<p><a href="javascript:window.__ao3mirrorXSS='href'">Fixture javascript link</a></p>` + "\n" +
 		`<iframe src="https://example.test/fixture-frame"></iframe>` + "\n" +
-		`<p style="position: fixed; inset: 0">Fixture overlay attempt</p>` + "\n" +
+		`<p class="overlay" style="position: fixed; inset: 0">Fixture overlay attempt</p>` + "\n" +
+		`<p class="escape">Fixture escape attempt</p>` + "\n" +
 		paragraphs(2)
 }
 
@@ -511,11 +512,14 @@ func works() []model.Work {
 				{ID: 100402, Position: 2, Title: "Fixture Chapter Payloads", BodyHTML: hostileBody()},
 			},
 			// The skin sanitizer must drop the import, the external url(), the font face and the
-			// fixed overlay, and keep the colour.
+			// fixed overlay, and keep the colour. The page's scope must keep the body rule off
+			// the page, and its frame must clip the escape, positioned to paint above the work.
 			SkinCSS: "@import url(https://example.test/fixture.css);\n" +
 				"@font-face { font-family: fixture; src: url(https://example.test/fixture.woff2); }\n" +
 				"#workskin p { color: #b22222; background: url(https://example.test/fixture.png); }\n" +
-				"#workskin .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }",
+				"#workskin .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }\n" +
+				"body { background-color: #ff0000; }\n" +
+				"#workskin .escape { position: absolute; top: -100vh; left: 0; width: 100%; height: 100vh; z-index: 1000; }",
 		},
 	}
 }
