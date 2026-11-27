@@ -236,8 +236,12 @@ test('reading the entire work', async ({ page, server }) => {
 	await expect(region(page, 'Chapter 3').getByRole('heading')).toBeInViewport();
 	await page.getByRole('navigation', { name: 'Chapters, end' }).getByRole('link', { name: '↑ Top' }).click();
 	await expect(nav).toBeInViewport();
+	// Unlike previous/next, Chapter by Chapter opens the chapter at the top, as on AO3.
+	await page.getByRole('heading', { name: 'Fixture Work Chaptered', level: 1 }).scrollIntoViewIfNeeded();
 	await nav.getByRole('link', { name: 'Chapter by Chapter' }).click();
-	await expect(page).toHaveURL(`${chapterPath(chaptered, 1)}#workskin`);
+	await expect(page).toHaveURL(chapterPath(chaptered, 1));
+	await expect(region(page, 'Chapter 1: Fixture Chapter One')).toBeVisible();
+	expect(await page.evaluate(() => window.scrollY)).toBe(0);
 	expect(seen).toEqual([]);
 });
 

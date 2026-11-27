@@ -1,8 +1,8 @@
 <!--
 	A chaptered work's navigation, as otwarchive's work header navigation. At the top: Entire Work
 	(or Chapter by Chapter), the previous and next chapter, and the chapter index. At the bottom:
-	the previous and next chapter and back to the top. Chapter links land on #workskin, past the
-	metadata, like AO3's.
+	the previous and next chapter and back to the top. Previous and next land on #workskin, past
+	the metadata, like AO3's; Chapter by Chapter and the index open a chapter at the top.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -27,7 +27,12 @@
 	} = $props();
 
 	function chapterHref(position: number): string {
-		return `${resolve('/(app)/works/[id=id]/chapters/[position=position]', { id: workId, position })}#workskin`;
+		return resolve('/(app)/works/[id=id]/chapters/[position=position]', { id: workId, position });
+	}
+
+	/** Previous and next land past the metadata, as AO3's do; its other chapter links don't. */
+	function stepHref(position: number): string {
+		return `${chapterHref(position)}#workskin`;
 	}
 
 	const fullHref = $derived(`${resolve('/(app)/works/[id=id]', { id: workId })}?${fullWorkParam}=true`);
@@ -50,15 +55,15 @@
 			</li>
 		{/if}
 		{#if place?.previous !== undefined}
-			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- chapterHref resolves -->
-			<li><a href={chapterHref(place.previous)}>← Previous Chapter</a></li>
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- stepHref resolves -->
+			<li><a href={stepHref(place.previous)}>← Previous Chapter</a></li>
 		{/if}
 		{#if at === 'bottom'}
 			<li><a href="#top">↑ Top</a></li>
 		{/if}
 		{#if place?.next !== undefined}
-			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- chapterHref resolves -->
-			<li><a href={chapterHref(place.next)}>Next Chapter →</a></li>
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- stepHref resolves -->
+			<li><a href={stepHref(place.next)}>Next Chapter →</a></li>
 		{/if}
 	</ul>
 	{#if at === 'top'}

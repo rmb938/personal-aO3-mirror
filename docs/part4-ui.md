@@ -475,8 +475,8 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     chapter heading to read one from), with a `position` matcher bounded by the API's 100000. Both
     render `#lib/work/WorkReader.svelte`: the navigation (`ChapterNav.svelte`: Entire Work or
     Chapter by Chapter, previous/next from the chapter list so gaps are stepped over, a
-    `<details>` chapter index; at the bottom previous/next and ↑ Top; chapter links land on
-    `#workskin`), the metadata and banners, then `#workskin` with the preface (title, byline,
+    `<details>` chapter index; at the bottom previous/next and ↑ Top; previous/next land on
+    `#workskin`, as AO3's do, while Chapter by Chapter and the index open at the top), the metadata and banners, then `#workskin` with the preface (title, byline,
     and on the first chapter the work's summary and notes, with AO3's "See the end of the work
     for notes" link), the chapters (`Chapter.svelte`: for a chaptered work, AO3's
     `chaptered?` rule, the heading, chapter summary and notes, then the text and chapter end
