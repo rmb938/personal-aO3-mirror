@@ -238,7 +238,7 @@ socket has no UI. The CSP's trusted-types policy names are settled in "Build" be
 |---|---|
 | Malicious HTML in a chapter, notes or summary | DOMPurify, limited to otwarchive's sanitizer allowlist (tags, attributes, URL schemes; read from otwarchive's code and pinned to a commit in stage 7). Only sanitizer output may reach `{@html}`: an ESLint rule rejects any other use. |
 | Script that gets past the sanitizer | The UI's CSP (below), with Trusted Types required, so the browser rejects HTML insertion that didn't go through the sanitizer's policy. Stage 3 verifies that Svelte's `{@html}` works with Trusted Types; if it doesn't, the doc is updated with the fallback before building on it. |
-| Malicious work skin | The skin sanitizer parses the CSS, scopes every selector under `#workskin` (as AO3 does), and drops `@import`, `@font-face`, external `url()`, `position: fixed` and other overlays. It is applied with constructable stylesheets (`adoptedStyleSheets`), so the CSP needs no `'unsafe-inline'` for styles. |
+| Malicious work skin | The skin sanitizer parses the CSS with the browser's parser, keeps only style rules with otwarchive's allowed properties, drops every at-rule (`@import`, `@font-face`, ...), every `url()` and other loading function, and `position: fixed`, and puts the rules in `@scope` around `#workskin`, so they can't match anything outside it; a `contain: paint` frame keeps overlays inside the work. It is applied with constructable stylesheets (`adoptedStyleSheets`), so the CSP needs no `'unsafe-inline'` for styles. |
 | Malicious SVG, tracking pixels | Images come only from our image route via `<img src>`, where SVG can't run script. The route already sends `nosniff` and a sandbox CSP. `img-src 'self'` blocks any external image a chapter references; the sanitizer rewrites mirrored image references to our route. |
 | Token theft | Tokens live only in HttpOnly cookies, which JS cannot read. |
 | CSRF | SameSite=Strict cookies, plus a `Sec-Fetch-Site`/`Origin` same-origin check and a required custom header on every state-changing request authenticated by cookie. |
@@ -413,8 +413,32 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     allowlist, links and schemes, images, and ~65 XSS/mXSS/clobbering payloads, each checked
     for allowed elements and attributes only, a stable second pass, and nothing run when
     inserted live. Under the real CSP it is first exercised by stage 8's work page.
-  - [ ] **7b. Skin sanitizer.** Parse, scope under `#workskin`, drop (see "Security model"),
-    applied with `adoptedStyleSheets`.
+  - [x] **7b. Skin sanitizer.** Parse, scope under `#workskin`, drop (see "Security model"),
+    applied with `adoptedStyleSheets`. As built: `#lib/sanitize/skin.ts`
+    (`sanitizeSkin(css)` → a `CSSStyleSheet`, or undefined when nothing survives or the
+    browser lacks `@scope`). The browser's own parser reads the skin (a constructed sheet's
+    `replaceSync`, which never loads `@import`), so there is no second parser to disagree with
+    it. Only top-level style rules are kept (AO3's cleaner keeps only rule sets): every at-rule
+    and nested rule is dropped. Each declaration, as the longhands the browser holds, must pass
+    otwarchive's property allowlist (`#lib/sanitize/skin-allowlist.ts`: SUPPORTED_CSS_PROPERTIES,
+    vendor-prefixed forms, and SUPPORTED_CSS_SHORTHAND_PROPERTIES matched anywhere in the name,
+    as `legal_shorthand_property?` does) and WorkSkin's rules (no custom properties, no `var()`,
+    no `position: fixed`), read at otwarchive commit `452391b6`. Its value regexes are not
+    ported: the browser has already validated the value, so instead every function in it must
+    be on a list of ones that load nothing (colors, math, gradients, transforms, filters,
+    shapes, timing, counters, grid), which drops `url()`, `image-set()`, `cross-fade()`,
+    `element()`, `paint()`, `src()`, `attr()` and `env()` (so skin images are not shown). The
+    kept rules are copied through the CSSOM, never as text (`insertRule` of the parsed
+    selector, one `setProperty` per declaration), into a new sheet's
+    `@scope (.ao3m-skin-scope)`: its rules can only match elements below that element, and a
+    selector without `:scope` or `&` is relative to it. Stage 8 renders
+    `frame > .ao3m-skin-scope > #workskin`, where the frame (out of the skin's reach) has
+    `contain: paint`, so an absolutely positioned or transformed element can't paint over the
+    page. Tests (`skin.browser.test.ts`, Chromium) check the scope live against ~25 selectors
+    aimed outside it, every at-rule kind, the property and function lists, and ~55
+    CSS-injection payloads (loads, old script extensions, attribute reads, breaking out of a
+    rule, overlays). Stage 8 checks that a skin's dropped `@import` logs nothing to the
+    console.
 - [ ] **8. Work page.** Metadata and tags, chapter-by-chapter and full-work views, chapter
   navigation, notes and end notes, images, the work skin with the hide toggle, and the
   partial-series banner ("parts 3 and 5 are not mirrored"; the "mirror the whole series"
