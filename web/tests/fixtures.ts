@@ -30,6 +30,7 @@ export type AccountKey =
 	| 'sessions'
 	| 'password'
 	| 'recovery'
+	| 'works'
 	| 'screenshots'
 	| 'reset_both'
 	| 'reset_password'

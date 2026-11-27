@@ -63,7 +63,13 @@ test('login and account pages', async ({ page, server }) => {
 	await shoot(page, 'login-totp');
 	await enterSecondFactor(page, account, { recoveryCode: 0 });
 	await expectSignedIn(page, account);
+	await expect(page.getByRole('heading', { level: 2 })).toHaveCount(server.works.length);
 	await shoot(page, 'home');
+
+	// A work page, with the partial-series banner.
+	await page.getByRole('link', { name: 'Fixture Work Chaptered' }).click();
+	await expect(page.getByRole('note')).toBeVisible();
+	await shoot(page, 'work');
 
 	// Account page.
 	await page.getByRole('link', { name: 'Account' }).click();

@@ -439,10 +439,36 @@ Stages 1–2 are Go only; 3 onwards add the UI. Each stage keeps `make check` gr
     CSS-injection payloads (loads, old script extensions, attribute reads, breaking out of a
     rule, overlays). Stage 8 checks that a skin's dropped `@import` logs nothing to the
     console.
-- [ ] **8. Work page.** Metadata and tags, chapter-by-chapter and full-work views, chapter
-  navigation, notes and end notes, images, the work skin with the hide toggle, and the
-  partial-series banner ("parts 3 and 5 are not mirrored"; the "mirror the whole series"
-  action waits for Part 4b). A minimal home page listing works so there is a way in.
+- **8. Work page**, split in three PRs (agreed with the user 2026-11-27). Metadata and tags,
+  chapter-by-chapter and full-work views, chapter navigation, notes and end notes, images, the
+  work skin with the hide toggle, and the partial-series banner ("parts 3 and 5 are not
+  mirrored"; the "mirror the whole series" action waits for Part 4b). A minimal home page
+  listing works so there is a way in.
+  - [x] **8a. Home page and work header.** As built: the home page (`(app)/+page.svelte`)
+    lists every work as a blurb (`#lib/work/WorkBlurb.svelte`: title linking to the work,
+    byline, fandoms, then warnings (bold), relationships, characters and additional tags as
+    otwarchive's `blurb_tag_block` orders them, summary, a stats line), newest first, 20 a page with `?page=N`. The work
+    page is `(app)/works/[id=id]`; SvelteKit 3's matchers live in one `src/params.ts`
+    (`defineParams`), and `id` hands the page a number (`parseId`), so a non-ID segment is the
+    router's 404 and an ID the mirror lacks is "This work isn't in your mirror." Like AO3, the
+    metadata box comes first (`#lib/work/WorkMeta.svelte`: tag groups in AO3's order with its
+    labels, language, series part, collections, stats), then a banner per partly mirrored
+    series (`seriesGap`: the missing part numbers, else "N of its M works"), one for a
+    deleted/hidden/restricted/unrevealed work and one for a listing-only work, then title,
+    byline, summary, notes, the chapter list (plain until 8b links it) and end notes. Tags,
+    series, creators and collections are plain text until their pages exist (Part 4b). Every
+    HTML fragment goes through `#lib/work/WorkHtml.svelte` (`sanitizeHtml` with the work's
+    `imageMap`; a blurb has no image list, so its images are dropped). The wording is in
+    `#lib/work/meta.ts`, unit-tested. Playwright (`tests/work.spec.ts`, the seeded `works`
+    account): the list and its link, the chaptered work's header and banner, the anonymous
+    work, the hostile work's summary and notes under the real CSP (no payload runs, nothing
+    logged), an unknown ID and a non-ID path.
+  - [ ] **8b. Reading.** Chapter-by-chapter and full-work views, chapter navigation, chapter
+    summaries, notes and end notes, images, the `work-too-large` fallback to one chapter at a
+    time.
+  - [ ] **8c. Work skin.** The sanitized skin applied with `adoptedStyleSheets` in the
+    `frame > .ao3m-skin-scope > #workskin` structure (7b), the "hide creator's style" toggle,
+    and the check that a skin's dropped `@import` logs nothing to the console.
 - [ ] **9. Reader settings.** Dark mode, font size, reading width, remembered position (per
   device, IDs and numbers only).
 - [ ] **10a. EPUB of a work.** Built in the browser (EPUB 3, JSZip) from the revealed work and

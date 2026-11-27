@@ -67,6 +67,7 @@ var Accounts = []string{
 	"sessions",    // the account page's sessions list
 	"password",    // changing the password
 	"recovery",    // replacing the recovery codes
+	"works",       // reading works (web/tests/work.spec.ts)
 	"screenshots", // the UI screenshots for pull requests (web/tests/screenshots.spec.ts)
 	// Each reset test resets its own account (web/tests/reset.spec.ts), through the reset link
 	// of the same key (resets).
@@ -466,13 +467,15 @@ func works() []model.Work {
 				model.Tag{Type: model.TagFreeform, Name: "Fixture Freeform Two"},
 			),
 			Series: []model.SeriesPart{{ID: SeriesPartial, Title: "Fixture Series Partial", Position: 1}},
+			// No chapter dates: the scraper reads the work page, which doesn't show them (only
+			// AO3's chapter index does), so a real chapter never has one.
 			Chapters: []model.Chapter{
-				{ID: 100101, Position: 1, Title: "Fixture Chapter One", Published: "2025-01-02",
+				{ID: 100101, Position: 1, Title: "Fixture Chapter One",
 					SummaryHTML: "<p>Fixture chapter summary.</p>", NotesHTML: "<p>Fixture chapter notes.</p>",
 					BodyHTML: richBody()},
-				{ID: 100102, Position: 2, Title: "Fixture Chapter Two", Published: "2025-03-04",
+				{ID: 100102, Position: 2, Title: "Fixture Chapter Two",
 					BodyHTML: paragraphs(8), EndNotesHTML: "<p>Fixture chapter end notes.</p>"},
-				{ID: 100103, Position: 3, Title: "", Published: "2025-06-07", BodyHTML: paragraphs(5)},
+				{ID: 100103, Position: 3, Title: "", BodyHTML: paragraphs(5)},
 			},
 			SkinCSS: "#workskin .fixture-skinned { color: #8a2be2; font-weight: bold; }\n" +
 				"#workskin blockquote { border-left: 4px solid #2a6f97; }",
@@ -504,8 +507,8 @@ func works() []model.Work {
 			Tags:        tags(model.Tag{Type: model.TagFreeform, Name: "Fixture Freeform Two"}),
 			Collections: []model.Collection{{Name: "fixture_collection", Title: "Fixture Collection"}},
 			Chapters: []model.Chapter{
-				{ID: 100401, Position: 1, Title: "Fixture Chapter Calm", Published: "2025-02-03", BodyHTML: paragraphs(4)},
-				{ID: 100402, Position: 2, Title: "Fixture Chapter Payloads", Published: "2025-02-10", BodyHTML: hostileBody()},
+				{ID: 100401, Position: 1, Title: "Fixture Chapter Calm", BodyHTML: paragraphs(4)},
+				{ID: 100402, Position: 2, Title: "Fixture Chapter Payloads", BodyHTML: hostileBody()},
 			},
 			// The skin sanitizer must drop the import, the external url(), the font face and the
 			// fixed overlay, and keep the colour.
